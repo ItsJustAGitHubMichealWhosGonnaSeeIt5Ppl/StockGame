@@ -1,0 +1,103 @@
+import sqlite3
+
+#TODO is this GDPR compliant, and does it need to be?
+
+
+#NOTE ISO8601 applies to both (YYYY-MM-DD HH:MM:SS) and (YYYY-MM-DD)! keys should be named according to below
+# # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
+# # (YYYY-MM-DD) objects should include 'date' in the key name
+
+
+db_name = "stonks.db"
+conn = sqlite3.connect(db_name)
+cursor = conn.cursor()
+cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
+
+# Users table
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
+    display_name TEXT,                          -- User display name
+    datetime_registered TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+);""")
+
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
+
+
+
+# Games table #TODO write different game statuses and explainers
+cursor.execute("""CREATE TABLE IF NOT EXISTS games (
+    game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_name TEXT NOT NULL UNIQUE,
+    created_by INTEGER NOT NULL,                          -- User who created the game 
+    start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
+    pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
+    draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game
+    join_late BOOLEAN DEFAULT 0,                          -- When enabled, users can join once the game has started (status 'active')
+    allow_selling BOOLEAN DEFAULT 0,                      --  When enabled, users can sell mid-game
+    start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD)
+    end_date TEXT,                                        -- OPTIONAL Game end date ISO8601 (YYYY-MM-DD)
+    game_status TEXT NOT NULL DEFAULT 'open',             -- Game status
+    datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    
+    FOREIGN KEY (created_by) REFERENCES users (user_id)
+);""")
+# GAME STATUS OPTIONS
+# - 'open' # Game has not yet started, can be joined
+# - 'active' # Game started, can be joined if join_late is enabled
+# - 'ended' # Game has ended, nothing can be done
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_games ON games(game_name, game_id, game_status);")
+
+
+# Stocks table 
+cursor.execute("""CREATE TABLE IF NOT EXISTS stocks (
+    stock_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL UNIQUE,    -- Stock ticker
+    exchange TEXT NOT NULL,         -- Stock exchange that it is listed on #TODO is this needed
+    company_name TEXT               -- Optional?
+);""")
+
+# Stock price (current and historical) table
+cursor.execute("""CREATE TABLE IF NOT EXISTS stock_prices (
+    price_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    price REAL NOT NULL,           -- Closing price of stock
+    price_date TEXT NOT NULL,      -- ISO8601 (YYYY-MM-DD)
+    
+    FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE CASCADE,  -- When a ticker is deleted from the main table, all references to it will also be deleted?
+    UNIQUE (stock_id, price_date)                                           -- Ensure only one price per stock per day
+);""")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_stock_prices ON stock_prices(stock_id, price, price_date);") # I think this will be more useful to have?
+
+# Game participants table (track who is in which leagues/games)
+cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
+    participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    game_id INTEGER NOT NULL,
+    join_datetime TEXT NOT NULL,       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    current_value REAL DEFAULT NULL,   -- Current portfolio value
+    datetime_updated TEXT DEFAULT NULL,    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    
+    FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
+    UNIQUE (user_id, game_id) -- A user can only join a specific game once
+);""")
+
+# Stock picks table.  Store a users stock picks for their game(s).  Buy date not needed since game_participants join date can be used
+cursor.execute("""CREATE TABLE IF NOT EXISTS stock_picks (
+    pick_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    participation_id INTEGER NOT NULL,                 -- Reference the game 
+    stock_id INTEGER NOT NULL,
+    shares REAL DEFAULT NULL,                          -- Amount of shares held
+    start_value REAL DEFAULT NULL,                     -- Start value of shares
+    current_value REAL DEFAULT NULL,                   -- Current value of shares
+    pick_status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
+    datetime_updated TEXT DEFAULT NULL,                -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    
+    FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
+    FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
+    UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
+);""")
+
+conn.commit()
+conn.close()
