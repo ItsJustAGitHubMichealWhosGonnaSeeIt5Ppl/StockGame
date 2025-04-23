@@ -74,7 +74,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
     participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,
-    join_datetime TEXT NOT NULL,       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    datetime_joined TEXT NOT NULL,       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     current_value REAL DEFAULT NULL,   -- Current portfolio value
     datetime_updated TEXT DEFAULT NULL,    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     
@@ -92,7 +92,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS stock_picks (
     start_value REAL DEFAULT NULL,                     -- Start value of shares
     current_value REAL DEFAULT NULL,                   -- Current value of shares
     pick_status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
-    datetime_updated TEXT DEFAULT NULL,                -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    datetime_updated TEXT NOT NULL,                -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     
     FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
     FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.

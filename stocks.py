@@ -19,7 +19,7 @@
 
 
 # More questions
-##TODO Do we need to hash user IDs?
+##TODO [x] Do we need to hash user IDs? - No
 ##TODO Do we need to track whether a user is allowed to create a game or not? (I think no)
 
 
@@ -37,7 +37,49 @@ cursor = conn.cursor()
 
 # Class to handle game creation and management
 class StockGame: #TODO does this need to be a class?
+    # Most of these expect that the data being sent has been checked or otherwise verified.  End users should not interact directly with this
+    def _sql_get(self, table:str, columns:list=["*"], filters:dict=None, order:dict=None): 
+        """INTERNAL USE ONLY! Run SQL get queries
+        
+        THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
 
+        Args:
+            table (str): Table name
+            columns(list, optional): List of columns to be returned, Defaults to ['*'] (all columns)
+            filters (dict): Key should be the column name to filter by, values should be the variables
+            order (dict): Key should be the column name to order by, values should be ASC or DESC
+        """        
+        sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
+        
+        filter_str = "" # Will contain filter string (if any)
+        filter_vars = list()
+        filter_items = list()
+        if filters: # Create filter string (if exists)
+            for var, item in filters.items():
+                if item == None:
+                    continue # Skip blank items
+                filter_vars.append(var + "=?")
+                filter_items.append(item)
+            
+            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
+                filter_str = "WHERE " + " AND ".join(filter_vars) 
+            
+        order_str = "" # Will contain order string (if any)
+        order_items = list()
+        if order:
+            for var, direction in order.items():
+                if direction.lower() not in ['asc', 'desc']: # Skip invalid order/sort
+                    continue #TODO make this return an error or something I guess
+                
+                order_items.append(f"{var} {direction.upper()}") 
+            
+            order_str = "ORDER BY " + ", ".join(order_items)
+            
+        sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
+        cursor.execute(sql_query, filter_items)
+        resp = cursor.fetchall()
+        return resp
+    
     def _iso8601(self, date_type:str='datetime'): # Get an ISO formatted datetime #TODO allow type to be set to date
         now = datetime.now()
         if date_type == 'datetime':
@@ -51,27 +93,26 @@ class StockGame: #TODO does this need to be a class?
         
         return now
     
-    
-    def _reformat_sqlite(self, data:list, table:str): # Reformat data from the database into more friendly 
+    def _reformat_sqlite(self, data:list, table:str, custom_table:list=None): # Reformat data from the database into more friendly 
         """Reformat the data from SQLite database to make it easier to work with
 
         Args:
             data (list): Data from SQLite
-            table (str): Table that data came from ('games', 'stocks', 'users')
-
+            table (str): Table that data came from ('games', 'stocks', 'users', 'prices', 'custom', 'picks')
+            custom_table (list, optional): If table is set to 'custom', a custom set of columns/keys must be sent here
         Returns:
             list: List of data converted to dictionary format
         """
-        supported_tables = ['games', 'stocks', 'users'] #TODO redundant?
-
         
         formatted_data = [] # Data will be stored here
         
         table_columns = {# Column names will be stored here, must be in the same order as SQLITE DB
+        'custom': custom_table, #TODO add error if no custom table is sent
         'games': ['id', 'name', 'creator', 'starting_money','total_picks','total_picks','exclusive_picks','join_after_start','sell_during_game','start_date','end_date','status','creation_date'],
         'stocks': ['id', 'ticker', 'exchange', 'name'],
         'users': ['id', 'username', 'registration_date'],
-        'prices': ['id','stock_id','price','price_data']
+        'prices': ['id','stock_id','price','price_data'],
+        'picks': ['id', 'participant_id', 'stock_id', 'shares' 'start_value', 'current_value', 'status', 'last_updated']
         }
         if table not in table_columns.keys():
             raise ValueError(f"{table} is not supported!  Please only use supported tables.")
@@ -90,36 +131,48 @@ class StockGame: #TODO does this need to be a class?
     
     # # USER ACTIONS # #
     
-    def add_user(self, user_id:int, username:str):
+    def add_user(self, user_id:int, display_name:str):
         """Add a game user
 
         Args:
             user_id (int): UNIQUE ID to identify user.
-            username (str): Username/Displayname for user
+            display_name (str): Username/Displayname for user
         """
         #TODO check if the user exists
         now = self._iso8601()
-        cursor.execute("""INSERT OR IGNORE INTO users (user_id,display_name,datetime_registered) VALUES(?,?,?)""",(user_id, username, now,))
+        cursor.execute("""INSERT OR IGNORE INTO users (user_id, display_name, datetime_registered) VALUES(?,?,?)""",(user_id, display_name, now,))
         pass
         
-    def remove_user(self, user_id:int): #TODO add this
-        pass
-    
-    def list_users(self, ids_only:bool=False): #TODO add docstring
+    def list_users(self, ids_only:bool=False):
+        """List all users
+
+        Args:
+            ids_only (bool, optional): Only return user IDs. Defaults to False.
+
+        Returns:
+            list: All users (includes details unless ids_only is set)
+        """
         if ids_only:
-            cursor.execute("""SELECT user_id FROM users""") #TODO the formatting here is kinda fucked
+            cursor.execute("""SELECT user_id FROM users""") 
             
         else:
             cursor.execute("""SELECT * FROM users""")
         users = cursor.fetchall()
         
         if ids_only:
+            users = [user[0] for user in users]
             return users
+        
         else:
             return self._reformat_sqlite(users, 'users')
         
+    def remove_user(self, user_id:int): #TODO add remove_user
+        pass
     
-    def get_user(self, user_id): #TODO add
+    def get_user(self, user_id:int): #TODO add get_user
+        pass
+    
+    def update_user(self, user_id:int, display_name:str): #TODO add update_user (allow usernames to be changed)
         pass
     
     # # GAME MANAGEMENT ACTIONS # #
@@ -137,18 +190,20 @@ class StockGame: #TODO does this need to be a class?
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Defaults to False.
             join_after_start (bool, optional): Whether users can join late. Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
+        
+        Returns:
+            str: Game creation status
         """
-        #TODO check if the user exists
         #TODO add validation for dates (make sure it isn't past today, etc)
         end_date = 0 if end_date == None else end_date # Set end date to 0 #TODO is this needed?
         now = self._iso8601()
         
         cursor.execute("""INSERT OR IGNORE INTO games (game_name,created_by,start_money,pick_count,draft_mode,join_late,allow_selling,start_date,end_date,datetime_created) VALUES(?,?,?,?,?,?,?,?,?,?)""",(name, user_id, starting_money, total_picks, exclusive_picks, join_after_start, sell_during_game, start_date, end_date, now,))
-        pass #TODO should this return anything?
-    
-    
-    def delete_game(self,): #TODO Do we need an option to delete games?
-        pass
+        if cursor.rowcount > 0: # This should verifiy that the item was actually added
+            conn.commit()
+            return "Game created"
+        else:
+            return "Game creation failed"
     
     def list_games(self, only_show_joinable:bool=False, show_ended_games:bool=False): # List all games
         """List all games
@@ -185,11 +240,11 @@ class StockGame: #TODO does this need to be a class?
         else:
             game = self._reformat_sqlite([game], 'games')
             return game
-    
-    def join_game(self, game_id:str, user_id:int): # TODO should this use name or ID (I think ID)
+        
+    def update_game(self,): #TODO Should changing the game be allowed?
         pass
     
-    def leave_game(self, game_id:str, user_id:int):
+    def delete_game(self,): #TODO Do we need an option to delete games?
         pass
     
     # # STOCK ACTIONS # # #TODO should these be split into classes for ease of use?
@@ -228,10 +283,15 @@ class StockGame: #TODO does this need to be a class?
         else:
             return "Ticker invalid" #TODO is this a good way to verify
     
-    def remove_stock(self, ticker:str): #TODO add remove_stock
-        pass
-    
-    def list_stocks(self, tickers_only:bool=False): #TODO add a docstring
+    def list_stocks(self, tickers_only:bool=False):
+        """List all stocks
+
+        Args:
+            tickers_only (bool, optional): Only return tickers. Defaults to False.
+
+        Returns:
+            list: All stocks (includes details unless tickers_only is set)
+        """        
         if tickers_only:
             cursor.execute("""SELECT ticker FROM stocks""") 
             
@@ -246,17 +306,35 @@ class StockGame: #TODO does this need to be a class?
         else:
             return self._reformat_sqlite(stocks, 'stocks')
     
-    def get_stock(self, ticker:str): #TODO add get_stock maybe
-        cursor.execute("""SELECT * FROM stocks WHERE ticker = ?""", (ticker,))
-        stock = cursor.fetchall()
+    def get_stock(self, ticker:str):
+        """Get an existing stock from ticker
+
+        Args:
+            ticker (str): Stock ticker
+
+        Returns:
+            dict: Single stock details
+        """        
+        filters = {'ticker': ticker}
+        stock = self._sql_get(table='stocks',filters=filters) 
         if len(stock) > 0:
             return self._reformat_sqlite(stock, 'stocks')[0]
         else:
             return "Invalid Ticker"
+        
+    def remove_stock(self, ticker:str): #TODO add remove_stock
+        pass
+    
     # # STOCK PRICE ACTIONS # # 
     
-    
-    def add_stock_price(self, ticker:str, price:int, date:str): #TODO add a docstring #TODO should date be set in the action?
+    def add_stock_price(self, ticker:str, price:float, date:str): #TODO should date be set in the action? #TODO maybe use stock_ids here?
+        """Add price data for a stock (should be done at close)
+
+        Args:
+            ticker (str): Stock ticker
+            price (float): Stock price 
+            date (str): ISO8601 (YYYY-MM-DD)
+        """        
         #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AI
         stock_id = self.get_stock(ticker)['id'] # Fuck you AI #TODO add some sort of error catching here
         
@@ -265,62 +343,118 @@ class StockGame: #TODO does this need to be a class?
             conn.commit()
         else:
             pass #TODO add error if needed?
-        
-        
     
-    def list_stock_prices(self, ticker:str=None, start_date:str=None, end_date:str=None): # List stock prices, allow some filtering
-        sql_query = """SELECT * FROM stock_prices {filters} {order}"""
-        filters = ""
-        order = "ORDER BY price_date DESC" # Set the order
-        if ticker: # Ticker isn't none
+    def list_stock_prices(self, ticker:str=None, start_date:str=None, end_date:str=None): # List stock prices, allow some filtering 
+        #TODO add docstring
+        order = {'price_date': "DESC"}  # Sort by price date
+        if ticker: # Ticker isn't none # Fuck you AI #TODO add some sort of error catching here
             stock_id = self.get_stock(ticker)['id']
             filters = f"WHERE stock_id = {stock_id}" #TODO THIS IS DANGEROUS
-            
-        #TODO Get date filtering working!
-        sql_query = sql_query.format(filters=filters, order=order)
-         # Fuck you AI #TODO add some sort of error catching here
-        cursor.execute(sql_query)
-        prices = cursor.fetchall() #TODO verify data exists here
-        prices = self._reformat_sqlite(prices, 'prices')
-        return prices 
+        
+        filters = {    #TODO Get date filtering working
+            'stock_id': stock_id if ticker else None
+        }
+
+        prices = self._sql_get(table='stock_prices',filters=filters, order=order) 
+        prices = self._reformat_sqlite(prices, 'prices') 
+        return prices
     
-    # # STOCK PICK ACTIONS # #
-    
-    def add_stock_pick(self, participation_id:int, stock_id:int, shares:float,): # This is essentially putting in a buy order. End users should not be interacting with this directly
-        #TODO confirm user can even pick a stock
+    def get_stock_price(price_id:int):
         pass
     
-    def ez_stock_pick(self, user_id:int, game_id:int, ticker:str): #Allow buying a stock without knowing backend info #TODO maybe this should be in a class that handles users/players?
-        
-        pass
-        
-    # # GAMEPLAY ACTIONS # #
-    
-    # # UPDATE ACTIONS # #
-    
-    def update_stock_prices(self): # Should be run at the end of each day
+    def update_stock_prices(self): # Should be run at the end of each day #TODO add docstring #TODO should this be filterable to allow only specific games prices to be updated?
         # What this should do (in order)
         #TODO verify market is closed "prices.tickers['SNAP'].info['postMarketTime']"
-        #TODO apply all stock pick orders
-        #TODO update all stock picks values
-        #TODO update player portfolio values
         
-        # Update all stock prices
+        # Update all stock prices 
         tickers = self.list_stocks(tickers_only=True) # Get all stock tickers currently in game
         prices = yf.Tickers(tickers).tickers
         for ticker, price in prices.items(): # update pricing
             price = price.info['regularMarketPrice']
-            self.add_stock_price(ticker=ticker, price=price, date=self._iso8601('date')) # Update pricing 
-        
-    def update(self,): # Update all positions, games, etc 
-        #TODO allow specific game(s) to updated 
-        #TODO allow updating only stocks
-        #TODO allow more choice
-        pass
-    # # REQUESTED FEATURES/DATA DISPLAY # #
+            self.add_stock_price(ticker=ticker, price=price, date=self._iso8601('date')) # Update pricing
     
-    # # USER FACING STUFF # # (this is where stock picking will be handled maybe?)
+    # # STOCK PICK ACTIONS # #
+    
+    def add_stock_pick(self, participant_id:int, stock_id:int,): # This is essentially putting in a buy order. End users should not be interacting with this directly 
+        #TODO add docstring
+        datetime = self._iso8601() 
+        cursor.execute("""INSERT OR IGNORE INTO stock_picks (participation_id, stock_id, datetime_updated) VALUES(?,?,?)""",(stock_id, participant_id, datetime,))
+        if cursor.rowcount > 0: # This should verifiy that the item was actually added
+            conn.commit()
+        else:
+            pass #TODO add error if needed?
+    
+    def list_stock_picks(self, status:str=None, participant_id:int=None): #TODO add docstring #TODO test
+        #Statuses =  'pending_buy', 'owned', 'pending_sell', 'sold'
+        sql_query = """SELECT * FROM stock_picks {filters} """
+        
+        filters = {
+            'pick_status': status, #TODO validate statuses
+            'participation_id': participant_id
+        }
 
+        picks = self._sql_get(table='stock_picks', filters=filters)
+        return self._reformat_sqlite(picks, 'picks')
+    
+    def get_stock_pick(self, pick_id:int): #TODO add get_stock_pick
+        pass
+        
+    def update_stock_picks(self): #TODO add update_stock_picks #TODO should this allow only updating for a specific game?
+        pending_picks = self.list_stock_picks(status='pending_buy') #TODO handle pending_sell here too
+        
+        pass
+        #TODO check that game is active or about to start
+        #TODO apply orders
+        #TODO update values
+        pass
+    
+    # # GAME PARTICIPATION ACTIONS # #
+    def add_user_to_game(self, game_id:int, user_id:int): # TODO should this use name or ID (I think ID)
+        pass
+    
+    def remove_user_from_game(self, game_id:int, user_id:int): #TODO add remove_user_from_game
+        pass
+    
+    def list_game_members(self, game_id:int): #TODO add list_game_members
+        pass
+    
+    def get_game_member(self, participant_id:int): #TODO add list_game_members
+        pass
+    
+    def update_game_info(self, game_id:int): #TODO add update_game_info
+        #TODO update player portfolio values
+
+        pass
+        
+    # # UPDATE ACTIONS # #
+
+    def update(self,): # Update all positions, games, etc 
+        #TODO allow specific game(s) to be updated
+        #Update order
+        #- Update stock prices
+        #- Update stock picks (includes running any pending purchases)
+        #- Update game info (Set the new portfolio value, etc)
+        pass
+
+
+class StockGameUser: # If using discord bot, this would be created for each user
+    def __init__(self, user_id:int):
+        self.user_id = user_id
+        
+    # Game stuff #TODO is this just making extra work?
+    def create_game(self,):
+        pass
+    
+    def join_game(self,):
+        pass
+    
+    def leave_game(self,):
+        pass
+    
+    # Stock stuff
+    
+    def pick_stocks(self,):
+        pass
 
 # TESTING
 
@@ -331,7 +465,8 @@ for stock in test_stock_tickers:
     game.add_stock(stock)
 add_user = game.add_user(1110002233,"USER")
 game.create_game(user_id=1110002233, name="Test", start_date="2025-01-01", end_date="2025-01-02")
-game.list_stock_prices()
+prices = game.list_stock_prices()
+game.list_stock_picks(1223)
 game.update_stock_prices()
 
 users = game.list_users()
