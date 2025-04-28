@@ -55,13 +55,16 @@ class Backend:
         
         return filter_str, filter_items
     
-    def _sql_items(self, items:dict):
+    def _sql_items(self, items:dict, mode:str='insert'):
         keys = list()
         values = list()
         questionmarks = list()
         for key, val in items.items(): #TODO better way?
             if val != None:  # Skip blank items
-                keys.append(key)
+                if mode is 'insert':
+                    keys.append(key)
+                elif mode is 'set':
+                    keys.append(key +'=?')
                 values.append(val)
                 questionmarks.append("?") #TODO this is dogshit
         
@@ -120,7 +123,7 @@ class Backend:
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
-        keys, value_items, questionmarks = self._sql_items(items)
+        keys, value_items, questionmarks = self._sql_items(items, mode='set')
             
         all_items = value_items + filter_items
             
@@ -161,6 +164,7 @@ class Backend:
         'games': ['id', 'name', 'owner', 'starting_money','total_picks','exclusive_picks','join_after_start','sell_during_game','update_frequency','start_date','end_date','status','creation_date'],
         'stocks': ['id', 'ticker', 'exchange', 'name'],
         'users': ['id', 'username', 'permissions', 'registration_date'],
+        'participants': ['id', 'user_id', 'game_id', 'joined', 'current_value', 'last_updated'], 
         'prices': ['id','stock_id','price','price_data'],
         'picks': ['id', 'participant_id', 'stock_id', 'shares', 'start_value', 'current_value', 'status', 'last_updated']
         }
@@ -471,12 +475,20 @@ class Backend:
     def update_stock_picks(self, date:str, game_id:int=None): #TODO add update_stock_picks #TODO allow blank date to use latest
         #TODO implement game_id filtering
         pending_picks = self.list_stock_picks(status='pending_buy') #TODO handle pending_sell here too
-        for pick in pending_picks:
+        for pick in pending_picks: #TODO make sure a user doesn't have more than 10 stocks
             price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data
-            
-            self.update_stock_pick(pick_id=pick['id'],)
-            
-            
+            game_participant = self.get_game_member(participant_id=pick['participant_id']) #This is also annoying
+            game = self.get_game(game_id=game_participant['game_id']) #This is annoying #TODO validate stuff here since I have to get it anyway?
+            buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
+            shares = buying_power / price['price'] # Total shares owned
+            value = shares * price['price']
+            self.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=value, current_value=value, status='owned')
+        
+        all_picks = self.list_stock_picks(status='owned')
+        for pick in all_picks:
+            price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data
+            value = pick['shares'] * price['price']
+            self.update_stock_pick(pick_id=pick['id'], current_value=value)
         
         #TODO check that game is active or about to start
         #TODO apply orders
@@ -496,22 +508,30 @@ class Backend:
         pass
     
     def get_participant_id(self, user_id:int, game_id:int): # Will save time
+        """Get a participant ID from user and game ID.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+
+        Returns:
+            int: Participant ID.
+        """
         filters = {'user_id': user_id,
                    'game_id': game_id}
         participant = self._sql_get(table='game_participants', columns=['participation_id'], filters=filters) 
         return participant[0][0] # Drill down 
-        pass
-    
-    
+
     def list_game_members(self, game_id:int): #TODO add list_game_members
         pass
     
-    def get_game_member(self, participant_id:int): #TODO add game_game_members
-        pass
+    def get_game_member(self, participant_id:int): # Get game member info #TODO add docstring #TODO test
+        filters = {'participation_id': participant_id}
+        participant = self._sql_get(table='game_participants', filters=filters) 
+        return self._reformat_sqlite(participant, 'participants')[0]
     
     def update_game_info(self, game_id:int): #TODO add update_game_info
         #TODO update player portfolio values
-
         pass
         
     # # UPDATE ACTIONS # #
@@ -605,6 +625,11 @@ class Frontend: # This will be where a bot (like discord) interacts
             return e
     
     def list_games(self): #TODO allow filtering
+        """List all games
+
+        Returns:
+            list: List of games
+        """
         games = self.backend.list_games()
         return games
     
@@ -635,10 +660,28 @@ class Frontend: # This will be where a bot (like discord) interacts
             return "Unknown error occurred while registering user"
 
     def change_name(self, user_id:int, name:str):
+        """Change your display name
+
+        Args:
+            user_id (int): User ID.
+            name (str): New name.
+
+        Returns:
+            unk: NO idea
+        """#TODO what does this reurn
         user = self.backend.update_user(user_id=int(user_id), display_name=str(name))
         return user #TODO return an error instead
     
-    def join_game(self, user_id:int, game_id:int): 
+    def join_game(self, user_id:int, game_id:int):
+        """Join a game.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+
+        Returns:
+            unk: I have no idea
+        """# TODO what does this return?
         #TODO check permissions before running
         game = self.backend.add_user_to_game(user_id=user_id, game_id=game_id)
         return game
@@ -660,15 +703,28 @@ class Frontend: # This will be where a bot (like discord) interacts
         pass
     
     def my_stocks(self, user_id:int, game_id:int):
+        """Get your stocks by user and game ID.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+
+        Returns:
+            list: Stocks both owned and pending
+        """
+        #TODO hide sold stocks
         part_id = self.backend.get_participant_id(user_id=user_id, game_id=game_id) # TODO error validation
         picks = self.backend.list_stock_picks(participant_id=part_id)
         return picks
     
     def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game
-        if user_id != self.owner_user_id:
+        #TODO VALIDATION!!!!!!!!!
+        if user_id != self.owner_id:
             return "You do not have permission to do this"
         
-        self.backend.update_stock_prices()
+        self.backend.update_stock_prices() # Update stock prices
+        self.backend.update_stock_picks(date=self.backend._iso8601('date')) # Update picks
+        #TODO update account values!
         #TODO update the rest!
         
 
@@ -682,6 +738,7 @@ if __name__ == "__main__":
     print(game.list_games())
     create = game.create_game(user_id=owner, name="TestGame", start_date="2025-05-01", end_date="2025-05-10")
     print(game.buy_stock(owner, 1, 'MSFT'))
+    print(game.update(owner))
     pass
     
     if False: # Backend testing
