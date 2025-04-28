@@ -35,27 +35,41 @@ db_name = "stonks.db"
 conn = sqlite3.connect(db_name)
 cursor = conn.cursor()
 
-
-    
-
-# Class to handle game creation and management
 class Backend:
     # Most of these expect that the data being sent has been checked or otherwise verified.  End users should not interact directly with this
     def __init__(self): #TODO Set database name here, create database if it doesn't exist already, store the database version somewhere?
         pass
     
-    def _sql_insert(self, table:str, items:dict):
-        sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
+    def _sql_filters(self, filters:dict):
+        filter_str = "" # Will contain filter string (if any)
+        filter_vars = list()
+        filter_items = list()
+        if filters: # Create filter string (if exists)
+            for var, item in filters.items():
+                if item != None: # Skip blank items
+                    filter_vars.append(var + "=?")
+                    filter_items.append(item)
+    
+            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
+                filter_str = "WHERE " + " AND ".join(filter_vars)
+        
+        return filter_str, filter_items
+    
+    def _sql_items(self, items:dict):
         keys = list()
         values = list()
         questionmarks = list()
-        
         for key, val in items.items(): #TODO better way?
-            if val == None:
-                continue # Skip blank items
-            keys.append(key)
-            values.append(val)
-            questionmarks.append("?") #TODO this is dogshit
+            if val != None:  # Skip blank items
+                keys.append(key)
+                values.append(val)
+                questionmarks.append("?") #TODO this is dogshit
+        
+        return keys, values, questionmarks
+    
+    def _sql_insert(self, table:str, items:dict):
+        sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
+        keys, values, questionmarks = self._sql_items(items)
         
         sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
         try:
@@ -84,18 +98,7 @@ class Backend:
         """        
         sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
         
-        filter_str = "" # Will contain filter string (if any)
-        filter_vars = list()
-        filter_items = list()
-        if filters: # Create filter string (if exists)
-            for var, item in filters.items():
-                if item == None:
-                    continue # Skip blank items
-                filter_vars.append(var + "=?")
-                filter_items.append(item)
-            
-            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
-                filter_str = "WHERE " + " AND ".join(filter_vars) 
+        filter_str, filter_items = self._sql_filters(filters)
             
         order_str = "" # Will contain order string (if any)
         order_items = list()
@@ -116,27 +119,8 @@ class Backend:
     def _sql_update(self, table:str, filters:dict, items:dict):
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
-        filter_str = "" # Will contain filter string (if any)
-        filter_vars = list()
-        filter_items = list()
-        keys = list()
-        value_items = list()
-        
-        if filters: # Create filter string (if exists)
-            for var, item in filters.items():
-                if item == None:
-                    continue # Skip blank items
-                filter_vars.append(var + "=?")
-                filter_items.append(item)
-            
-            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
-                filter_str = "WHERE " + " AND ".join(filter_vars) 
-        
-        for key, val in items.items(): #TODO better way?
-            if val == None:
-                continue # Skip blank items
-            keys.append(key+ "=?")
-            value_items.append(val)
+        filter_str, filter_items = self._sql_filters(filters)
+        keys, value_items, questionmarks = self._sql_items(items)
             
         all_items = value_items + filter_items
             
@@ -146,7 +130,6 @@ class Backend:
         return "something happened" #TODO add errors
     
     def _iso8601(self, date_type:str='datetime'): # Get an ISO formatted datetime
-        
         now = datetime.now()
         date_type = date_type.lower() # Easier to work with
         if date_type == 'datetime':
@@ -193,7 +176,6 @@ class Backend:
                 item[columns[count]] = value
             
             formatted_data.append(item)
-        
         return formatted_data
     
     # # USER ACTIONS # #
@@ -243,12 +225,9 @@ class Backend:
         pass
     
     def get_user(self, user_id:int):
-        cursor.execute("""SELECT * FROM users WHERE user_id = ?""", (user_id,))
-        user = cursor.fetchall()
-        if user:
-            return self._reformat_sqlite(user, 'users')[0]
-        else:
-            raise KeyError(f"No user with ID {user_id} found.")
+        filters = {'user_id': user_id}
+        user = self._sql_get(table='users', filters=filters)
+        return self._reformat_sqlite(user, 'users')[0] #TODO add error handling
     
     def update_user(self, user_id:int, display_name:str=None, permissions:str=None): 
         items = {'display_name': display_name,
@@ -291,8 +270,7 @@ class Backend:
                  'update_frequency': update_frequency,
                  'start_date': start_date,
                  'end_date': "None" if end_date == None else end_date, #TODO is this needed?
-                 'datetime_created': self._iso8601()
-        }
+                 'datetime_created': self._iso8601()}
 
         game = self._sql_insert(table='games', items=items)
         return game #TODO error catching and checking
@@ -305,13 +283,10 @@ class Backend:
         Returns:
             list: List of games
         """
-        filters = {    #TODO Get date filtering working
-        }
-        #TODO send back less information by default?
-
+        filters = {}    #TODO Get date filtering working #TODO send back less information by default?
+        
         games = self._sql_get(table='games',filters=filters) 
-        games_list = self._reformat_sqlite(games, 'games') # Send games data to be reformatted
-        return games_list
+        return self._reformat_sqlite(games, 'games') # Send games data to be reformatted
     
     def get_game(self, game_id:int):
         """Get a single game by ID
@@ -322,10 +297,7 @@ class Backend:
         Returns:
             dict: Game information OR "Invalid ID"
         """        
-        filters = {'game_id': int(game_id)
-        }
-        #cursor.execute("""SELECT * FROM games WHERE game_id=?""", (game_id,))
-        #game = cursor.fetchone()
+        filters = {'game_id': int(game_id)}
         game = self._sql_get(table='games',filters=filters)
         if game == None: # Will return none for invalid game id
             return "Invalid ID" #TODO Raise an error here
@@ -375,7 +347,7 @@ class Backend:
         else:
             return "Ticker invalid" #TODO is this a good way to verify
     
-    def list_stocks(self, tickers_only:bool=False):
+    def list_stocks(self, tickers_only:bool=False): 
         """List all stocks
 
         Args:
@@ -383,18 +355,17 @@ class Backend:
 
         Returns:
             list: All stocks (includes details unless tickers_only is set)
-        """        
+        """    
+        columns = []    
         if tickers_only:
-            cursor.execute("""SELECT ticker FROM stocks""") 
+            columns = ['ticker']
             
-        else:
-            cursor.execute("""SELECT * FROM stocks""")
-        stocks = cursor.fetchall()
+        stocks = self._sql_get(table='stocks', columns=columns)
         
         if tickers_only:
             tickers = [ticker[0] for ticker in stocks]
             return tickers
-        
+    
         else:
             return self._reformat_sqlite(stocks, 'stocks')
     
