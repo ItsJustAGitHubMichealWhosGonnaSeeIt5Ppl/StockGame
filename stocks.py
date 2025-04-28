@@ -28,6 +28,7 @@ import re
 import sqlite3
 import yfinance as yf
 import logging
+import os
 from datetime import datetime, date
 
 db_name = "stonks.db"
@@ -43,6 +44,33 @@ class Backend:
     def __init__(self): #TODO Set database name here, create database if it doesn't exist already, store the database version somewhere?
         pass
     
+    def _sql_insert(self, table:str, items:dict):
+        sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
+        keys = list()
+        values = list()
+        questionmarks = list()
+        
+        for key, val in items.items(): #TODO better way?
+            if val == None:
+                continue # Skip blank items
+            keys.append(key)
+            values.append(val)
+            questionmarks.append("?") #TODO this is dogshit
+        
+        sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
+        try:
+            cursor.execute(sql_query, values)
+            conn.commit()
+            
+        except sqlite3.IntegrityError as e:
+            return 'OTHER_ERROR', e
+            #return e['sqlite_errorname'], e['args']
+            
+        except Exception as e:
+            return 'OTHER_ERROR', e
+    
+        return "success", "Added" #TODO more info?
+        
     def _sql_get(self, table:str, columns:list=["*"], filters:dict=None, order:dict=None): 
         """INTERNAL USE ONLY! Run SQL get queries
         
@@ -83,7 +111,39 @@ class Backend:
         sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
         cursor.execute(sql_query, filter_items)
         resp = cursor.fetchall()
-        return resp
+        return resp #TODO add errors
+    
+    def _sql_update(self, table:str, filters:dict, items:dict):
+        sql_query = """UPDATE {table} SET {keys} {filters}"""
+        
+        filter_str = "" # Will contain filter string (if any)
+        filter_vars = list()
+        filter_items = list()
+        keys = list()
+        value_items = list()
+        
+        if filters: # Create filter string (if exists)
+            for var, item in filters.items():
+                if item == None:
+                    continue # Skip blank items
+                filter_vars.append(var + "=?")
+                filter_items.append(item)
+            
+            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
+                filter_str = "WHERE " + " AND ".join(filter_vars) 
+        
+        for key, val in items.items(): #TODO better way?
+            if val == None:
+                continue # Skip blank items
+            keys.append(key+ "=?")
+            value_items.append(val)
+            
+        all_items = value_items + filter_items
+            
+        sql_query = sql_query.format(table=table, keys=",".join(keys), filters=filter_str)
+        cursor.execute(sql_query, all_items)
+        conn.commit()
+        return "something happened" #TODO add errors
     
     def _iso8601(self, date_type:str='datetime'): # Get an ISO formatted datetime
         
@@ -115,7 +175,7 @@ class Backend:
         
         table_columns = {# Column names will be stored here, must be in the same order as SQLITE DB
         'custom': custom_table, #TODO add error if no custom table is sent
-        'games': ['id', 'name', 'owner', 'starting_money','total_picks','exclusive_picks','join_after_start','sell_during_game','start_date','end_date','status','creation_date'],
+        'games': ['id', 'name', 'owner', 'starting_money','total_picks','exclusive_picks','join_after_start','sell_during_game','update_frequency','start_date','end_date','status','creation_date'],
         'stocks': ['id', 'ticker', 'exchange', 'name'],
         'users': ['id', 'username', 'permissions', 'registration_date'],
         'prices': ['id','stock_id','price','price_data'],
@@ -138,7 +198,7 @@ class Backend:
     
     # # USER ACTIONS # #
     
-    def create_user(self, user_id:int, display_name:str, permissions:int = 210):
+    def create_user(self, user_id:int, display_name:str=None, permissions:int = 210):
         """Create a game user
 
         Args:
@@ -147,13 +207,14 @@ class Backend:
             permissions (int, optional): User permissions (see). Defaults to 210.
         """
         #TODO Add user permissions docstring
-        now = self._iso8601()
-        cursor.execute("""INSERT OR IGNORE INTO users (user_id, display_name, permissions, datetime_registered) VALUES(?,?,?)""",(user_id, display_name, permissions, now,)) #TODO move this to elsewhere
-        if cursor.rowcount > 0: # This should verifiy that the item was actually added
-            conn.commit()
-            return "User created"
-        else:
-            return "User creation failed" #TODO figure out why it failed and raise an error?
+        items = {'user_id': user_id, 
+                 'display_name':display_name if display_name else user_id, # Set display name to user ID if there isnt one supplied
+                 'permissions': permissions,
+                 'datetime_registered': self._iso8601()}
+        
+        user = self._sql_insert(table='users', items=items)
+        #TODO move errors here
+        return user
         
     def list_users(self, ids_only:bool=False):
         """List all users
@@ -181,7 +242,7 @@ class Backend:
     def remove_user(self, user_id:int): #TODO add remove_user
         pass
     
-    def get_user(self, user_id:int): #TODO add get_user
+    def get_user(self, user_id:int):
         cursor.execute("""SELECT * FROM users WHERE user_id = ?""", (user_id,))
         user = cursor.fetchall()
         if user:
@@ -189,13 +250,19 @@ class Backend:
         else:
             raise KeyError(f"No user with ID {user_id} found.")
     
-    def update_user(self, user_id:int, display_name:str=None, permissions:str=None): #TODO add update_user (allow usernames to be changed)
-        pass
+    def update_user(self, user_id:int, display_name:str=None, permissions:str=None): 
+        items = {'display_name': display_name,
+                 'permissions': permissions}
+        
+        filters = {'user_id': user_id}
+        self._sql_update(table="users", filters=filters, items=items)
     
     # # GAME MANAGEMENT ACTIONS # #
     
-    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False):
+    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
+        
+        WARNING: If using realtime, expect issues
 
         Args:
             user_id (int): Game creators user ID
@@ -207,20 +274,28 @@ class Backend:
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Defaults to False.
             join_after_start (bool, optional): Whether users can join late. Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
+            update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
+            
         
         Returns:
             str: Game creation status
         """
         #TODO add validation for dates (make sure it isn't past today, etc)
-        end_date = 0 if end_date == None else end_date # Set end date to 0 #TODO is this needed?
-        now = self._iso8601()
-        
-        cursor.execute("""INSERT OR IGNORE INTO games (game_name,owner_user_id,start_money,pick_count,draft_mode,join_late,allow_selling,start_date,end_date,datetime_created) VALUES(?,?,?,?,?,?,?,?,?,?)""",(name, user_id, starting_money, total_picks, exclusive_picks, join_after_start, sell_during_game, start_date, end_date, now,))
-        if cursor.rowcount > 0: # This should verifiy that the item was actually added
-            conn.commit()
-            return "Game created"
-        else:
-            return "Game creation failed" #TODO figure out why it failed
+        items = {'game_name': name,
+                 'owner_user_id': user_id,
+                 'start_money': starting_money,
+                 'pick_count': total_picks,
+                 'draft_mode': exclusive_picks,
+                 'join_late': join_after_start,
+                 'allow_selling': sell_during_game,
+                 'update_frequency': update_frequency,
+                 'start_date': start_date,
+                 'end_date': "None" if end_date == None else end_date, #TODO is this needed?
+                 'datetime_created': self._iso8601()
+        }
+
+        game = self._sql_insert(table='games', items=items)
+        return game #TODO error catching and checking
     
     def list_games(self): # List all games
         """List all games
@@ -232,17 +307,13 @@ class Backend:
         """
         filters = {    #TODO Get date filtering working
         }
-
-        #TODO make the filters actually do something
         #TODO send back less information by default?
 
-        cursor.execute("""SELECT * FROM games""") # Get all games
-        games = cursor.fetchall()
         games = self._sql_get(table='games',filters=filters) 
         games_list = self._reformat_sqlite(games, 'games') # Send games data to be reformatted
         return games_list
     
-    def get_game(self, game_id:int):
+    def get_game(self, game_id:int): #TODO test
         """Get a single game by ID
 
         Args:
@@ -251,13 +322,15 @@ class Backend:
         Returns:
             dict: Game information OR "Invalid ID"
         """        
-        
-        cursor.execute("""SELECT * FROM games WHERE game_id=?""", (game_id,))
-        game = cursor.fetchone()
+        filters = {'game_id': int(game_id)
+        }
+        #cursor.execute("""SELECT * FROM games WHERE game_id=?""", (game_id,))
+        #game = cursor.fetchone()
+        game = self._sql_get(table='games',filters=filters)
         if game == None: # Will return none for invalid game id
             return "Invalid ID" #TODO Raise an error here
         else:
-            game = self._reformat_sqlite([game], 'games')[0]
+            game = self._reformat_sqlite(game, 'games')[0]
             return game
         
     def update_game(self,): #TODO Should changing the game be allowed?
@@ -295,7 +368,7 @@ class Backend:
             ticker = ticker.upper()
             exchange = info['fullExchangeName']
             company = info['displayName'] if 'displayName' in info else info['shortName'] # I guess not all stocks have a long name?
-            
+            #TODO use new insert system
             cursor.execute("""INSERT OR IGNORE INTO stocks (ticker,exchange,company_name) VALUES(?,?,?)""",(ticker, exchange, company,))
             conn.commit()
             return "Ticker added"
@@ -353,15 +426,16 @@ class Backend:
             ticker (str): Stock ticker
             price (float): Stock price 
             date (str): ISO8601 (YYYY-MM-DD)
-        """        
-        #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AI
-        stock_id = self.get_stock(ticker)['id'] # Fuck you AI #TODO add some sort of error catching here
+        """
+        #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AA
+        stock_id = self.get_stock(ticker)['id'] #TODO add some sort of error catching here
         
-        cursor.execute("""INSERT OR IGNORE INTO stock_prices (stock_id, price, price_date) VALUES(?,?,?)""",(stock_id, price, date,))
-        if cursor.rowcount > 0: # This should verifiy that the item was actually added
-            conn.commit()
-        else:
-            pass #TODO add error if needed?
+        items = {'stock_id':int(stock_id), 
+                 'price': float(price), 
+                 'price_date': str(date)}
+        
+        stock = self._sql_insert(table='stock_prices', items=items)
+        return stock 
     
     def list_stock_prices(self, ticker:str=None, start_date:str=None, end_date:str=None): # List stock prices, allow some filtering 
         #TODO add docstring
@@ -381,11 +455,9 @@ class Backend:
     def get_stock_price(price_id:int):
         pass
     
-    def update_stock_prices(self): # Should be run at the end of each day #TODO add docstring #TODO should this be filterable to allow only specific games prices to be updated?
-        # What this should do (in order)
-        #TODO verify market is closed "prices.tickers['SNAP'].info['postMarketTime']"
+    def update_stock_prices(self): #TODO add docstring
+        # THIS WILL NOT VALIDATE WHETHER IT IS THE END OF THE DAY OR NOT, THAT IS UP TO YOU TO DO!
         
-        # Update all stock prices 
         tickers = self.list_stocks(tickers_only=True) # Get all stock tickers currently in game
         prices = yf.Tickers(tickers).tickers
         for ticker, price in prices.items(): # update pricing
@@ -428,13 +500,13 @@ class Backend:
         pass
     
     # # GAME PARTICIPATION ACTIONS # #
-    def add_user_to_game(self, user_id:int, game_id:int): # TODO should this use name or ID (I think ID)
-        datetime = self._iso8601()
-        cursor.execute("""INSERT OR IGNORE INTO game_participants (user_id, game_id, datetime_joined) VALUES(?,?,?)""",(user_id, game_id, datetime,))
-        if cursor.rowcount > 0: # This should verifiy that the item was actually added
-            conn.commit()
-        else:
-            pass #TODO add error if needed?
+    def add_user_to_game(self, user_id:int, game_id:int):
+        items = {'user_id':user_id, 
+                 'game_id':game_id, 
+                 'datetime_joined': self._iso8601()
+        }
+        game = self._sql_insert(table='game_participants', items=items)
+        return game #TODO add errors here
         
     def remove_user_from_game(self, game_id:int, user_id:int): #TODO add remove_user_from_game
         pass
@@ -462,15 +534,27 @@ class Backend:
 
 # INTERFACE INTERACTIONS.  SHOULD EXPECT CRAP FROM USERS AND VALIDATE DATA
 class Frontend: # This will be where a bot (like discord) interacts
-    def __init__(self, default_permissions:int=210):
+    def __init__(self, owner_user_id:int, default_permissions:int=210):
+        """For use with a discord bot or other frontend. 
+        
+        Provides  basic error handling, data validation, more user friendly commands, and more.
+
+        Args:
+            owner_user_id (int): User ID of the owner.  This user will be able to control everything.
+            default_permissions (int, optional): Default permissions for new users. Defaults to 210. (Users can view and join games, but not create their own)
+        """
         self.backend = Backend()
         self.default_perms = default_permissions
+        self.register(owner_user_id,owner_user_id) # Try to register user
+        self.backend.update_user(user_id=owner_user_id, permissions=288)
+        self.owner_id = owner_user_id
+        #TODO implement owner user
         pass
     
     # Game actions (Return information that is relevant to overall games)
     
-    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False):
-        """Create a new stock game!
+    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+        """Create a new game.
 
         Args:
             user_id (int): Game creators user ID
@@ -482,29 +566,37 @@ class Frontend: # This will be where a bot (like discord) interacts
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Defaults to False.
             join_after_start (bool, optional): Whether users can join late. Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
+            update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
         
         Returns:
             str: Game creation status
         """
-        # Data validation #TODO maye this should be higher?
+        #TODO Should the user be automatically added to their own game? Probably?
+        # Data validation #TODO maybe this should be higher?
         if starting_money < 10.0:
             return "Error! Starting money must be atleast 10."
         
         elif total_picks < 1:
             return "Error! Users must be allowed to pick atleast 1 stock."
         
-        elif datetime.strfdate(start_date, "%Y-%m-%d") < date.today():
+        # Date checks
+        elif datetime.strptime(start_date, "%Y-%m-%d").date() < date.today():
             return "Error! Start date must not be in the past!"
-            
+        
+        elif end_date != None and datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
+            return "Error! End date cannot be before start date!"
         try: # Try to get user
             user = self.backend.get_user(user_id=user_id)
-            permissions = user['permissions']
+            
             
         except KeyError: # User doesn't exist, create.
             try: #TODO this will never fail right now, so that should be fixed
                 self.backend.create_user(user_id=user_id, display_name=user_id, permissions=self.default_perms) # Try to create a user with no name #TODO log a warning that the user was created with no name
+                user = self.backend.get_user(user_id=user_id)
             except Exception as e:
                 raise e
+        
+        permissions = user['permissions']
         
         if permissions - 200 < 0 or permissions - 200 < 19: # User is inactive, banned, or not allowed to create game #TODO this won't work with custom perms!
             reason = "banned" if permissions < 100 else "not allowed to create games!"
@@ -512,7 +604,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         # User is allowed to create games
         try:
-            self.backend.create_game(user_id=user_id, name=name, start_date=start_date, end_date=end_date, starting_money=starting_money, total_picks=total_picks, exclusive_picks=exclusive_picks, join_after_start=join_after_start, sell_during_game=sell_during_game)
+            self.backend.create_game(user_id=int(user_id), name=name, start_date=start_date, end_date=end_date, starting_money=starting_money, total_picks=total_picks, exclusive_picks=exclusive_picks, join_after_start=join_after_start, sell_during_game=sell_during_game, update_frequency=update_frequency)
         except Exception as e: #TODO find errors
             return e
     
@@ -520,35 +612,67 @@ class Frontend: # This will be where a bot (like discord) interacts
         games = self.backend.list_games()
         return games
     
-    def game_info(self, game_id:int): 
-        game = self.backend.get_game(game_id=game_id)
+    def game_info(self, game_id:int):
+        """Get information about a specific game
+
+        Args:
+            game_id (int): Game ID
+
+        Returns:
+            dict: Game information
+        """
+        #TODO validate game ID
+        game = self.backend.get_game(game_id=int(game_id))
         return game
     
     # User actions (Return information that is relevant to a specific user)
+    
+    def register(self, user_id:int, username:str):
+        user = self.backend.create_user(user_id=user_id ,display_name=username, permissions=self.default_perms)
+        if user[0] == 'success':
+            return "Registered"
+        
+        elif user[0] == 'SQLITE_CONSTRAINT_PRIMARYKEY':
+            return "User already registered"
+        
+        else: #TODO add logging here
+            return "Unknown error occurred while registering user"
 
-    def join_game(self):
-        pass
-    
-    def my_games(self):
-        pass
-    
-    def buy_stock(self):
-        pass
-    
-    def my_stocks(self):
-        pass
-    
     def change_name(self, user_id:int, name:str):
+        user = self.backend.update_user(user_id=int(user_id), display_name=str(name))
+        return user #TODO return an error instead
+    
+    def join_game(self, user_id:int, game_id:int): 
+        #TODO check permissions
+        game = self.backend.add_user_to_game(user_id=user_id, game_id=game_id)
+        return game
+    
+    def my_games(self, user_id:int):
         pass
+    
+    def buy_stock(self, user_id:int, ticker:str):
+        pass
+    
+    def my_stocks(self, user_id:int, game_id:int):
+        pass
+    
+    def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game
+        if user_id != self.owner_user_id:
+            return "You do not have permission to do this"
+        
+        self.backend.update_stock_prices()
+        #TODO update the rest!
+        
 
         
 
 # TESTING
 
 if __name__ == "__main__":
-    game = Frontend()
+    owner = os.getenv("OWNER")
+    game = Frontend(owner_user_id=owner)
     game.list_games()
-    game.create_game(user_id=11102002233, name="Test", start_date="2025-01-01", end_date="2025-01-02")
+    create = game.create_game(user_id=owner, name="TestGame", start_date="2025-05-01", end_date="2025-05-10")
     pass
     
     if False: # Backend testing
