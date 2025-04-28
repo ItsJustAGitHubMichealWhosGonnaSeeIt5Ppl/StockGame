@@ -13,31 +13,31 @@ conn = sqlite3.connect(db_name)
 cursor = conn.cursor()
 cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
 
+
 # Users table
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
     display_name TEXT,                          -- User display name
+    permissions INT NOT NULL DEFAULT 210.       -- Store users permissions.
     datetime_registered TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
 );""")
 
 cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
 
-
-
 # Games table #TODO write different game statuses and explainers
 cursor.execute("""CREATE TABLE IF NOT EXISTS games (
     game_id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_name TEXT NOT NULL UNIQUE,
-    created_by INTEGER NOT NULL,                          -- User who created the game 
+    owner_user_id INTEGER NOT NULL,                          -- User_ID who created the game 
     start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
     pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
     draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game
-    join_late BOOLEAN DEFAULT 0,                          -- When enabled, users can join once the game has started (status 'active')
+    join_late BOOLEAN DEFAULT 0,                          -- When enabled, users can join once the game has started
     allow_selling BOOLEAN DEFAULT 0,                      --  When enabled, users can sell mid-game
     start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD)
     end_date TEXT,                                        -- OPTIONAL Game end date ISO8601 (YYYY-MM-DD)
-    game_status TEXT NOT NULL DEFAULT 'open',             -- Game status
+    game_status TEXT NOT NULL DEFAULT 'open',             -- Game status ('open', 'active', 'ended')
     datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     
     FOREIGN KEY (created_by) REFERENCES users (user_id)
