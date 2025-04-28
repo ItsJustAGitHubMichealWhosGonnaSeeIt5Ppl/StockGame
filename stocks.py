@@ -115,7 +115,7 @@ class Backend:
         
         table_columns = {# Column names will be stored here, must be in the same order as SQLITE DB
         'custom': custom_table, #TODO add error if no custom table is sent
-        'games': ['id', 'name', 'owner', 'starting_money','total_picks','total_picks','exclusive_picks','join_after_start','sell_during_game','start_date','end_date','status','creation_date'],
+        'games': ['id', 'name', 'owner', 'starting_money','total_picks','exclusive_picks','join_after_start','sell_during_game','start_date','end_date','status','creation_date'],
         'stocks': ['id', 'ticker', 'exchange', 'name'],
         'users': ['id', 'username', 'permissions', 'registration_date'],
         'prices': ['id','stock_id','price','price_data'],
@@ -255,9 +255,9 @@ class Backend:
         cursor.execute("""SELECT * FROM games WHERE game_id=?""", (game_id,))
         game = cursor.fetchone()
         if game == None: # Will return none for invalid game id
-            return "Invalid ID" #TODO should this raise an error instead?
+            return "Invalid ID" #TODO Raise an error here
         else:
-            game = self._reformat_sqlite([game], 'games')
+            game = self._reformat_sqlite([game], 'games')[0]
             return game
         
     def update_game(self,): #TODO Should changing the game be allowed?
@@ -516,12 +516,13 @@ class Frontend: # This will be where a bot (like discord) interacts
         except Exception as e: #TODO find errors
             return e
     
-    def list_games(self): 
+    def list_games(self): #TODO allow filtering
         games = self.backend.list_games()
         return games
     
-    def game_info(self, game_id:int):
-        pass
+    def game_info(self, game_id:int): 
+        game = self.backend.get_game(game_id=game_id)
+        return game
     
     # User actions (Return information that is relevant to a specific user)
 

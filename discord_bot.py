@@ -63,6 +63,15 @@ async def echo(ctx): #TODO create autocompletes
 async def echo(ctx, ended:bool=True): #TODO create (ended will toggle whether to show ended games or not)
 
     await ctx.send(str(ended))
+    
+@bot.command(name='game-info', help='Get information about a single game')
+async def echo(ctx, game_id:int):
+    game = fe.game_info(int(game_id)) #TODO ERROR HANDLING
+    embed = discord.Embed(title=game['name'])
+    embed.add_field(name='Status', value=game['status'], inline=False)
+    embed.add_field(name='Start Date', value=game['start_date'], inline=True)
+    embed.add_field(name='End Date', value=game['end_date'], inline=True)
+    await ctx.reply(embed=embed)
 
 
 
