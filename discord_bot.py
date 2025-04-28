@@ -74,6 +74,11 @@ async def echo(ctx, ended:bool=True): #TODO create (ended will toggle whether to
 
     await ctx.reply(str(ended))
     
+@bot.command(name='my-stocks', help='Show your stocks.')
+async def echo(ctx, game_id:int): #TODO create 
+    picks = fe.my_stocks(user_id=ctx.author.id, game_id=game_id)
+    await ctx.reply(picks)
+    
 @bot.command(name='game-info', help='Get information about a single game')
 async def echo(ctx, game_id:int):
     game = fe.game_info(int(game_id)) #TODO ERROR HANDLING
