@@ -15,7 +15,7 @@ intents = discord.Intents(messages=True, message_content=True) # Set intent
 
 bot = commands.Bot(command_prefix="$", intents=intents) # Set up 
 
-fe = Frontend() # Frontend
+fe = Frontend(owner_user_id=os.getenv("OWNER")) # Frontend 
 
 
 # CTX data that might be relevant when a user runs a command
@@ -54,15 +54,25 @@ async def echo(ctx, *, message: str):
 
 # END AI SLOP
 # GAME RELATED
+@bot.command(name='create-game', help='List games.')
+async def echo(ctx): #TODO create autocompletes
+    games = fe.list_games()
+    await ctx.reply(games)
+
 @bot.command(name='list-games', help='List games.')
 async def echo(ctx): #TODO create autocompletes
     games = fe.list_games()
+    await ctx.reply(games)
+    
+@bot.command(name='join-game', help='Join a game.')
+async def echo(ctx, game_id:int): #TODO create autocompletes
+    games = fe.join_game(user_id=ctx.author.id, game_id=game_id)
     await ctx.reply(games)
 
 @bot.command(name='my-games', help='Show your games.')
 async def echo(ctx, ended:bool=True): #TODO create (ended will toggle whether to show ended games or not)
 
-    await ctx.send(str(ended))
+    await ctx.reply(str(ended))
     
 @bot.command(name='game-info', help='Get information about a single game')
 async def echo(ctx, game_id:int):
@@ -72,6 +82,18 @@ async def echo(ctx, game_id:int):
     embed.add_field(name='Start Date', value=game['start_date'], inline=True)
     embed.add_field(name='End Date', value=game['end_date'], inline=True)
     await ctx.reply(embed=embed)
+    
+    
+# USER RELATED
+@bot.command(name='register', help='Register to play stock games.')
+async def echo(ctx): 
+    user = fe.register(user_id=ctx.author.id, username=ctx.author.name)
+    await ctx.reply(str(user))
+    
+@bot.command(name='update', help='Update games.')
+async def echo(ctx): 
+    update = fe.update(user_id=ctx.author.id)
+    await ctx.reply(str(update))
 
 
 
