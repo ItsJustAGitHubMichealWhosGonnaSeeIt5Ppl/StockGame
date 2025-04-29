@@ -7,30 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1] - 2025.04.29
+
 ### Added
-- Changelog
-- Readme
-- _sql_get method for internal use to hopefully reduce redundancy
-- add_stock_pick, list_stock_picks methods
-- picks columns and custom columns/table option for _reformat_sqlite method
-- Docstrings for methods list_users, list_stocks, get_stock, add_stock_price,
-- Lots of placeholder methods
-- create_game method now returns status
-- Discord bot framework
-
-
+- Versioning
+- Misc todos
+- Docstrings for get_user(), list_stock_prices(), list_stock_picks(), get_game_member()
 ### Fixed
-- Data format for get_stock method
+- Misc inconsistent formatting issues
 
 ### Changed
-- join_datetime to datetime_joined in game_participants table (SQLite DB)
-- datetime_updated can no longer be null in stock_picks table (SQLite DB)
-- username to display_name in add_user method
-- get_stock and list_stock_prices methods now use _sql_get()
-- Renamed StockGame class to Backend
+- Misc cleanup of spacing and formatting
+- create_stock() method now uses new _sql methods
+- Renamed add_stock_price() to create_stock_price()
+- Renamed add_stock_pick() to create_stock_pick()
 
 ### Removed
-- Misc placeholders and completed todos
+- Unreleased changelog items
+- Misc todos
+- Backend testing
 
 ## [0.0.0] - Template
 
