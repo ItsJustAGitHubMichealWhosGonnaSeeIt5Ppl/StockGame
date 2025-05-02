@@ -19,7 +19,7 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
     display_name TEXT,                          -- User display name
-    permissions INT NOT NULL DEFAULT 210,       -- Store users permissions.
+    permissions INT NOT NULL DEFAULT 210.       -- Store users permissions.
     datetime_registered TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
 );""")
 
@@ -34,14 +34,13 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS games (
     pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
     draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game
     join_late BOOLEAN DEFAULT 0,                          -- When enabled, users can join once the game has started
-    allow_selling BOOLEAN DEFAULT 0,                      -- When enabled, users can sell mid-game
-    update_frequency TEXT NOT NULL DEFAULT 'daily',       -- How often a game should be updated 'daily', 'hourly', 'minute', 'realtime' REALTIME WILL BE BUGGY
+    allow_selling BOOLEAN DEFAULT 0,                      --  When enabled, users can sell mid-game
     start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD)
     end_date TEXT,                                        -- OPTIONAL Game end date ISO8601 (YYYY-MM-DD)
     game_status TEXT NOT NULL DEFAULT 'open',             -- Game status ('open', 'active', 'ended')
     datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     
-    FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
+    FOREIGN KEY (created_by) REFERENCES users (user_id)
 );""")
 # GAME STATUS OPTIONS
 # - 'open' # Game has not yet started, can be joined
@@ -93,7 +92,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS stock_picks (
     start_value REAL DEFAULT NULL,                     -- Start value of shares
     current_value REAL DEFAULT NULL,                   -- Current value of shares
     pick_status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
-    datetime_updated TEXT NOT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    datetime_updated TEXT NOT NULL,                -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     
     FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
     FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
