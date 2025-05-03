@@ -6,7 +6,6 @@
 
 # NEEDS FROM BACKEND:
 #  - check_user_permissions
-#  - should we add public vs private games for something like game_info?
 #  - need games objects to be able to get game info
 
 # can you buy after start date?
