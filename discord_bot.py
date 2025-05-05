@@ -1,12 +1,11 @@
 # DISCORD Bot
 # SOME AI USED
 # TODO add an invite user command? would be sent to DMs
+# TODO set up some sort of draft system for stocks
 # TODO should i add a command to show game info to all with join button?
 # TODO add error handling via discord
 
 # NEEDS FROM BACKEND:
-#  - check_user_permissions
-#  - need games objects to be able to get game info
 
 # can you buy after start date?
 # should i rename the commands? my-games and my-stocks are a bit annoying to type
@@ -44,6 +43,7 @@ fe = Frontend() # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
+    print(Backend().get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -420,7 +420,8 @@ async def create_game(interaction: discord.Interaction):
 )
 async def join_game(
     interaction: discord.Interaction, 
-    game_id: int
+    game_id: int,
+    name: str = None
 ):
     pass
 
@@ -437,6 +438,20 @@ async def buy_stock(
     game_id: int, 
     ticker: str, 
     shares: int
+):
+    pass
+
+# TODO Add remove stock pick
+# TODO Return transaction embed
+@bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
+@app_commands.describe(
+    game_id="ID of the game",
+    ticker="Stock ticker symbol"
+)
+async def remove_stock(
+    interaction: discord.Interaction, 
+    game_id: int, 
+    ticker: str
 ):
     pass
 
@@ -558,8 +573,3 @@ if TOKEN:
 else:
     print("Error: DISCORD_TOKEN environment variable not found.")
     print("Please set the DISCORD_TOKEN environment variable before running the bot.")
-    # Instructions for setting environment variables can vary by OS.
-    # Example for Linux/macOS: export DISCORD_TOKEN='YOUR_BOT_TOKEN'
-    # Example for Windows (Command Prompt): set DISCORD_TOKEN=YOUR_BOT_TOKEN
-    # Example for Windows (PowerShell): $env:DISCORD_TOKEN='YOUR_BOT_TOKEN'
-    # Consider using a .env file and the python-dotenv library for easier management.
