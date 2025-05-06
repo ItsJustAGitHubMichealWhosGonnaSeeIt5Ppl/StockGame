@@ -13,9 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New game variables/settings to `add_game` backend method
 - `list_game_members` backend method
 - `my_games` frontend method
+- Merged discord bot into main
+- `DB_NAME` and `OWNER` to frontend in `discord_boy.py`
+- `private_game` variables to `discord_boy.py`
+- `.env` example file
+- Misc Docstrings to `sqlhelper.py`
+- More validation for `add_game` and `add_stock_pick` method
 
 #### Fixed
 - Misc minor issues with both frontend and backend validation and docstrings
+- Issue where `_reformat_sqlite` was applying ID multiple times
+
 
 #### Changed
 - Frontend and backend classes now require the database name
@@ -32,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Removed
 - Unneeded imports from `stocks.py`
+- Removed `dotenv` import as it does not appear to do anything
 
 ### Database Creation (sqlite_creator_real)
 

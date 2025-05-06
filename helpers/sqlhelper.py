@@ -2,31 +2,57 @@
 import sqlite3
 from datetime import datetime, date
 
-def _iso8601(date_type:str='datetime'): # Get an ISO formatted datetime
-        now = datetime.now()
-        date_type = date_type.lower() # Easier to work with
-        if date_type == 'datetime':
-            now = now.strftime("%Y-%m-%d %H:%M:%S")
-            
-        elif date_type == 'date':
-            now = now.strftime("%Y-%m-%d")
-            
-        else:
-            raise ValueError(f"Date type must be 'datetime' or 'date', not {date_type}!")
+def _iso8601(date_type:str='datetime'): # 
+    """Get an ISO formatted date or datetime
+
+    Args:
+        date_type (str, optional): Toggle between 'date' or 'datetime'. Defaults to 'datetime'.
+
+    Raises:
+        ValueError: _description_
+
+    Returns:
+        str: Date/datetime
+    """
+    now = datetime.now()
+    date_type = date_type.lower() # Easier to work with
+    if date_type == 'datetime':
+        now = now.strftime("%Y-%m-%d %H:%M:%S")
         
-        return now
+    elif date_type == 'date':
+        now = now.strftime("%Y-%m-%d")
+        
+    else:
+        raise ValueError(f"Date type must be 'datetime' or 'date', not {date_type}!")
+    
+    return now
 
 class SqlHelper: # Simple helper for SQL
     def __init__(self, db_name:str):
+        """SQLlite helper tool
+
+        Args:
+            db_name (str): Database name
+        """
         self.conn = sqlite3.connect(db_name)
         self.cur = self.conn.cursor()
         self.cur.execute("PRAGMA foreign_keys = ON;")
     
     def _error(self, status:str='success', reason:str='none', more_info:str='None'):
-            return {'status':status,
-             'reason':reason,
-             'more_info':more_info}
-    
+        """Generate simple errors/status/results
+
+        Args:
+            status (str, optional): Status. Defaults to 'success'.
+            reason (str, optional): Reason. Defaults to 'none'.
+            more_info (str, optional): Extra info. Defaults to 'None'.
+
+        Returns:
+            dict: Status/result
+        """
+        return {'status':status,
+            'reason':reason,
+            'more_info':more_info}
+
     def _format(self, items:list, keys:list):
         item_keys = [key[0] for key in keys] # Extract keys
         formatted_items = []
@@ -59,7 +85,7 @@ class SqlHelper: # Simple helper for SQL
         keys = list()
         values = list()
         questionmarks = list()
-        for key, val in items.items(): #TODO better way?
+        for key, val in items.items():
             if val != None:  # Skip blank items
                 if mode == 'insert':
                     keys.append(key)
@@ -126,7 +152,7 @@ class SqlHelper: # Simple helper for SQL
         if order:
             for var, direction in order.items():
                 if direction.lower() not in ['asc', 'desc']: # Skip invalid order/sort
-                    continue #TODO make this return an error or something I guess
+                    raise ValueError(f'Invalid order direction {direction} specified for {var}@')
                 
                 order_items.append(f"{var} {direction.upper()}") 
             
@@ -148,5 +174,5 @@ class SqlHelper: # Simple helper for SQL
         sql_query = sql_query.format(table=table, keys=",".join(keys), filters=filter_str)
         self.cur.execute(sql_query, all_items)
         self.conn.commit()
-        return "something happened" #TODO add errors
+        return self._error(reason='updated', more_info=self.cur.lastrowid) #TODO is there errors here
     

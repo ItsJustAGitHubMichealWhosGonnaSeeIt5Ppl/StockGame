@@ -20,12 +20,10 @@ import datetime
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
+DB_NAME = os.getenv('DB_NAME')
+OWNER = os.getenv("OWNER") # Set owner ID from env
 
 # Set up intents with all necessary permissions
 intents = discord.Intents.default()
@@ -37,7 +35,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 
-fe = Frontend() # Frontend
+fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
@@ -67,7 +65,8 @@ async def on_ready():
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
-    join_after_start="Whether players can join after game starts"
+    join_after_start="Whether players can join after game starts",
+    private_game="Whether the game is private (requires owner approval for new users)"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
@@ -78,11 +77,12 @@ async def create_game_advanced(
     starting_money: float = 10000.00,
     total_picks: int = 10,
     exclusive_picks: bool = False,
-    join_after_start: bool = False
+    join_after_start: bool = False,
+    private_game: bool = False
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
-    result = fe.create_game(
+    result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
         start_date=start_date,
@@ -91,7 +91,8 @@ async def create_game_advanced(
         total_picks=total_picks,
         exclusive_picks=exclusive_picks,
         join_after_start=join_after_start,
-        sell_during_game=False
+        sell_during_game=False,
+        private_game= False
         # sell_during_game=sell_during_game
     )
     
@@ -514,7 +515,7 @@ async def game_list(
 ):
     pass
 
-@bot.tree.command(name="my-games", description="View your games and their status")
+@bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
     interaction: discord.Interaction
 ):
