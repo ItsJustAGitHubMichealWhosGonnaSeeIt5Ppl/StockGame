@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### General
+
+#### Added
+- New game variables/settings to `add_game` backend method
+- `list_game_members` backend method
+- `my_games` frontend method
+
+#### Fixed
+- Misc minor issues with both frontend and backend validation and docstrings
+
+#### Changed
+- Frontend and backend classes now require the database name
+- Moved general overview/information from top of `stocks.py` to `readme.md`
+- Moved sqlite helpers to separate script/module
+- `_reformat_sqlite` methods now uses keys from database to map custom names
+- All functions using `_reformat_sqlite` updated for new format
+- Bumped backend version to 0.0.2
+- `create` to `add` for most backend methods
+- `list_users` now users sqlite helper functions
+- Basic error handling to `add_user_to_game` backend method
+- `create_game` to `new_game` in frontend
+
+
+#### Removed
+- Unneeded imports from `stocks.py`
+
+### Database Creation (sqlite_creator_real)
+
+#### Added
+- Private game toggle (defaults to False)
+- `status` to `game_participants`
+
+#### Fixed
+- Misc docstrings/descriptions
+
+#### Changed
+- Database name is now set in `.env` file
+- `datetime_registered` to `datetime_created` in `users`
+- `game_name` to `name` in `games`
+- `game_status` to `status` in `games`
+- `price_date` to `datetime` in `stock_price`
+- `pick_status` to `status` in `stock_picks`
+
+#### Removed
+- idx_games Index
+- Misc Todos
+
 ## [0.0.1] - 2025.04.29
 
 ### Added
