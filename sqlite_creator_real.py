@@ -32,8 +32,8 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS games (
     owner_user_id INTEGER NOT NULL,                          -- User_ID who created the game 
     start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
     pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
-    draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game
-    join_late BOOLEAN DEFAULT 0,                          -- When enabled, users can join once the game has started
+    pick_date TEXT DEFAULT NULL,                          -- Date that picks must be in by.  If NULL, players can join at anytime
+    draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game.  Pick date must be on or before start date to allow this
     allow_selling BOOLEAN DEFAULT 0,                      -- When enabled, users can sell mid-game
     update_frequency TEXT NOT NULL DEFAULT 'daily',       -- How often a game should be updated 'daily', 'hourly', 'minute', 'realtime' REALTIME WILL BE BUGGY
     start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD)

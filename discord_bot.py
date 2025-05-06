@@ -1,161 +1,564 @@
 # DISCORD Bot
 # SOME AI USED
-#TODO add autocompletion 
+# TODO add an invite user command? would be sent to DMs
+# TODO set up some sort of draft system for stocks
+# TODO should i add a command to show game info to all with join button?
+# TODO add error handling via discord
+
+# NEEDS FROM BACKEND:
+
+# can you buy after start date?
+# should i rename the commands? my-games and my-stocks are a bit annoying to type
+# is my_games necessary?
 
 from stocks import Backend, Frontend
 import sys
 import os
 import logging
 import discord
+import datetime
 from discord.ext import commands
+from discord import app_commands
+from discord.ui import Button, View
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-intents = discord.Intents(messages=True, message_content=True) # Set intent
+# Set up intents with all necessary permissions
+intents = discord.Intents.default()
+intents.message_content = True
+intents.messages = True
+intents.guilds = True
+intents.members = True
+# intents.dm_messages = True # for invite user command
 
-bot = commands.Bot(command_prefix="$", intents=intents) # Set up 
+bot = commands.Bot(command_prefix="$", intents=intents)
 
-fe = Frontend(owner_user_id=os.getenv("OWNER")) # Frontend 
-
-
-# CTX data that might be relevant when a user runs a command
-## ctx.author = (Message.Author object)
-## ctx.author.nick = Users nickname in the server(?)
-## ctx.author.name = Users Discord name
-## ctx.author.id = User ID
+fe = Frontend() # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
-@bot.event #TODO who needs this
+@bot.event
 async def on_ready():
-    """Prints a message to the console when the bot is online."""
+    """Prints a message to the console when the bot is online and syncs slash commands."""
+    print(Backend().get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
-    # Optional: Set bot's presence (e.g., "Playing $help")
-    # await bot.change_presence(activity=discord.Game(name="$help"))
-
-# ping #TODO remove this once the bot is ready
-@bot.command(name='ping', help='Responds with Pong! and the bot latency.')
-async def ping(ctx):
-    """Simple command to check if the bot is responsive."""
-    latency = bot.latency * 1000 # Convert latency to milliseconds
-    
-    
-
-    await ctx.reply(f'Pong! Latency: {latency:.2f}ms', ephemeral=True ) # ephemeral=True does not work # Reply replies to the user who sent it, which is a good start.
-
-# echo #TODO remove this once bot is ready
-@bot.command(name='echo', help='Repeats the message provided by the user.')
-async def echo(ctx, *, message: str):
-    """Takes a string as input and sends it back."""
-    # `*` makes it take all following text as one argument
-    # `message: str` type hints that the argument should be a string
-    await ctx.send(f"{message} Author:[{ctx.author}] ")
+    try:
+        # Sync commands globally
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+        for command in synced:
+            print(f"   - {command.name}: {command.description}")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
 
 
-# END AI SLOP
 # GAME RELATED
-@bot.command(name='create-game', help='List games.')
-async def echo(ctx): #TODO create autocompletes
-    games = fe.list_games()
-    await ctx.reply(games)
-
-@bot.command(name='list-games', help='List games.')
-async def echo(ctx): #TODO create autocompletes
-    games = fe.list_games()
-    await ctx.reply(games)
+# TODO can i make parameters required? if not, add (optional) to the description
+# TODO should i add autofill to anything? 
+@bot.tree.command(name="create-game-advanced", description="Create a new stock game without a wizard")
+@app_commands.describe(
+    name="Name of the game",
+    start_date="Start date (YYYY-MM-DD)",
+    end_date="End date (YYYY-MM-DD)",
+    starting_money="Starting money amount",
+    total_picks="Number of stocks each player can pick",
+    exclusive_picks="Whether stocks can only be picked once",
+    join_after_start="Whether players can join after game starts"
+    # sell_during_game="Whether players can sell stocks during game"
+)
+async def create_game_advanced(
+    interaction: discord.Interaction,
+    name: str,
+    start_date: str,
+    end_date: str = None,
+    starting_money: float = 10000.00,
+    total_picks: int = 10,
+    exclusive_picks: bool = False,
+    join_after_start: bool = False
+    # sell_during_game: bool = False
+):
+    # Create game using frontend and get the result
+    result = fe.create_game(
+        user_id=interaction.user.id,
+        name=name,
+        start_date=start_date,
+        end_date=end_date,
+        starting_money=starting_money,
+        total_picks=total_picks,
+        exclusive_picks=exclusive_picks,
+        join_after_start=join_after_start,
+        sell_during_game=False
+        # sell_during_game=sell_during_game
+    )
     
-@bot.command(name='join-game', help='Join a game.')
-async def echo(ctx, game_id:int): #TODO create autocompletes
-    games = fe.join_game(user_id=ctx.author.id, game_id=game_id)
-    await ctx.reply(games)
-
-@bot.command(name='my-games', help='Show your games.')
-async def echo(ctx, ended:bool=True): #TODO create (ended will toggle whether to show ended games or not)
-
-    await ctx.reply(str(ended))
-    
-@bot.command(name='my-stocks', help='Show your stocks.')
-async def echo(ctx, game_id:int): #TODO create 
-    picks = fe.my_stocks(user_id=ctx.author.id, game_id=game_id)
-    await ctx.reply(picks)
-    
-@bot.command(name='game-info', help='Get information about a single game')
-async def echo(ctx, game_id:int):
-    game = fe.game_info(int(game_id)) #TODO ERROR HANDLING
-    embed = discord.Embed(title=game['name'])
-    embed.add_field(name='Status', value=game['status'], inline=False)
-    embed.add_field(name='Start Date', value=game['start_date'], inline=True)
-    embed.add_field(name='End Date', value=game['end_date'], inline=True)
-    await ctx.reply(embed=embed)
-    
-    
-# USER RELATED
-@bot.command(name='register', help='Register to play stock games.')
-async def echo(ctx): 
-    user = fe.register(user_id=ctx.author.id, username=ctx.author.name)
-    await ctx.reply(str(user))
-    
-@bot.command(name='update', help='Update games.')
-async def echo(ctx): 
-    update = fe.update(user_id=ctx.author.id)
-    await ctx.reply(str(update))
-
-
-
-# MORE AI SLOP
-# Command: template_command (with arguments)
-@bot.command(name='template', help='Example command that accepts arguments.')
-async def template_command(ctx, arg1: str, arg2: int, *optional_args):
-    """
-    A template command to demonstrate argument handling.
-
-    Args:
-        ctx: The command context.
-        arg1 (str): A required string argument.
-        arg2 (int): A required integer argument.
-        *optional_args: Any additional arguments passed to the command.
-                         These will be captured as a tuple.
-    """
-    # Send a message confirming the received arguments
-    response = f"Received template command!\n"
-    response += f"Required argument 1 (string): {arg1}\n"
-    response += f"Required argument 2 (integer): {arg2}\n"
-
-    # Check if any optional arguments were provided
-    if optional_args:
-        response += f"Optional arguments: {', '.join(optional_args)}"
+    # If result is None or empty, the game was created successfully
+    if not result:
+        embed = discord.Embed(
+            title="Game Created Successfully",
+            description=f"Game '{name}' has been created!",
+            color=discord.Color.green()
+        )
     else:
-        response += "No optional arguments provided."
+        # If create game failed, show the error message
+        embed = discord.Embed(
+            title="Game Creation Failed",
+            description=result,
+            color=discord.Color.red()
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # --- Your Custom Logic Here ---
-    # Add the specific actions you want this command to perform.
-    # For example, you could use the arguments to query a database,
-    # perform a calculation, interact with an API, etc.
-    #
-    # Example: Check if arg2 is positive
-    if arg2 > 0:
-        response += f"\nArgument 2 ({arg2}) is positive!"
+# TODO ask how start date works and remove "can users join after start" if not needed
+# this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
+# THIS ITERATION IS WORKING IN THE CURRENT STATE
+@bot.tree.command(name="create-game", description="Guided setup for stock game creation")
+async def create_game(interaction: discord.Interaction):
+    # Create the initial embed
+    embed = discord.Embed(
+        title="Welcome to the Game Creation Wizard!",
+        description="Click the button below to start creating your game.",
+        color=discord.Color.blue()
+    )
+    
+    # Create a button
+    game_creation_wizard_start = discord.ui.Button(
+        label="Create Stock Game",
+        emoji="🛠️",
+        style=discord.ButtonStyle.primary
+    )
+    
+    # Create a view to hold the button
+    game_creation_button_view = discord.ui.View()
+    game_creation_button_view.add_item(game_creation_wizard_start)
+    
+    # Send the initial message with the embed and button
+    await interaction.response.send_message(embed=embed, view=game_creation_button_view, ephemeral=True)
+    
+    # Define what happens when the button is clicked
+    async def game_creation_wizard_start_callback(interaction: discord.Interaction):
+        # Create a modal (popup) for text input
+        initial_wizard_modal = discord.ui.Modal(title="Create Game Wizard", timeout=60)
+
+        # Add a text input field for each text and number input
+        name_input = discord.ui.TextInput(
+            label="Name of your Stock Game",
+            placeholder=f"{interaction.user.display_name}'s Stock Game",
+            required=True,
+            max_length=100,
+            min_length=3,
+        )
+
+        start_date_input = discord.ui.TextInput(
+            label="Start Date *No buying after this date",
+            placeholder=(datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y-%m-%d"), # Default to 7 days from now
+            required=True,
+            max_length=10,
+            min_length=10,
+            style=discord.TextStyle.short
+        )
+
+        end_date_input = discord.ui.TextInput(
+            label="End Date *leave blank for no end date",
+            placeholder="YYYY-MM-DD",
+            required=False,
+            max_length=10,
+            min_length=10,
+            style=discord.TextStyle.short
+        )
+
+        starting_money_input = discord.ui.TextInput(
+            label="Starting Money Amount",
+            placeholder="10000",
+            required=False
+        )
+
+        total_picks_input = discord.ui.TextInput(
+            label="Total Picks",
+            placeholder="10",
+            required=False
+        )
+
+        initial_wizard_modal.add_item(name_input)
+        initial_wizard_modal.add_item(start_date_input)
+        initial_wizard_modal.add_item(end_date_input)
+        initial_wizard_modal.add_item(starting_money_input)
+        initial_wizard_modal.add_item(total_picks_input)
+
+        # Show the modal
+        await interaction.response.send_modal(initial_wizard_modal)
+        
+        # Define what happens when the modal is submitted
+        async def initial_wizard_callback(interaction: discord.Interaction):
+            # # Ask if wanted end date - couldn't get the no button to work
+            # # Create an end date embed
+            # end_date_embed = discord.Embed(
+            #     title="End Date",
+            #     description="Do you want to set an end date for the game?",
+            #     color=discord.Color.blue()
+            # )
+
+            # end_date_yes = discord.ui.Button(
+            #     label="Yes",
+            #     style=discord.ButtonStyle.success,
+            #     custom_id="end_date_yes"
+            # )
+
+            # end_date_no = discord.ui.Button(
+            #     label="No",
+            #     style=discord.ButtonStyle.danger,
+            #     custom_id="end_date_no"
+            # )
+
+            # end_date_view = discord.ui.View()
+
+            # end_date_view.add_item(end_date_yes)
+            # end_date_view.add_item(end_date_no)
+
+            # await interaction.response.edit_message(embed=end_date_embed, view=end_date_view)
+            
+            # # Define what happens when the end date button is clicked
+            # async def end_date_callback(interaction: discord.Interaction):                
+            #     # Check which button was clicked
+            #     if interaction.data["custom_id"] == "end_date_yes":
+            #         end_date_input = discord.ui.TextInput(
+            #             label="End Date (YYYY-MM-DD)",
+            #             placeholder="YYYY-MM-DD",
+            #             required=True,
+            #             max_length=10,
+            #             min_length=10,
+            #             style=discord.TextStyle.short
+            #         )
+                    
+            #         end_date_modal = discord.ui.Modal(title="Create Game Wizard", timeout=60)
+
+            #         end_date_modal.add_item(end_date_input)
+
+            #         await interaction.response.send_modal(end_date_modal)
+                
+            #     else:
+            #         end_date_input = None
+                
+            #     async def end_date_modal_callback(interaction: discord.Interaction):
+            # Create a exclusive picks embed
+            exclusive_picks_embed = discord.Embed(
+                title="Do you want exclusive picks?",
+                description="If you select 'Yes', a stock can only be picked by one player. If you select 'No', a stock can be picked by multiple players.",
+                color=discord.Color.blue()
+            )
+
+            # Create buttons for exclusive picks
+            exclusive_picks_yes = discord.ui.Button(
+                label="Yes",
+                style=discord.ButtonStyle.success,
+                custom_id="exclusive_picks_yes"
+            )
+
+            exclusive_picks_no = discord.ui.Button(
+                label="No",
+                style=discord.ButtonStyle.danger,
+                custom_id="exclusive_picks_no"
+            )
+
+            exclusive_picks_view = discord.ui.View()
+            exclusive_picks_view.add_item(exclusive_picks_yes)
+            exclusive_picks_view.add_item(exclusive_picks_no)
+            
+            # Send the response
+            await interaction.response.edit_message(embed=exclusive_picks_embed, view=exclusive_picks_view)
+
+            # Define what happens when the exclusive picks button is clicked
+            async def exclusive_picks_callback(interaction: discord.Interaction):
+                # Check which button was clicked
+                if interaction.data["custom_id"] == "exclusive_picks_yes":
+                    exclusive_picks = True
+                else:
+                    exclusive_picks = False
+                
+                # Create a response embed for join after start
+                join_after_start_embed = discord.Embed(
+                    title="Do you want players to join after the game starts?",
+                    description="If you select 'Yes', players can join after the game starts. If you select 'No', players cannot join after the game starts.",
+                    color=discord.Color.blue()
+                )
+
+                # Create buttons for join after start
+                join_after_start_yes = discord.ui.Button(
+                    label="Yes",
+                    style=discord.ButtonStyle.success,
+                    custom_id="join_after_start_yes"
+                )
+
+                join_after_start_no = discord.ui.Button(
+                    label="No",
+                    style=discord.ButtonStyle.danger,
+                    custom_id="join_after_start_no"
+                )
+
+                join_after_start_view = discord.ui.View()
+                join_after_start_view.add_item(join_after_start_yes)
+                join_after_start_view.add_item(join_after_start_no)
+                
+                # Send the response
+                await interaction.response.edit_message(embed=join_after_start_embed, view=join_after_start_view)
+
+                # Define what happens when the join after start button is clicked
+                async def join_after_start_callback(interaction: discord.Interaction):                            
+                    # Check which button was clicked
+                    if interaction.data["custom_id"] == "join_after_start_yes":
+                        join_after_start = True
+                    else:
+                        join_after_start = False
+
+                    game_name=name_input.value
+                    game_start_date=start_date_input.value
+                    game_end_date=end_date_input.value if end_date_input.value else None
+                    game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
+                    game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
+                    
+                    # Confirm the game creation with the provided inputs
+                    confirmation_embed = discord.Embed(
+                        title="Game Creation Confirmation",
+                        description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}\nJoin After Start: {join_after_start}",
+                        color=discord.Color.blue()
+                    )
+                    confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
+                
+                    confirmation_view = discord.ui.View()
+
+                    confirm_button = discord.ui.Button(
+                        label="Confirm",
+                        style=discord.ButtonStyle.success,
+                        custom_id="confirm_game_creation"
+                    )
+
+                    cancel_button = discord.ui.Button(
+                        label="Cancel",
+                        style=discord.ButtonStyle.danger,
+                        custom_id="cancel_game_creation"
+                    )
+
+                    confirmation_view.add_item(confirm_button)
+                    confirmation_view.add_item(cancel_button)
+                    await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
+
+                    # Define what happens when the confirm button is clicked
+                    async def confirm_callback(interaction: discord.Interaction):
+                        # Create the game using the provided inputs
+                        result = fe.create_game(
+                            user_id=interaction.user.id,
+                            name=game_name,
+                            start_date=game_start_date,
+                            end_date=game_end_date,
+                            starting_money=game_starting_money,
+                            total_picks=game_total_picks,
+                            exclusive_picks=exclusive_picks,
+                            join_after_start=join_after_start,
+                            sell_during_game=False # Placeholder for sell_during_game
+                            # sell_during_game=sell_during_game
+                        )
+                        
+                        # Check the result and create the response embed
+                        if not result:
+                            creation_status_embed = discord.Embed(
+                                title="Game Created Successfully",
+                                description=f"Game '{name_input.value}' has been created!",
+                                color=discord.Color.green()
+                            )
+                        else:
+                            creation_status_embed = discord.Embed(
+                                title="Game Creation Failed",
+                                description=result,
+                                color=discord.Color.red()
+                            )
+                        
+                        await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                    
+                    # Define what happens when the cancel button is clicked
+                    async def cancel_callback(interaction: discord.Interaction):
+                        cancel_embed = discord.Embed(
+                            title="Game Creation Cancelled",
+                            description="The game creation process has been cancelled.",
+                            color=discord.Color.red()
+                        )
+                        await interaction.response.edit_message(embed=cancel_embed, view=None)                    
+        
+                    # Set the confirm button callbacks
+                    confirm_button.callback = confirm_callback
+                    cancel_button.callback = cancel_callback
+            
+                # Set the join after button callback
+                join_after_start_yes.callback = join_after_start_callback
+                join_after_start_no.callback = join_after_start_callback
+
+            # Set the exclusive button callback
+            exclusive_picks_yes.callback = exclusive_picks_callback
+            exclusive_picks_no.callback = exclusive_picks_callback
+
+                # Set the end date modal callback
+                # end_date_modal.on_submit = end_date_modal_callback
+
+            # Set the end date yes button callback
+            # end_date_yes.callback = end_date_callback
+            # Set end date no button callback, skipping the modal
+            # end_date_no.callback = end_date_callback
+
+        # Set the modal callback
+        initial_wizard_modal.on_submit = initial_wizard_callback
+
+    # Set the button callback
+    game_creation_wizard_start.callback = game_creation_wizard_start_callback    
+
+# TODO Add user to game
+# TODO Return success/error embed
+@bot.tree.command(name="join-game", description="Join an existing stock game")
+@app_commands.describe(
+    game_id="ID of the game to join"
+)
+async def join_game(
+    interaction: discord.Interaction, 
+    game_id: int,
+    name: str = None
+):
+    pass
+
+# TODO Process purchase
+# TODO Return transaction embed
+@bot.tree.command(name="buy-stock", description="Buy a stock in a game")
+@app_commands.describe(
+    game_id="ID of the game",
+    ticker="Stock ticker symbol",
+    shares="Number of shares to buy"
+)
+async def buy_stock(
+    interaction: discord.Interaction, 
+    game_id: int, 
+    ticker: str, 
+    shares: int
+):
+    pass
+
+# TODO Add remove stock pick
+# TODO Return transaction embed
+@bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
+@app_commands.describe(
+    game_id="ID of the game",
+    ticker="Stock ticker symbol"
+)
+async def remove_stock(
+    interaction: discord.Interaction, 
+    game_id: int, 
+    ticker: str
+):
+    pass
+
+# TODO Get user's stocks from frontend
+# TODO Add autofill for user's games
+# TODO Display stocks in an embed with stock info
+# TODO Add buttons for buying/selling stocks?
+# TODO Add pagination if there are many stocks (10+)
+# TODO Add last updated date/time
+@bot.tree.command(name="my-stocks", description="View your stocks in a game")
+@app_commands.describe(
+    game_id="ID of the game"
+)
+async def my_stocks(
+    interaction: discord.Interaction,
+    game_id: int
+):
+    pass
+
+# TODO Add join game button to game info embed
+# TODO change to show only public games
+# TODO add buttons for joining games?
+# TODO add autofill for user's games?
+@bot.tree.command(name="game-info", description="View information about a game")
+@app_commands.describe(
+    game_id="ID of the game to view"
+)
+async def game_info(
+    interaction: discord.Interaction, 
+    game_id: int
+):
+        
+    game = fe.game_info(game_id)
+
+    if not game:
+        embed = discord.Embed(
+            title="Game Not Found",
+            description=f"Could not find a game with ID {game_id}.",
+            color=discord.Color.red()
+        )
     else:
-        response += f"\nArgument 2 ({arg2}) is not positive."
-    # --- End Custom Logic ---
+        embed = discord.Embed(
+            title="Game #{game_id}",
+            description=f"Name: {game['name']}\nStart Date: {game['start_date']}\nEnd Date: {game['end_date']}\nStarting Money: ${game['starting_money']}\nTotal Picks: {game['total_picks']}\nExclusive Picks: {game['exclusive_picks']}\nJoin After Start: {game['join_after_start']}\nSell During Game: {game['sell_during_game']}\nStatus: {game['status']}",
+            color=discord.Color.blue()
+        )
 
-    await ctx.send(response)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# TODO get list of public games
+#   - list the user count
+#   - list the game status
+#   - list the game name
+# TODO add pagination if there are many games (10+)
+# TODO add buttons for joining games?
+# TODO add a joinable parameter?
+@bot.tree.command(name="game-list", description="View a list of all games")
+async def game_list(
+    interaction: discord.Interaction
+):
+    pass
 
-# Error Handling for the template command (optional but recommended)
-@template_command.error
-async def template_command_error(ctx, error):
-    """Handles errors specifically for the template_command."""
-    if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"Missing required argument: `{error.param.name}`. Use `$help template` for usage.")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.send("Invalid argument type provided. Please check argument types (e.g., the second argument must be a number). Use `$help template` for usage.")
+@bot.tree.command(name="my-games", description="View your games and their status")
+async def my_games(
+    interaction: discord.Interaction
+):
+    # Get user's games from frontend
+    games = fe.my_games(interaction.user.id)
+    
+    # Create embed for the response
+    embed = discord.Embed(
+        title="Your Games",
+        color=discord.Color.blue()
+    )
+    
+    if not games:
+        embed.description = "No games found"
     else:
-        # Handle other potential errors or re-raise if needed
-        print(f"An error occurred in template_command: {error}")
-        await ctx.send("An unexpected error occurred while running the command.")
+        # Add each game to the embed
+        for game in games:
+            # Create status indicator
+            status_emoji = "🟢" if game['status'] == 'open' else "🔴"
+            
+            # Add game field
+            embed.add_field(name=f"{status_emoji} Game #{game['id']}: {game['name']}")
+    
+    # Add footer with command usage
+    embed.set_footer(text=f"Use /game-info <game_id> for more details")
+    
+    # Send the response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
+# TODO Get leaderboard data from backend
+# TODO Create autofill for user's games
+# TODO Create paginated embed with leaderboard
+# TODO Add navigation buttons if multiple pages
+@bot.tree.command(name="leaderboard", description="View game leaderboard")
+@app_commands.describe(
+    game_id="ID of the game",
+    user_id="Optional: View specific user's position"
+)
+async def leaderboard(
+    interaction: discord.Interaction, 
+    game_id: int, 
+    user_id: discord.User = None
+):
+    pass
 
 # Run the bot using the token
 if TOKEN:
@@ -170,8 +573,3 @@ if TOKEN:
 else:
     print("Error: DISCORD_TOKEN environment variable not found.")
     print("Please set the DISCORD_TOKEN environment variable before running the bot.")
-    # Instructions for setting environment variables can vary by OS.
-    # Example for Linux/macOS: export DISCORD_TOKEN='YOUR_BOT_TOKEN'
-    # Example for Windows (Command Prompt): set DISCORD_TOKEN=YOUR_BOT_TOKEN
-    # Example for Windows (PowerShell): $env:DISCORD_TOKEN='YOUR_BOT_TOKEN'
-    # Consider using a .env file and the python-dotenv library for easier management.

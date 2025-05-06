@@ -86,7 +86,7 @@ class Backend:
         except Exception as e:
             return 'OTHER_ERROR', e
     
-        return "success", "Added" #TODO more info?
+        return "success", "added" #TODO more info?
         
     def _sql_get(self, table:str, columns:list=["*"], filters:dict=None, order:dict=None): 
         """INTERNAL USE ONLY! Run SQL get queries
@@ -117,6 +117,7 @@ class Backend:
         sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
         cursor.execute(sql_query, filter_items)
         resp = cursor.fetchall()
+        test = cursor.description #TODO use this to map field names?
         return resp #TODO add errors
     
     def _sql_update(self, table:str, filters:dict, items:dict):
@@ -161,7 +162,7 @@ class Backend:
         
         table_columns = {# Column names will be stored here, must be in the same order as SQLITE DB
         'custom': custom_table, #TODO add error if no custom table is sent
-        'games': ['id', 'name', 'owner', 'starting_money','total_picks','exclusive_picks','join_after_start','sell_during_game','update_frequency','start_date','end_date','status','creation_date'],
+        'games': ['id', 'name', 'owner', 'starting_money','total_picks','pick_date','exclusive_picks','sell_during_game','update_frequency','start_date','end_date','status','creation_date'],
         'stocks': ['id', 'ticker', 'exchange', 'name'],
         'users': ['id', 'username', 'permissions', 'registration_date'],
         'participants': ['id', 'user_id', 'game_id', 'joined', 'current_value', 'last_updated'], 
@@ -250,7 +251,7 @@ class Backend:
     
     # # GAME MANAGEMENT ACTIONS # #
     
-    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
@@ -259,11 +260,11 @@ class Backend:
             user_id (int): Game creators user ID
             name (str): Name for this game
             start_date (str): Start date in ISO8601 (YYYY-MM-DD)
-            end_date (str, optional): Optional end date ISO8601 (YYYY-MM-DD). Defaults to None.
+            end_date (str, optional): End date ISO8601 (YYYY-MM-DD). Defaults to None.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
+            pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Defaults to None (allow players to join anytime)
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Defaults to False.
-            join_after_start (bool, optional): Whether users can join late. Defaults to False.
+            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled (players cannot pick the same stocks), pick date must be on or before start date Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
             
@@ -271,12 +272,23 @@ class Backend:
         Returns:
             str: Game creation status
         """
+        #TODO should these be exceptions
+        #TODO move more validation here
+        if draft_mode and datetime.strptime(start_date, "%Y-%m-%d").date() < datetime.strptime(pick_date, "%Y-%m-%d").date():
+            return "Error! Pick date must be before start date when draft mode is enabled!"
+            
+        elif starting_money < 1.0:
+            return "Error! Starting money must be atleast 1."
+        
+        elif total_picks < 1:
+            return "Error! Users must be allowed to pick atleast 1 stock."
+        
         items = {'game_name': name,
                  'owner_user_id': user_id,
                  'start_money': starting_money,
                  'pick_count': total_picks,
-                 'draft_mode': exclusive_picks,
-                 'join_late': join_after_start,
+                 'draft_mode': draft_mode,
+                 'pick_date': pick_date,
                  'allow_selling': sell_during_game,
                  'update_frequency': update_frequency,
                  'start_date': start_date,
@@ -500,7 +512,7 @@ class Backend:
         pick = self._sql_update(table="stock_picks", filters=filters, items=items)
         return pick # TODO add error handling
     
-    def update_stock_picks(self, date:str, game_id:int=None): #TODO add update_stock_picks #TODO allow blank date to use latest
+    def update_stock_picks(self, date:str, game_id:int=None): #TODO allow blank date to use latest
         #TODO implement game_id filtering
         pending_picks = self.list_stock_picks(status='pending_buy') #TODO handle pending_sell here too
         for pick in pending_picks: #TODO make sure a user doesn't have more than 10 stocks
@@ -584,34 +596,38 @@ class Frontend: # This will be where a bot (like discord) interacts
         pass
     
     # Game actions (Return information that is relevant to overall games)
-    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, total_picks:int=10, exclusive_picks:bool=False, join_after_start:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
-        """Create a new game.
+    def create_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+        """Create a new stock game!
+        
+        WARNING: If using realtime, expect issues
 
         Args:
             user_id (int): Game creators user ID
             name (str): Name for this game
-            start_date (str): Start date in ISO8601 (YYYY-MM-DD). Must be on or after current date
-            end_date (str, optional): Optional end date ISO8601 (YYYY-MM-DD). Defaults to None.
-            starting_money (float, optional): Starting money. Minimum 10. Defaults to 10000.00.
-            total_picks (int, optional): Amount of stocks each user picks. Minimum 1. Defaults to 10.
-            exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Defaults to False.
-            join_after_start (bool, optional): Whether users can join late. Defaults to False.
+            start_date (str): Start date in ISO8601 (YYYY-MM-DD)
+            end_date (str, optional): End date ISO8601 (YYYY-MM-DD). Defaults to None.
+            starting_money (float, optional): Starting money. Defaults to $10000.00.
+            pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Defaults to None (allow players to join anytime)
+            total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
+            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled (players cannot pick the same stocks), pick date must be on or before start date Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
-        
+            
         Returns:
             str: Game creation status
         """
         #TODO Should the user be automatically added to their own game? Probably?
-        # Data validation 
-        if starting_money < 10.0: 
-            return "Error! Starting money must be atleast 10."
-        
-        elif total_picks < 1:
-            return "Error! Users must be allowed to pick atleast 1 stock."
-        
+        # Data validation
+        #TODO add validation for update_frequency
+        try: # Validate dates are correct format
+            startdate = datetime.strptime(start_date, "%Y-%m-%d").date()
+            enddate = datetime.strptime(end_date, "%Y-%m-%d").date()
+            #pickdate = datetime.strptime(pick_date, "%Y-%m-%d").date() #TODO add me!
+        except: #TODO find specific exceptions
+            return "Error! Start or end date format is invalid!"
+            
         # Date checks
-        elif datetime.strptime(start_date, "%Y-%m-%d").date() < date.today():
+        if datetime.strptime(start_date, "%Y-%m-%d").date() < date.today():
             return "Error! Start date must not be in the past!"
         
         elif end_date != None and datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
@@ -634,7 +650,19 @@ class Frontend: # This will be where a bot (like discord) interacts
             return f"Error! User is {reason}" 
     
         try:  # User is allowed to create games
-            self.backend.create_game(user_id=int(user_id), name=name, start_date=start_date, end_date=end_date, starting_money=starting_money, total_picks=total_picks, exclusive_picks=exclusive_picks, join_after_start=join_after_start, sell_during_game=sell_during_game, update_frequency=update_frequency)
+            self.backend.create_game(
+                user_id=int(user_id), 
+                name=str(name), 
+                start_date=str(start_date), 
+                end_date=str(end_date), 
+                starting_money=float(starting_money), 
+                total_picks=int(total_picks), 
+                pick_date=str(pick_date), 
+                draft_mode=bool(draft_mode), 
+                sell_during_game=bool(sell_during_game), 
+                update_frequency=str(update_frequency)
+                )
+            
         except Exception as e: #TODO find errors
             return e
     
@@ -730,6 +758,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         part_id = self.backend.get_participant_id(user_id=user_id, game_id=game_id) # TODO error validation
         picks = self.backend.list_stock_picks(participant_id=part_id)
         return picks
+    
+    def start_draft(user_id:int, game_id:int): #TODO add
+        pass
     
     def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game #TODO add docstring
         #TODO VALIDATION!!!!!!!!!
