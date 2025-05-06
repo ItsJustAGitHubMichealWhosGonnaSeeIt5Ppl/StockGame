@@ -61,9 +61,9 @@ class Backend:
         questionmarks = list()
         for key, val in items.items(): #TODO better way?
             if val != None:  # Skip blank items
-                if mode is 'insert':
+                if mode == 'insert':
                     keys.append(key)
-                elif mode is 'set':
+                elif mode == 'set':
                     keys.append(key +'=?')
                 values.append(val)
                 questionmarks.append("?") #TODO this is dogshit
