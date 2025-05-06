@@ -176,3 +176,14 @@ class SqlHelper: # Simple helper for SQL
         self.conn.commit()
         return self._error(reason='updated', more_info=self.cur.lastrowid) #TODO is there errors here
     
+    def delete(self, table:str, filters:dict):
+        sql_query = """DELETE FROM {table} {filters}"""
+        
+        filter_str, filter_items = self._sql_filters(filters)
+            
+        all_items = filter_items
+            
+        sql_query = sql_query.format(table=table, filters=filter_str)
+        self.cur.execute(sql_query, all_items)
+        self.conn.commit()
+        return self._error(reason='deleted', more_info=self.cur.lastrowid) #TODO is there errors here

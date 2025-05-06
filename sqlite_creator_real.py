@@ -76,6 +76,7 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
     participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     game_id INTEGER NOT NULL,
+    name TEXT,                              -- Optional 'team' name
     status TEXT DEFAULT 'active',           -- A participant (player) status.  Can be 'pending', 'active', 'inactive'.  Pending will be used if a player tries to join a private game
     datetime_joined TEXT NOT NULL,          -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     current_value REAL DEFAULT NULL,        -- Current portfolio value

@@ -19,11 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env` example file
 - Misc Docstrings to `sqlhelper.py`
 - More validation for `add_game` and `add_stock_pick` method
+- Basic filtering to `list_games` method
+- More filtering for `list_stock_picks` method
+- `remove_stock_pick` and `remove_pick` methods
+- `delete` method to `sqlhelper.py`
 
 #### Fixed
 - Misc minor issues with both frontend and backend validation and docstrings
 - Issue where `_reformat_sqlite` was applying ID multiple times
-
 
 #### Changed
 - Frontend and backend classes now require the database name
@@ -36,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `list_users` now users sqlite helper functions
 - Basic error handling to `add_user_to_game` backend method
 - `create_game` to `new_game` in frontend
-
+- `user_id` to `owner` in `add_game` and `new_game` method
 
 #### Removed
 - Unneeded imports from `stocks.py`
@@ -46,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 - Private game toggle (defaults to False)
-- `status` to `game_participants`
+- `status`, `name` to `game_participants`
 
 #### Fixed
 - Misc docstrings/descriptions

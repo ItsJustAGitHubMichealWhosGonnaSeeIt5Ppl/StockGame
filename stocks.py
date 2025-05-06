@@ -154,13 +154,13 @@ class Backend:
     
     # # GAME MANAGEMENT ACTIONS # #
     
-    def add_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def add_game(self, owner:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
 
         Args:
-            user_id (int): Game creators user ID
+            owner (int): ID of game creator/owner
             name (str): Name for this game
             start_date (str): Start date in ISO8601 (YYYY-MM-DD)
             end_date (str, optional): End date ISO8601 (YYYY-MM-DD). Defaults to None.
@@ -192,7 +192,7 @@ class Backend:
             raise ValueError("End date cannot be before start date.")
         
         items = {'name': name,
-                 'owner_user_id': user_id,
+                 'owner_user_id': owner,
                  'start_money': starting_money,
                  'pick_count': total_picks,
                  'draft_mode': draft_mode,
@@ -207,16 +207,16 @@ class Backend:
         game = self.sql.insert(table='games', items=items)
         return game #TODO error catching and checking
     
-    def list_games(self): # List all games
+    def list_games(self, show_private:bool=False): # List all games
         """List all games
 
         Args:
+            show_private (bool, optional): Whether to show private games. Defaults to False (no).
 
         Returns:
             list: List of games
         """
-        filters = {}    #TODO Get date filtering working 
-        
+        filters = {'private_game': show_private if show_private == False else None} #TODO This is a bad solution
         games = self.sql.get(table='games',filters=filters) 
         return self._reformat_sqlite(games, table='games') # Send games data to be reformatted
     
@@ -237,7 +237,9 @@ class Backend:
             game = self._reformat_sqlite(game, table='games')[0] #TODO test
             return game
         
-    def update_game(self,): #TODO Should changing the game be allowed?
+    def update_game(self, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'): 
+        #TODO only allow starting money, picks to be edited before game has started
+        
         pass
     
     # # STOCK ACTIONS # #
@@ -318,7 +320,7 @@ class Backend:
     
     # # STOCK PRICE ACTIONS # # 
     
-    def add_stock_price(self, ticker:str, price:float, datetime:str=None): #TODO IF date is none use today #TODO maybe use stock_ids here?
+    def add_stock_price(self, ticker:str, price:float, datetime:str): #TODO maybe use stock_ids here?
         """Add price data for a stock (should be done at close)
 
         Args:
@@ -396,7 +398,7 @@ class Backend:
         pick = self.sql.insert(table='stock_picks', items=items)
         return pick
     
-    def list_stock_picks(self, participant_id:int=None, status:str=None,): 
+    def list_stock_picks(self, participant_id:int=None, status:str=None, stock_id:int=None): 
         """List stock picks.  Optionally, filter by a status or participant ID
 
         Args:
@@ -410,7 +412,8 @@ class Backend:
             raise ValueError(f'Status {status} is not valid!')
         
         filters = {'status': status,
-                   'participation_id': participant_id}
+                   'participation_id': participant_id,
+                   'stock_id': stock_id}
 
         picks = self.sql.get(table='stock_picks', filters=filters)
         return self._reformat_sqlite(picks, table='stock_picks')
@@ -431,6 +434,11 @@ class Backend:
         
         pick = self.sql.update(table="stock_picks", filters=filters, items=items)
         return pick # TODO add error handling
+    
+    def remove_stock_pick(self, pick_id:int):
+        #TODO more validation?
+        delete = self.sql.delete(table='stock_picks', filters={'pick_id': pick_id, 'status': 'pending_buy'})
+        return delete
     
     def update_stock_picks(self, date:str, game_id:int=None): #TODO allow blank date to use latest
         #TODO implement game_id filtering
@@ -455,9 +463,10 @@ class Backend:
         #TODO return something
             
     # # GAME PARTICIPATION ACTIONS # #
-    def add_user_to_game(self, user_id:int, game_id:int):
+    def add_user_to_game(self, user_id:int, game_id:int, name:str=None):
         items = {'user_id':user_id, 
-                 'game_id':game_id, 
+                 'game_id':game_id,
+                 'name': name,
                  'datetime_joined': _iso8601()}
         
         game = self.sql.insert(table='game_participants', items=items)
@@ -545,13 +554,13 @@ class Frontend: # This will be where a bot (like discord) interacts
         pass
     
     # Game actions (Return information that is relevant to overall games)
-    def new_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def new_game(self, owner:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
 
         Args:
-            user_id (int): Game creators user ID
+            owner (int): Game creators user ID
             name (str): Name for this game
             start_date (str): Start date in ISO8601 (YYYY-MM-DD)
             end_date (str, optional): End date ISO8601 (YYYY-MM-DD). Defaults to None.
@@ -585,19 +594,19 @@ class Frontend: # This will be where a bot (like discord) interacts
             return "Error! Start date must not be in the past!"
     
         try: # Try to get user
-            user = self.backend.get_user(user_id=user_id)
+            user = self.backend.get_user(user_id=owner)
             
         except KeyError: # User doesn't exist, create.
             try:
-                self.backend.add_user(user_id=user_id, display_name=user_id, permissions=self.default_perms) # Try to create a user with no name #TODO log a warning that the user was created with no name
-                user = self.backend.get_user(user_id=user_id)
+                self.backend.add_user(user_id=owner, display_name=owner, permissions=self.default_perms) # Try to create a user with no name #TODO log a warning that the user was created with no name
+                user = self.backend.get_user(user_id=owner)
             
             except Exception as e:
                 return e
     
         try:  # Create game
             self.backend.add_game(
-                user_id=int(user_id), 
+                owner=int(owner), 
                 name=str(name), 
                 start_date=str(start_date), 
                 end_date=str(end_date), 
@@ -612,13 +621,16 @@ class Frontend: # This will be where a bot (like discord) interacts
         except Exception as e: #TODO find errors
             return e
     
-    def list_games(self): #TODO allow filtering
-        """List all games.
-
+    def list_games(self, show_private:bool=False): 
+        """List games.
+        
+        Args:
+            show_private (bool, optional): Whether to show private games. Defaults to False.
+        
         Returns:
             list: List of games
         """
-        games = self.backend.list_games()
+        games = self.backend.list_games(show_private=show_private)
         return games
     
     def game_info(self, game_id:int): 
@@ -660,18 +672,19 @@ class Frontend: # This will be where a bot (like discord) interacts
         user = self.backend.update_user(user_id=int(user_id), display_name=str(name))
         return user #TODO return an error instead
     
-    def join_game(self, user_id:int, game_id:int):
+    def join_game(self, user_id:int, game_id:int, name:str=None):
         """Join a game.
 
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
+            name (str, optional): Team name/nickname for game.
 
         Returns:
             unk: I have no idea
         """# TODO what does this return?
         #TODO check permissions before running
-        game = self.backend.add_user_to_game(user_id=int(user_id), game_id=int(game_id))
+        game = self.backend.add_user_to_game(user_id=int(user_id), game_id=int(game_id), name=str(name))
         return game
     
     def my_games(self, user_id:int): 
@@ -690,6 +703,15 @@ class Frontend: # This will be where a bot (like discord) interacts
     
     def sell_stock(self, user_id:int, game_id:int, ticker:str): # Will also allow for cancelling an order #TODO add sell_stock
         pass
+    
+    def remove_pick(self, user_id:int, game_id:int, ticker:str): # Remove a stock pick
+        participant = self.backend.get_participant_id(user_id=user_id, game_id=game_id) #TODO check for errors
+        stock_id = self.backend.get_stock(ticker=ticker)
+        picks = self.backend.list_stock_picks(participant_id=participant['id'], status='pending_buy', stock_id=stock_id['id'])
+        if len(picks) > 0:
+            return self.backend.remove_stock_pick(pick_id=picks['id'])
+        else:
+            return "Unable to remove stock" #TODO add a more detailed reason here
     
     def my_stocks(self, user_id:int, game_id:int, show_pending:bool=True, show_sold:bool=False):
         """Get your stocks for a specific game.
