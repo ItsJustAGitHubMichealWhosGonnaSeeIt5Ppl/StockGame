@@ -1,6 +1,11 @@
 # Misc helpers
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime
+import functools
+
+
+def _unix_timestamp(): # Get a unix timestamp
+    return datetime.now().timestamp()
 
 def _iso8601(date_type:str='datetime'): # 
     """Get an ISO formatted date or datetime
@@ -27,19 +32,58 @@ def _iso8601(date_type:str='datetime'): #
     
     return now
 
+def open_and_close(func): #TODO MAKE THIS NOT AI
+    """
+    Decorator to open and close an SQLite connection around a method call.
+    Assumes the class instance (self) has _open_connection and _close_connection methods.
+    """
+    @functools.wraps(func)  # Preserves the name, docstring, etc., of the decorated function
+    def wrapper(self, *args, **kwargs):
+        """
+        Wrapper function that manages the connection.
+        'self' is the instance of the class where the decorated method is defined.
+        """
+        self._open_connection()  # Call the instance's open connection method
+        try:
+            # Call the original method (e.g., _sql_items)
+            result = func(self, *args, **kwargs)
+            return result
+        except sqlite3.Error as e:
+            # Handle potential SQLite errors during the execution of 'func'
+            print(f"SQLite error during {func.__name__}: {e}")
+            # Depending on the desired behavior, you might want to re-raise the exception
+            # or return a specific value indicating failure.
+            raise # Re-raise the exception after logging
+        finally:
+            # This block will always execute, ensuring the connection is closed
+            self._close_connection() # Call the instance's close connection method
+    return wrapper
+
 class SqlHelper: # Simple helper for SQL
-    def __init__(self, db_name:str):
+    def __init__(self, db_name:str): #TODO add logging
         """SQLlite helper tool
 
         Args:
             db_name (str): Database name
         """
-        self.conn = sqlite3.connect(db_name)
-        self.cur = self.conn.cursor()
-        self.cur.execute("PRAGMA foreign_keys = ON;")
+        self.db = db_name
+        try: #TODO can we check if the DB is locked?
+            self._open_connection()
+            self._close_connection()
+        except Exception as e: #TODO find errors 
+            print(e)
+            pass
     
-    def _error(self, status:str='success', reason:str='none', more_info:str='None'):
-        """Generate simple errors/status/results
+    def _open_connection(self): # Start/open connection:
+            self.conn = sqlite3.connect(self.db)
+            self.cur = self.conn.cursor()
+            self.cur.execute("PRAGMA foreign_keys = ON;")
+            
+    def _close_connection(self): # Stop/close connection
+            self.conn.close()
+    
+    def _simple_status(self, status:str='success', reason:str='none', more_info:str='None'):
+        """Generate simple status messages
 
         Args:
             status (str, optional): Status. Defaults to 'success'.
@@ -52,6 +96,43 @@ class SqlHelper: # Simple helper for SQL
         return {'status':status,
             'reason':reason,
             'more_info':more_info}
+        
+    def _run_query(self, query:str, values:list, mode:str):
+        try:
+            resp = self.cur.execute(query, values)
+            self.conn.commit()
+            if mode in ['insert','update', 'delete']:
+                return self._simple_status(reason=f'{mode}', more_info=self.cur.lastrowid) # Simple status
+            elif mode in ['get']: 
+                resp = self.cur.fetchall()
+                return self._format(resp, self.cur.description)
+                
+            
+        except sqlite3.IntegrityError as e:
+            if e.sqlite_errorcode == 2067: # Unique constraint failed
+                return self._simple_status(status='error',
+                                   reason='SQLITE_CONSTRAINT_UNIQUE',
+                                   more_info=e.args[0].split(':')[1])
+                
+            elif e.sqlite_errorcode == 1555: # Unique constraint failed for primary key
+                return self._simple_status(status='error',
+                                   reason='SQLITE_CONSTRAINT_PRIMARYKEY',
+                                   more_info=e.args[0].split(':')[1].strip())
+            
+            elif e.sqlite_errorcode == 787: # Foreign Key Constraint Failed
+                return self._simple_status(status='error',
+                                   reason='SQLITE_CONSTRAINT_FOREIGNKEY',
+                                   more_info=e.args[0])
+            
+            else:
+                return self._simple_status(status='error',
+                                   reason='IntegrityError',
+                                   more_info=e)
+    
+        except Exception as e:
+            return self._simple_status(status='error',
+                                   reason='OTHER ERROR',
+                                   more_info=e)
 
     def _format(self, items:list, keys:list):
         item_keys = [key[0] for key in keys] # Extract keys
@@ -92,43 +173,21 @@ class SqlHelper: # Simple helper for SQL
                 elif mode == 'set':
                     keys.append(key +'=?')
                 values.append(val)
-                questionmarks.append("?") #TODO this is dogshit
+                questionmarks.append("?")
         
         return keys, values, questionmarks
     
+    @open_and_close
     def insert(self, table:str, items:dict): # Insert into table
         sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
         keys, values, questionmarks = self._sql_items(items)
         
         sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
-        try:
-            self.cur.execute(sql_query, values)
-            self.conn.commit()
-            
-        except sqlite3.IntegrityError as e:
-            if e.sqlite_errorcode == 2067: # Unique constraint failed
-                return self._error(status='error',
-                                   reason='SQLITE_CONSTRAINT_UNIQUE',
-                                   more_info=e.args[0].split(':')[1])
-            
-            elif e.sqlite_errorcode == 787: # Foreign Key Constraint Failed
-                return self._error(status='error',
-                                   reason='SQLITE_CONSTRAINT_FOREIGNKEY',
-                                   more_info=e.args[0])
-            
-            else:
-                return self._error(status='error',
-                                   reason='IntegrityError',
-                                   more_info=e)
-
-
-        except Exception as e:
-            return self._error(status='error',
-                                   reason='OTHER ERROR',
-                                   more_info=e)
-    
-        return self._error(reason='inserted', more_info=self.cur.lastrowid)
         
+        return self._run_query(sql_query, values, mode='insert')
+        
+        
+    @open_and_close    
     def get(self, table:str, columns:list=["*"], filters:dict=None, order:dict=None): 
         """Run SQL get queries
         
@@ -142,7 +201,9 @@ class SqlHelper: # Simple helper for SQL
             
         Returns:
             tuple of items and their keys
-        """        
+        """
+        if len(columns) == 0:
+            columns = ['*']        
         sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
         
         filter_str, filter_items = self._sql_filters(filters)
@@ -159,10 +220,9 @@ class SqlHelper: # Simple helper for SQL
             order_str = "ORDER BY " + ", ".join(order_items)
             
         sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
-        self.cur.execute(sql_query, filter_items)
-        resp = self.cur.fetchall()
-        return self._format(resp, self.cur.description) #TODO add errors
+        return self._run_query(sql_query, filter_items, mode='get')
     
+    @open_and_close
     def update(self, table:str, filters:dict, items:dict):
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
@@ -172,18 +232,13 @@ class SqlHelper: # Simple helper for SQL
         all_items = value_items + filter_items
             
         sql_query = sql_query.format(table=table, keys=",".join(keys), filters=filter_str)
-        self.cur.execute(sql_query, all_items)
-        self.conn.commit()
-        return self._error(reason='updated', more_info=self.cur.lastrowid) #TODO is there errors here
+        return self._run_query(sql_query, all_items, mode='update')
     
+    @open_and_close
     def delete(self, table:str, filters:dict):
         sql_query = """DELETE FROM {table} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
-            
-        all_items = filter_items
-            
+        
         sql_query = sql_query.format(table=table, filters=filter_str)
-        self.cur.execute(sql_query, all_items)
-        self.conn.commit()
-        return self._error(reason='deleted', more_info=self.cur.lastrowid) #TODO is there errors here
+        return self._run_query(sql_query, filter_items, mode='delete')

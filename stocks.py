@@ -1,22 +1,28 @@
-#TODO Do we need to track whether a user is allowed to create a game or not? (I think no)
-
 import re
 import yfinance as yf
 import logging
 import os
 from datetime import datetime, date
 from helpers.sqlhelper import SqlHelper, _iso8601
+from sqlite_creator_real import create as create_db
 
-
+logging.basicConfig(filename='stock_game.log', 
+                    level=logging.WARNING, 
+                    format='%(asctime)s %(levelname)-8s %(message)s', 
+                    datefmt='%Y-%m-%d %H:%M:%S')
 
 version = "0.0.2" #TODO should frontend and backend have different versions?
 
 class Backend:
+    # Raise Exceptions if bad data is passed in
+    # Return a status/error if the database returns an error
     # Most of these expect that the data being sent has been checked or otherwise verified.  End users should not interact directly with this
-    def __init__(self, db_name:str): #TODO create database if it doesn't exist already, store the database version somewhere?
+    def __init__(self, db_name:str):
         """Backend
         """
+        create_db(db_name) # Try to create DB
         self.sql = SqlHelper(db_name)
+        # Try to create DB
         self.version = "0.0.2"
     
     def _reformat_sqlite(self, data:list, table:str, custom_keys:dict=None): # Reformat data from the database into more friendly 
@@ -48,9 +54,6 @@ class Backend:
             'update_frequency':'update_frequency',
             # Participants
             'datetime_joined': 'joined',
-            # Picks
-            
-            # Prices
             # Stocks
             'company_name': 'name',
             # Users
@@ -75,9 +78,10 @@ class Backend:
 
             elif table == 'stocks':
                 keys['stock_id'] = 'id'
-        for raw_data in data: # Reformat data from SQLite #TODO surely there is a way to get column names?
+                
+        for raw_data in data: # Reformat data from SQLite
             item = {}
-            for key, val in raw_data.items(): #TODO validate that the length of values and columns are the same
+            for key, val in raw_data.items(): 
                 try:
                     item[keys[key]] = val
                 except KeyError: # If not in the list, just use the SQL NAME
@@ -95,19 +99,21 @@ class Backend:
             user_id (int): UNIQUE ID to identify user.
             display_name (str): Username/Displayname for user
             permissions (int, optional): User permissions (see). Defaults to 210.
-        """
-        #TODO Add user permissions docstring
+        
+        Returns:
+            dict: Result/status
+        """#TODO Add user permissions docstring
         items = {'user_id': user_id, 
                  'display_name':display_name if display_name else user_id, # Set display name to user ID if there isnt one supplied
                  'permissions': permissions,
                  'datetime_created': _iso8601()}
         
         user = self.sql.insert(table='users', items=items)
-        #TODO move errors here
         return user
         
-    def remove_user(self, user_id:int): #TODO add remove_user
-        pass
+    def remove_user(self, user_id:int):
+        delete = self.sql.delete(table='users', filters={'user_id': user_id})
+        return delete
     
     def list_users(self, ids_only:bool=False):
         """List all users
@@ -315,8 +321,8 @@ class Backend:
 
         Returns:
             list: All stocks (includes details unless tickers_only is set)
-        """    
-        columns = []    
+        """
+        columns = []
         if tickers_only:
             columns = ['ticker']
             
@@ -327,7 +333,7 @@ class Backend:
             return tickers
     
         else:
-            return self.self._reformat_sqlite(stocks, table='stocks')
+            return self._reformat_sqlite(stocks, table='stocks')
     
     def get_stock(self, ticker:str):
         """Get an existing stock from ticker
@@ -389,15 +395,23 @@ class Backend:
     def get_stock_price(price_id:int): #TODO add get_stock_price
         pass
     
-    def update_stock_prices(self): #TODO add docstring
+    def update_stock_prices(self):
+        """Update stock prices
+        
+        Will skip stocks that have already been updated today
+        """
         # THIS WILL NOT VALIDATE WHETHER IT IS THE END OF THE DAY OR NOT, THAT IS UP TO YOU TO DO!
         today = _iso8601('date')
-        existing = self.list_stock_prices(date=today) #TODO skip stocks that have already been updated today
-        tickers = self.list_stocks(tickers_only=True) # Get all stock tickers currently in game
-        prices = yf.Tickers(tickers).tickers
-        for ticker, price in prices.items(): # update pricing
-            price = price.info['regularMarketPrice']
-            self.add_stock_price(ticker=ticker, price=price, datetime=today) # Update pricing
+        
+        updated = [s_id['stock_id'] for s_id in self.list_stock_prices(date=today)] # Skip stocks that have already been updated
+        tickers = self.list_stocks() # Get all stock tickers currently in game
+        tickers = [ticker for ticker in tickers if ticker['id'] not in updated]
+        if len(tickers) > 0:
+            
+            prices = yf.Tickers(tickers).tickers
+            for ticker, price in prices.items(): # update pricing
+                price = price.info['regularMarketPrice']
+                self.add_stock_price(ticker=ticker, price=price, datetime=today) # Update pricing
     
     # # STOCK PICK ACTIONS # #
     

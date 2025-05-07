@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project would like to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
@@ -21,9 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More validation for `add_game` and `add_stock_pick` method
 - Basic filtering to `list_games` method
 - More filtering for `list_stock_picks` method
-- `remove_stock_pick`, `remove_pick`, `update_game`, `update_game_member`, `maange_game`, `pending_game_users`, `approve_game_users`, `update_games`, `update_game_members`, `_user_owns_game` methods
+- `remove_stock_pick`, `remove_pick`, `update_game`, `update_game_member`, `maange_game`, `pending_game_users`, `approve_game_users`, `update_games`, `update_game_members`, `_user_owns_game`, `remove_user` methods
 - `delete` method to `sqlhelper.py`
 - Portfolio/game member total value is now updated 
+- Template gitignore
 
 #### Fixed
 - Misc minor issues with both frontend and backend validation and docstrings
@@ -42,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `create_game` to `new_game` in frontend
 - `user_id` to `owner` in `add_game` and `new_game` method
 - `add_stock` and `get_stock` now return a status/result
+- `update_stock_prices` will skip stocks that have already been updated
+- Moved error handling to separate method in `sqlhelper.py`
+- Database now opens and closes for each run, allowing other tools to access it
 
 #### Removed
 - Unneeded imports from `stocks.py`
@@ -63,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `game_status` to `status` in `games`
 - `price_date` to `datetime` in `stock_price`
 - `pick_status` to `status` in `stock_picks`
+- Now runs inside a function and requires a database name to be provided
 
 #### Removed
 - idx_games Index
