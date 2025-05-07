@@ -485,7 +485,8 @@ async def game_info(
     game_id: int
 ):
         
-    game = fe.game_info(game_id)
+    game_info = fe.game_info(game_id)
+    game = game_info['game']
 
     if not game:
         embed = discord.Embed(
@@ -494,9 +495,15 @@ async def game_info(
             color=discord.Color.red()
         )
     else:
+        desc_lines = list() # Will contain ALL items
+        for key, val in game.items():
+            if key in ['id', 'name']: # Skip ID and name
+                continue 
+            desc_lines.append(f'{key}: {val}')
         embed = discord.Embed(
-            title="Game #{game_id}",
-            description=f"Name: {game['name']}\nStart Date: {game['start_date']}\nEnd Date: {game['end_date']}\nStarting Money: ${game['starting_money']}\nTotal Picks: {game['total_picks']}\nExclusive Picks: {game['exclusive_picks']}\nJoin After Start: {game['join_after_start']}\nSell During Game: {game['sell_during_game']}\nStatus: {game['status']}",
+            title=f"{game['name']} (ID: {game_id})",
+            
+            description="\n".join(desc_lines), # Simplified
             color=discord.Color.blue()
         )
 

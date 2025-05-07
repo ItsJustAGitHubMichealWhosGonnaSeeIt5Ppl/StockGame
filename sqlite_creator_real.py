@@ -40,7 +40,8 @@ def create(db_name:str):
         update_frequency TEXT NOT NULL DEFAULT 'daily',       -- How often a game should be updated 'daily', 'hourly', 'minute', 'realtime' REALTIME WILL BE BUGGY
         start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD)
         end_date TEXT,                                        -- OPTIONAL Game end date ISO8601 (YYYY-MM-DD)
-        status TEXT NOT NULL DEFAULT 'open',             -- Game status ('open', 'active', 'ended')
+        status TEXT NOT NULL DEFAULT 'open',                  -- Game status ('open', 'active', 'ended')
+        aggregate_value REAL,                                 -- Combined value of all users
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)

@@ -244,7 +244,7 @@ class Backend:
             game = self._reformat_sqlite(game, table='games')[0]
             return game
         
-    def update_game(self, game_id:int, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=None, pick_date:str=None, private_game:bool=None, total_picks:int=None, draft_mode:bool=None, sell_during_game:bool=None, update_frequency:str=None):
+    def update_game(self, game_id:int, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=None, pick_date:str=None, private_game:bool=None, total_picks:int=None, draft_mode:bool=None, sell_during_game:bool=None, update_frequency:str=None, aggregate_value:float=None):
         #TODO only allow starting money, picks to be edited before game has started
         game = self.get_game(game_id=game_id)
         if len(game) == 0:
@@ -261,7 +261,8 @@ class Backend:
             'status': status,
             'update_frequency': update_frequency,
             'start_date': start_date,
-            'end_date': end_date,  # is this needed?, no but I like it.
+            'end_date': end_date,
+            'aggregate_value': aggregate_value
             }
         
         update = self.sql.update(table='games', filters={'game_id': game_id}, items=items)
@@ -272,11 +273,20 @@ class Backend:
         for game in games: #TODO add log here
             if game['status'] == 'open' and datetime.strptime(game['start_date'], "%Y-%m-%d").date() <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
                 self.update_game(game_id=game['id'], status='active')
-            
+
             if game['status'] == 'active' and game['end_date'] and datetime.strptime(game['end_date'], "%Y-%m-%d").date() < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
                 self.update_game(game_id=game['id'], status='ended')
-            
-            
+
+        games = self.list_games(show_private=True) # Get games again
+        aggr_val = 0
+        for game in games:
+            if game['status'] != 'active':
+                continue # Skip games that arent active
+            members = self.list_game_members(game['id'])
+            for member in members:
+                aggr_val += member['current_value']
+        self.update_game(game_id=game['id'], aggregate_value=aggr_val) # Update total combined value
+    
     
     # # STOCK ACTIONS # #
     
@@ -715,17 +725,39 @@ class Frontend: # This will be where a bot (like discord) interacts
         games = self.backend.list_games(show_private=show_private)
         return games
     
-    def game_info(self, game_id:int): 
-        """Get information about a specific game.
+    def game_info(self, game_id:int, show_leaderboard:bool=True): 
+        """Get information and leaderboard for a game.
+        
+        If user has set a nickname for a game that will be returned, otherwise their username will be used
 
         Args:
             game_id (int): Game ID
+            show_leaderboard (bool, optional): Whether to include the leaderboard in the response
 
         Returns:
             dict: Game information
         """
-        game = self.backend.get_game(game_id=int(game_id))
-        return game
+        # Return Tuples
+        
+        game = self.backend.get_game(game_id)
+        info = {
+            'game': game,
+        }
+        if show_leaderboard:
+            leaderboard = list()
+            members = self.backend.list_game_members(game_id=game_id, sort_by_value=True)
+            for member in members:
+                user = self.backend.get_user(member['user_id'])
+                leaderboard.append({
+                    'username': member['name'] if member['name'] not in [None, 'None'] else user['username'],
+                    'current_value': member['current_value']
+                }) # Should keep order
+                
+            info['leaderboard'] = leaderboard
+        
+        #TODO find better name for team name (currently just name)
+        return info
+
     
     # User actions (Return information that is relevant to a specific user)
     
@@ -944,12 +976,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         user = self.backend.update_game_member(participant_id=participant_id, status='active')
         return user
-    
-    def leaderboard(self, game_id:int):
-        game = self.backend.list_game_members(game_id=game_id, sort_by_value=True)
-        return game
-    
-    
+
 # TESTING
 if __name__ == "__main__":
     test_users = [111, 222, 333, 444, 555, 666]
@@ -974,6 +1001,6 @@ if __name__ == "__main__":
     
     print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
     print(game.update(OWNER)) # Try to update
-    leaders = game.leaderboard(game_id=1)
+    leaders = game.game_info(game_id=1)
     print([info for info in leaders])
     pass
