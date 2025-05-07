@@ -86,7 +86,7 @@ async def create_game_advanced(
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
-    result = fe.create_game(
+    result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
         start_date=start_date,
@@ -352,7 +352,7 @@ async def create_game(interaction: discord.Interaction):
                 # Define what happens when the confirm button is clicked
                 async def confirm_callback(interaction: discord.Interaction):
                     # Create the game using the provided inputs
-                    result = fe.create_game(
+                    result = fe.new_game(
                         user_id=interaction.user.id,
                         name=game_name,
                         start_date=game_start_date,
