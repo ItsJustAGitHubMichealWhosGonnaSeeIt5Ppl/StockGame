@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
+DB_NAME = os.getenv('DB_NAME')
+OWNER = os.getenv("OWNER") # Set owner ID from env
 
 # Set up intents with all necessary permissions
 intents = discord.Intents.default()
@@ -37,10 +39,13 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 
-fe = Frontend(owner_user_id=0) # Frontend
+fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 
+# Event: Called when the bot is ready and connected to Discord
 @bot.event
 async def on_ready():
+    """Prints a message to the console when the bot is online and syncs slash commands."""
+    print(Backend().get_game(1))
     """Prints a message to the console when the bot is online and syncs slash commands."""
     print(Backend().get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
