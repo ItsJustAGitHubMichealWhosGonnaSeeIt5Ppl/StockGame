@@ -168,7 +168,7 @@ class Backend:
             pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Defaults to None (allow players to join anytime)
             private_game(bool, optional): Whether the game is private or not
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled (players cannot pick the same stocks), pick date must be on or before start date Defaults to False.
+            draft_mode (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Defaults to False.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
             
@@ -234,13 +234,31 @@ class Backend:
         if game == None: # Will return none for invalid game id
             return "Invalid ID" #TODO Raise an error here
         else:
-            game = self._reformat_sqlite(game, table='games')[0] #TODO test
+            game = self._reformat_sqlite(game, table='games')[0]
             return game
         
-    def update_game(self, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'): 
+    def update_game(self, game_id:int, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=None, pick_date:str=None, private_game:bool=None, total_picks:int=None, draft_mode:bool=None, sell_during_game:bool=None, update_frequency:str=None):
         #TODO only allow starting money, picks to be edited before game has started
+        game = self.get_game(game_id=game_id)
+        if len(game) == 0:
+            raise ValueError("Invalid Game ID")
         
-        pass
+        items = {'name': name,
+            'owner_user_id': owner,
+            'start_money': starting_money,
+            'pick_count': total_picks,
+            'draft_mode': draft_mode,
+            'pick_date': pick_date,
+            'private_game': private_game,
+            'allow_selling': sell_during_game,
+            'status': status,
+            'update_frequency': update_frequency,
+            'start_date': start_date,
+            'end_date': end_date,  # is this needed?, no but I like it.
+            }
+        
+        update = self.sql.update(table='games', filters={'game_id': game_id}, items=items)
+        return update
     
     # # STOCK ACTIONS # #
     
@@ -273,7 +291,7 @@ class Backend:
                        'company_name': info['displayName'] if 'displayName' in info else info['shortName']} # I guess not all stocks have a long name?
 
             stock = self.sql.insert(table='stocks', items=items)
-            return "Ticker added" #TODO This is literally not validating at all
+            return stock
         else:
             return "Ticker invalid" #TODO is this a good way to verify? No
     
@@ -311,9 +329,9 @@ class Backend:
         filters = {'ticker': ticker}
         stock = self.sql.get(table='stocks',filters=filters) 
         if len(stock) > 0:
-            return self._reformat_sqlite(stock, table='stocks')[0] #TODO test
+            return self._reformat_sqlite(stock, table='stocks')[0]
         else:
-            return "No stocks found"
+            return stock
         
     def remove_stock(self, ticker:str): #TODO add remove_stock
         pass
@@ -328,7 +346,7 @@ class Backend:
             price (float): Stock price 
             datetime (str): ISO8601 (YYYY-MM-DD)
         """
-        #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AA
+        #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AI
         stock_id = self.get_stock(ticker)['id'] #TODO add some sort of error catching here
         
         items = {'stock_id':int(stock_id), 
@@ -460,8 +478,20 @@ class Backend:
             price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data
             value = pick['shares'] * price['price']
             self.update_stock_pick(pick_id=pick['id'], current_value=value)
+        games = self.list_games(show_private=True)
+        
+        for game in games: # Update active games
+            if game['status'] != 'active':
+                continue
+            members = self.list_game_members(game_id=game['id'])
+            for member in members:
+                portfolio_value = 0.0
+                picks = self.list_stock_picks(participant_id=member['participant_id'], status='owned')
+                for pick in picks:
+                    portfolio_value += pick['current_value']
+                self.update_game_member(participant_id=member['participant_id'], current_value=portfolio_value)
         #TODO return something
-            
+
     # # GAME PARTICIPATION ACTIONS # #
     def add_user_to_game(self, user_id:int, game_id:int, name:str=None):
         items = {'user_id':user_id, 
@@ -505,7 +535,7 @@ class Backend:
         else:
             return 'Not found' #TODO should this be more clear?
 
-    def list_game_members(self, game_id:int=None, user_id:int=None, status:str=None):
+    def list_game_members(self, game_id:int=None, user_id:int=None, status:str=None): 
         
         if status and status not in ['pending', 'active', 'inactive']:
             raise ValueError('Invalid status!')
@@ -530,8 +560,15 @@ class Backend:
         participant = self.sql.get(table='game_participants', filters=filters) 
         return self._reformat_sqlite(participant, table='game_participants')[0] #TODO test
     
-    def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
-        pass
+    def update_game_member(self, participant_id:int, name:str=None, status:str=None, current_value:float=None):  
+        items = {'participation_id':participant_id, 
+                 'name': name,
+                 'status': status,
+                 'current_value': current_value,
+                 'datetime_updated': _iso8601()}
+        
+        game = self.sql.insert(table='game_participants', items=items)
+        return game
 
 
 # INTERFACE INTERACTIONS.  SHOULD EXPECT CRAP FROM USERS AND VALIDATE DATA
@@ -606,14 +643,15 @@ class Frontend: # This will be where a bot (like discord) interacts
     
         try:  # Create game
             self.backend.add_game(
-                owner=int(owner), 
+                owner=int(owner),
                 name=str(name), 
                 start_date=str(start_date), 
                 end_date=str(end_date), 
                 starting_money=float(starting_money), 
                 total_picks=int(total_picks), 
                 pick_date=str(pick_date), 
-                draft_mode=bool(draft_mode), 
+                draft_mode=bool(draft_mode),
+                private_game=bool(private_game),
                 sell_during_game=bool(sell_during_game), 
                 update_frequency=str(update_frequency)
                 )
@@ -642,13 +680,21 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             dict: Game information
         """
-        #TODO validate game ID?
         game = self.backend.get_game(game_id=int(game_id))
         return game
     
     # User actions (Return information that is relevant to a specific user)
     
     def register(self, user_id:int, username:str):
+        """Register user to allow gameplay
+
+        Args:
+            user_id (int): User ID.
+            username (str): Display name/username
+
+        Returns:
+            dict: Status/result
+        """
         user = self.backend.add_user(user_id=user_id ,display_name=username, permissions=self.default_perms)
         if user['status'] == 'success':
             return "Registered"
@@ -667,10 +713,10 @@ class Frontend: # This will be where a bot (like discord) interacts
             name (str): New name.
 
         Returns:
-            unk: NO idea
-        """#TODO what does this reurn
+            dict: Status/result
+        """
         user = self.backend.update_user(user_id=int(user_id), display_name=str(name))
-        return user #TODO return an error instead
+        return user
     
     def join_game(self, user_id:int, game_id:int, name:str=None):
         """Join a game.
@@ -681,22 +727,42 @@ class Frontend: # This will be where a bot (like discord) interacts
             name (str, optional): Team name/nickname for game.
 
         Returns:
-            unk: I have no idea
-        """# TODO what does this return?
+            dict: Status/result
+        """
         #TODO check permissions before running
         game = self.backend.add_user_to_game(user_id=int(user_id), game_id=int(game_id), name=str(name))
         return game
     
-    def my_games(self, user_id:int): 
+    def my_games(self, user_id:int):
+        """Get a list of your current games
+
+        Args:
+            user_id (int): User ID.
+
+        Returns:
+            list: Your current games
+        """
         games = self.backend.list_game_members(user_id=user_id)
         return games #TODO get a friendly name and game name?
     
     def buy_stock(self, user_id:int, game_id:int, ticker:str):
+        """Add a stock pick (buy a stock).
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            ticker (str): Ticker.
+
+        Returns:
+            dict: Status/result
+        """
         part_id = self.backend.get_participant_id(user_id=user_id, game_id=game_id)
         stock = self.backend.get_stock(ticker=str(ticker)) # Try to get the stock 
         if stock == "No stocks found": # Stock not yet added:
-            self.backend.add_stock(ticker=str(ticker)) #TODO handle invalid tickers!
-            stock = self.backend.get_stock(ticker=str(ticker)) #TODO clean this up
+            add = self.backend.add_stock(ticker=str(ticker)) 
+            if add == 'Ticker invalid':
+                return add
+            stock = self.backend.get_stock(ticker=str(ticker))
         
         pick = self.backend.add_stock_pick(participant_id=part_id, stock_id=stock['id']) # Add the pick
         return pick 
@@ -705,6 +771,16 @@ class Frontend: # This will be where a bot (like discord) interacts
         pass
     
     def remove_pick(self, user_id:int, game_id:int, ticker:str): # Remove a stock pick
+        """Remove a stock pick. Status must be pending, cannot remove already owned stocks.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            ticker (str): Ticker.
+
+        Returns:
+            dict: Status/result
+        """
         participant = self.backend.get_participant_id(user_id=user_id, game_id=game_id) #TODO check for errors
         stock_id = self.backend.get_stock(ticker=ticker)
         picks = self.backend.list_stock_picks(participant_id=participant['id'], status='pending_buy', stock_id=stock_id['id'])
@@ -734,21 +810,77 @@ class Frontend: # This will be where a bot (like discord) interacts
     def start_draft(user_id:int, game_id:int): #TODO add
         pass
     
-    def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game #TODO add docstring
+    def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game #TODO make game_id actually do something #TODO add docstring
         #TODO VALIDATION!!!!!!!!!
         if user_id != self.owner_id:
             return "You do not have permission to do this"
         
-        self.backend.update_stock_prices() # Update stock prices
-        self.backend.update_stock_picks(date=self.backend._iso8601('date')) # Update picks
-        #TODO update account values!
-        #TODO update the rest!
+        self.backend.update_stock_prices() # Update stock prices #TODO only works with daily update for now
+        self.backend.update_stock_picks(date=self.backend._iso8601('date')) # Update picks (and account values)
         
-    def manage_game(self, user_id:int,): #TODO allow game management here, including approving pending users
-        pass
+    def manage_game(self, user_id:int, game_id:int, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=None, pick_date:str=None, private_game:bool=None, total_picks:int=None, draft_mode:bool=None, sell_during_game:bool=None, update_frequency:str=None):
+        """Update/Manage an existing game.
+        
+        start_date, starting_money, pick_date, total_picks, draft_mode, sell_during_game cannot be changed once a game has started
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            owner (int): Game owner user ID (allows changing).
+            name (str): Name for this game. 
+            start_date (str): Start date in ISO8601 (YYYY-MM-DD). Cannot be changed once game has started.
+            end_date (str, optional): End date ISO8601 (YYYY-MM-DD). 
+            status (str, optional): Game Status. 
+            starting_money (float, optional): Starting money. Cannot be changed once game has started.
+            pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Cannot be changed once game has started.
+            private_game(bool, optional): Whether the game is private or not. 
+            total_picks (int, optional): Amount of stocks each user picks. Cannot be changed once game has started.
+            draft_mode (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Cannot be changed once game has started.
+            sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False. Cannot be changed once game has started.
+            update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime').
+
+        Returns:
+            dict: Status/result
+        """
+        game = self.backend.get_game(game_id=game_id)
+        if game['owner'] != user_id:
+            return "You do not have permission to update this game"
+        
+        if (start_date or starting_money or pick_date or total_picks or draft_mode or sell_during_game) and datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.strptime(_iso8601(), "%Y-%m-%d").date(): # Start date has passed
+            return "Cannot make changes to start_date, starting_money, pick_date, total_picks, draft_mode, sell_during_game once game has started"
+            
+        update = self.backend.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, draft_mode=draft_mode, sell_during_game=sell_during_game, update_frequency=update_frequency)
+        return update
     
-    def approve_game_users(self, user_id:int):
-        pass
+    def pending_game_users(self, user_id:int, game_id:int):
+        """Get a list of pending users for private games
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+
+        Returns:
+            list: Pending users (including participant ID)
+        """
+        game = self.backend.get_game(game_id=game_id)
+        if game['owner'] != user_id:
+            return "You do not have permission to manage this game"
+        
+        users = self.backend.list_game_members(game_id=game_id, status='pending')
+        return users
+        
+    def approve_game_users(self, user_id:int, participant_id:int): #TODO validation!
+        """Approve/add a user to private game
+
+        Args:
+            user_id (int): User ID (command runner).
+            participant_id (int): Participant ID (get with pending_game_users).
+
+        Returns:
+            dict: status
+        """
+        user = self.backend.update_game_member(participant_id=participant_id, status='active')
+        return user
 
 # TESTING
 if __name__ == "__main__":

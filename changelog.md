@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More validation for `add_game` and `add_stock_pick` method
 - Basic filtering to `list_games` method
 - More filtering for `list_stock_picks` method
-- `remove_stock_pick` and `remove_pick` methods
+- `remove_stock_pick`, `remove_pick`, `update_game`, `update_game_member`, `maange_game`, `pending_game_users`, `approve_game_users` methods
 - `delete` method to `sqlhelper.py`
+- Portfolio/game member total value is now updated 
 
 #### Fixed
 - Misc minor issues with both frontend and backend validation and docstrings
@@ -40,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic error handling to `add_user_to_game` backend method
 - `create_game` to `new_game` in frontend
 - `user_id` to `owner` in `add_game` and `new_game` method
+- `add_stock` and `get_stock` now return a status/result
 
 #### Removed
 - Unneeded imports from `stocks.py`
