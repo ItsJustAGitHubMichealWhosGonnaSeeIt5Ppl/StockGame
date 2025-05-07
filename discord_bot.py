@@ -41,7 +41,7 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(Backend().get_game(1))
+    print(fe.backend.get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -534,10 +534,10 @@ async def my_games(
         # Add each game to the embed
         for game in games:
             # Create status indicator
-            status_emoji = "🟢" if game['status'] == 'open' else "🔴"
+            status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
             
             # Add game field
-            embed.add_field(name=f"{status_emoji} Game #{game['id']}: {game['name']}")
+            embed.add_field(name=f"{status_emoji} {game['name']}", value=f"ID:{game['id']}")
     
     # Add footer with command usage
     embed.set_footer(text=f"Use /game-info <game_id> for more details")

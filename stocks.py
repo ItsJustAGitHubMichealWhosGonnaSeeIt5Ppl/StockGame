@@ -354,7 +354,7 @@ class Backend:
     def remove_stock(self, ticker:str): #TODO add remove_stock
         pass
     
-    # # STOCK PRICE ACTIONS # # 
+    # # STOCK PRICE ACTIONS # #
     
     def add_stock_price(self, ticker:str, price:float, datetime:str): #TODO maybe use stock_ids here?
         """Add price data for a stock (should be done at close)
@@ -786,8 +786,13 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             list: Your current games
         """
+        
         games = self.backend.list_game_members(user_id=int(user_id))
-        return games #TODO get a friendly name and game name?
+        for game in games: # Provide additional details
+            game['user_details'] = self.backend.get_user(user_id=user_id)
+            game['game_details'] = self.backend.get_game(game['game_id'])
+            pass
+        return games #TODO Provide more friendly information
     
     def buy_stock(self, user_id:int, game_id:int, ticker:str):
         """Add a stock pick (buy a stock).
