@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More validation for `add_game` and `add_stock_pick` method
 - Basic filtering to `list_games` method
 - More filtering for `list_stock_picks` method
-- `remove_stock_pick`, `remove_pick`, `update_game`, `update_game_member`, `maange_game`, `pending_game_users`, `approve_game_users` methods
+- `remove_stock_pick`, `remove_pick`, `update_game`, `update_game_member`, `maange_game`, `pending_game_users`, `approve_game_users`, `update_games`, `update_game_members`, `_user_owns_game` methods
 - `delete` method to `sqlhelper.py`
 - Portfolio/game member total value is now updated 
 
