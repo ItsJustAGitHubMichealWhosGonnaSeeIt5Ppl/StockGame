@@ -415,7 +415,7 @@ class Backend:
         
         updated = [s_id['stock_id'] for s_id in self.list_stock_prices(date=today)] # Skip stocks that have already been updated
         tickers = self.list_stocks() # Get all stock tickers currently in game
-        tickers = [ticker for ticker in tickers if ticker['id'] not in updated]
+        tickers = [ticker['ticker'] for ticker in tickers if ticker['id'] not in updated]
         if len(tickers) > 0:
             
             prices = yf.Tickers(tickers).tickers
@@ -740,6 +740,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         # Return Tuples
         
         game = self.backend.get_game(game_id)
+        game['aggregate_value'] = "%.2f" % game['aggregate_value'] # Round to two decimal places
         info = {
             'game': game,
         }
@@ -750,7 +751,7 @@ class Frontend: # This will be where a bot (like discord) interacts
                 user = self.backend.get_user(member['user_id'])
                 leaderboard.append({
                     'username': member['name'] if member['name'] not in [None, 'None'] else user['username'],
-                    'current_value': member['current_value']
+                    'current_value': "%.2f" % member['current_value'] # Round to two decimal places
                 }) # Should keep order
                 
             info['leaderboard'] = leaderboard
