@@ -20,6 +20,10 @@ import datetime
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
+from dotenv import load_dotenv
+import time
+
+load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DB_NAME = os.getenv('DB_NAME')
@@ -41,7 +45,13 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(fe.backend.get_game(1))
+
+    try:
+        fe.backend.get_game(1)
+    except Exception as e:
+        print("Game not found, please add a game through the create-game command after initialization...")
+        time.sleep(2)
+
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:

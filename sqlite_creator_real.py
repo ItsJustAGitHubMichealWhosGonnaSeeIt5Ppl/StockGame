@@ -1,5 +1,6 @@
 import sqlite3
-import os 
+import os
+from dotenv import load_dotenv
 
 #TODO is this GDPR compliant, and does it need to be?
 
@@ -108,6 +109,6 @@ def create(db_name:str):
     conn.close()
     
 if __name__ == "__main__":
-    
+    load_dotenv()
     DB_NAME = os.getenv('DB_NAME')
     create(DB_NAME)

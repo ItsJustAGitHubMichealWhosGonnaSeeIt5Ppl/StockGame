@@ -25,6 +25,7 @@ and this project would like to adhere to [Semantic Versioning](https://semver.or
 - `delete` method to `sqlhelper.py`
 - Portfolio/game member total value is now updated 
 - Template gitignore
+- Readme updates and initial setup help scripts
 
 #### Fixed
 - Misc minor issues with both frontend and backend validation and docstrings
