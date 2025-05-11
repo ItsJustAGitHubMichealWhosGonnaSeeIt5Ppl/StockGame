@@ -3,9 +3,8 @@ import sqlite3
 from datetime import datetime
 import functools
 
-
-def _unix_timestamp(): # Get a unix timestamp
-    return datetime.now().timestamp()
+def _unix_timestamp(): # Get a unix timestamp #TODO add docstring
+    return int(datetime.now().timestamp())
 
 def _iso8601(date_type:str='datetime'): # 
     """Get an ISO formatted date or datetime
@@ -106,6 +105,9 @@ class SqlHelper: # Simple helper for SQL
             elif mode in ['get']: 
                 resp = self.cur.fetchall()
                 return self._format(resp, self.cur.description)
+            elif mode in ['advanced_get']: # in case the respose columns have duplicate names
+                resp = self.cur.fetchall() 
+                return resp, self.cur.description
                 
             
         except sqlite3.IntegrityError as e:
@@ -141,7 +143,10 @@ class SqlHelper: # Simple helper for SQL
         for item in items: # Extract the individual values
             formatted_item = {}
             for count, value in enumerate(item):
-                formatted_item[item_keys[count]] = value
+                if item_keys[count] in formatted_item: # Prevent Key overwriting
+                    formatted_item[str(f'{count}-{item_keys[count]}')] = value
+                else:
+                    formatted_item[item_keys[count]] = value
                 
             formatted_items.append(formatted_item)
             
