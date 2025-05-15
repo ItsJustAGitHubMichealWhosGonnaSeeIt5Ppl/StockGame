@@ -17,9 +17,14 @@ import os
 import logging
 import discord
 import datetime
+from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
+from dotenv import load_dotenv, dotenv_values
+from .helpers.views import Pagination
+
+load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DB_NAME = os.getenv('DB_NAME')
@@ -34,7 +39,7 @@ intents.members = True
 # intents.dm_messages = True # for invite user command
 
 bot = commands.Bot(command_prefix="$", intents=intents)
-
+print(DB_NAME)
 fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
@@ -83,7 +88,7 @@ async def create_game_advanced(
 ):
     # Create game using frontend and get the result
     result = fe.new_game(
-        user_id=interaction.user.id,
+        owner=interaction.user.id,
         name=name,
         start_date=start_date,
         end_date=end_date,
@@ -478,36 +483,19 @@ async def my_stocks(
 # TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
 @app_commands.describe(
-    game_id="ID of the game to view"
+    game_id="ID of the game to view",
+    show_leaderboard="Whether to display the leaderboard or not, will by default"
 )
 async def game_info(
     interaction: discord.Interaction, 
-    game_id: int
+    game_id: int,
+    show_leaderboard: bool = True
 ):
-        
-    game_info = fe.game_info(game_id)
-    game = game_info['game']
+    info = fe.game_info(game_id, show_leaderboard)
+    print(info)
 
-    if not game:
-        embed = discord.Embed(
-            title="Game Not Found",
-            description=f"Could not find a game with ID {game_id}.",
-            color=discord.Color.red()
-        )
-    else:
-        desc_lines = list() # Will contain ALL items
-        for key, val in game.items():
-            if key in ['id', 'name']: # Skip ID and name
-                continue 
-            desc_lines.append(f'{key}: {val}')
-        embed = discord.Embed(
-            title=f"{game['name']} (ID: {game_id})",
-            
-            description="\n".join(desc_lines), # Simplified
-            color=discord.Color.blue()
-        )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # TODO get list of public games
 #   - list the user count
@@ -517,10 +505,33 @@ async def game_info(
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
 @bot.tree.command(name="game-list", description="View a list of all games")
+@app_commands.describe(
+    page_length="The length of the list per page. Defaults to 10"
+)
 async def game_list(
-    interaction: discord.Interaction
+    interaction: discord.Interaction,
+    page_length: int = 10
 ):
-    pass
+    original = fe.list_games()
+    games = filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original)
+    async def get_page(page: int):
+        embed = discord.Embed(title="Currently running games", description="")
+        offset = (page - 1) * page_length
+        for game in games:
+            embed.add_field(
+                name=f"{game["name"]}: [{game["id"]}]",
+                value=f"""
+                    Owned by: <@{game["owner"]}>\n
+                    Pick date: {game["pick_date"] or "Not set"}\n
+                    Starting Cash: {int(game["starting_money"])}\n
+                    Starting on ${game["start_date"]} and ending on {game[""]}\n
+                    """
+                )
+        n = Pagination.compute_total_pages(len(games), page_length)
+        embed.set_footer(text=f"Page {page} of {n}")
+        return embed, n
+    await Pagination(interaction, get_page).navigate()
+    
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
