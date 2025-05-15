@@ -552,22 +552,6 @@ async def my_games(
     # Send the response
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# TODO Get leaderboard data from backend
-# TODO Create autofill for user's games
-# TODO Create paginated embed with leaderboard
-# TODO Add navigation buttons if multiple pages
-@bot.tree.command(name="leaderboard", description="View game leaderboard")
-@app_commands.describe(
-    game_id="ID of the game",
-    user_id="Optional: View specific user's position"
-)
-async def leaderboard(
-    interaction: discord.Interaction, 
-    game_id: int, 
-    user_id: discord.User = None
-):
-    pass
-
 # Run the bot using the token
 if TOKEN:
     try:
