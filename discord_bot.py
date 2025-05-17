@@ -523,13 +523,13 @@ async def game_list(
                 value=f"""
                     Owned by: <@{game["owner"]}>\n
                     Pick date: {game["pick_date"] or "Not set"}\n
-                    Starting Cash: {int(game["starting_money"])}\n
-                    Starting on {game["start_date"]} and ending on {game["end_date"]}\n
+                    Starting Cash: ${int(game["starting_money"])}\n
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`\n
                     There are currently {len(game_members)} members participating\n
                     """
                 )
         n = Pagination.compute_total_pages(len(games), page_length)
-        embed.set_footer(text=f"Page {page} of {n}")
+        embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
         return embed, n
     await Pagination(interaction, get_page).navigate()
     
