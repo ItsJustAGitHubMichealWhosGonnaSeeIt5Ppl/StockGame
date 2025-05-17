@@ -489,7 +489,7 @@ class Backend:
     def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
         pass
 
-    def get_all_game_members(self, game_id: int):
+    def get_all_game_members(self, game_id: int, sort_by_value: bool = False):
         """Get all participants with a game ID
 
         Args:
@@ -499,7 +499,12 @@ class Backend:
             list: List of game participants
         """
         filters = {'game_id': game_id}
-        participants = self.sql.get(table="game_participants", filters=filters)
+
+        participants = None
+        if sort_by_value:
+            participants = self.sql.get(table="game_participants", filters=filters, order={"current_value": "DESC"})
+        else:
+            participants = self.sql.get(table="game_participants", filters=filters)
         return self._reformat_sqlite(participants)
 
 

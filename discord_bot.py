@@ -521,11 +521,11 @@ async def game_list(
             embed.add_field(
                 name=f"{game["name"]}: [{game["id"]}]",
                 value=f"""
-                    Owned by: <@{game["owner"]}>\n
-                    Pick date: {game["pick_date"] or "Not set"}\n
-                    Starting Cash: ${int(game["starting_money"])}\n
-                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`\n
-                    There are currently {len(game_members)} members participating\n
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(game_members)}** members participating
                     """
                 )
         n = Pagination.compute_total_pages(len(games), page_length)
