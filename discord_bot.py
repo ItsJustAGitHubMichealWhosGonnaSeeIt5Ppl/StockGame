@@ -22,7 +22,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
 from dotenv import load_dotenv, dotenv_values
-from .helpers.views import Pagination
+from helpers.views import Pagination
 
 load_dotenv()
 
@@ -46,7 +46,6 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(fe.backend.get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
