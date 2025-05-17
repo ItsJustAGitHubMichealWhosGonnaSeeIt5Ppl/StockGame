@@ -489,6 +489,21 @@ class Backend:
     def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
         pass
 
+    def get_all_game_members(self, game_id: int):
+        """Get all participants with a game ID
+
+        Args:
+            game_id (int): The ID of the game to filter by
+        
+        Returns:
+            list: List of game participants
+        """
+        filters = {'game_id': game_id}
+        participants = self.sql.get(table="game_participants", filters=filters)
+        return self._reformat_sqlite(participants)
+
+
+
 
 # INTERFACE INTERACTIONS.  SHOULD EXPECT CRAP FROM USERS AND VALIDATE DATA
 class Frontend: # This will be where a bot (like discord) interacts
@@ -589,6 +604,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         games = self.backend.list_games()
         return games
+    
     
     def game_info(self, game_id:int): 
         """Get information about a specific game.
@@ -693,6 +709,9 @@ class Frontend: # This will be where a bot (like discord) interacts
     
     def approve_game_users(self, user_id:int):
         pass
+
+    def get_all_participants(self, game_id: int):
+        return self.backend.get_all_game_members(game_id=game_id)
 
 # TESTING
 if __name__ == "__main__":

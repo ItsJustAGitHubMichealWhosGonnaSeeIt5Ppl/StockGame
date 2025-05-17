@@ -517,6 +517,7 @@ async def game_list(
         embed = discord.Embed(title="Currently running games", description="")
         offset = (page - 1) * page_length
         for game in games:
+            game_members = fe.get_all_participants(game["id"])
             embed.add_field(
                 name=f"{game["name"]}: [{game["id"]}]",
                 value=f"""
@@ -524,6 +525,7 @@ async def game_list(
                     Pick date: {game["pick_date"] or "Not set"}\n
                     Starting Cash: {int(game["starting_money"])}\n
                     Starting on {game["start_date"]} and ending on {game["end_date"]}\n
+                    There are currently {len(game_members)} members participating\n
                     """
                 )
         n = Pagination.compute_total_pages(len(games), page_length)
