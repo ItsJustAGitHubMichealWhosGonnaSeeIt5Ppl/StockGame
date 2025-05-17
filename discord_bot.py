@@ -17,15 +17,18 @@ import os
 import logging
 import discord
 import datetime
+from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
+from .helpers.views import Pagination
 
-# Load environment variables from .env file
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
+DB_NAME = os.getenv('DB_NAME')
+OWNER = os.getenv("OWNER") # Set owner ID from env
 
 # Set up intents with all necessary permissions
 intents = discord.Intents.default()
@@ -36,14 +39,14 @@ intents.members = True
 # intents.dm_messages = True # for invite user command
 
 bot = commands.Bot(command_prefix="$", intents=intents)
-
-fe = Frontend() # Frontend
+print(DB_NAME)
+fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(Backend().get_game(1))
+    print(fe.backend.get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -67,7 +70,8 @@ async def on_ready():
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
-    join_after_start="Whether players can join after game starts"
+    join_after_start="Whether players can join after game starts",
+    private_game="Whether the game is private (requires owner approval for new users)"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
@@ -78,11 +82,12 @@ async def create_game_advanced(
     starting_money: float = 10000.00,
     total_picks: int = 10,
     exclusive_picks: bool = False,
-    join_after_start: bool = False
+    join_after_start: bool = False,
+    private_game: bool = False
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
-    result = fe.create_game(
+    result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
         start_date=start_date,
@@ -91,7 +96,8 @@ async def create_game_advanced(
         total_picks=total_picks,
         exclusive_picks=exclusive_picks,
         join_after_start=join_after_start,
-        sell_during_game=False
+        sell_during_game=False,
+        private_game= False
         # sell_during_game=sell_during_game
     )
     
@@ -477,29 +483,19 @@ async def my_stocks(
 # TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
 @app_commands.describe(
-    game_id="ID of the game to view"
+    game_id="ID of the game to view",
+    show_leaderboard="Whether to display the leaderboard or not, will by default"
 )
 async def game_info(
     interaction: discord.Interaction, 
-    game_id: int
+    game_id: int,
+    show_leaderboard: bool = True
 ):
-        
-    game = fe.game_info(game_id)
+    info = fe.game_info(game_id, show_leaderboard)
+    print(info)
 
-    if not game:
-        embed = discord.Embed(
-            title="Game Not Found",
-            description=f"Could not find a game with ID {game_id}.",
-            color=discord.Color.red()
-        )
-    else:
-        embed = discord.Embed(
-            title="Game #{game_id}",
-            description=f"Name: {game['name']}\nStart Date: {game['start_date']}\nEnd Date: {game['end_date']}\nStarting Money: ${game['starting_money']}\nTotal Picks: {game['total_picks']}\nExclusive Picks: {game['exclusive_picks']}\nJoin After Start: {game['join_after_start']}\nSell During Game: {game['sell_during_game']}\nStatus: {game['status']}",
-            color=discord.Color.blue()
-        )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    # await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # TODO get list of public games
 #   - list the user count
@@ -509,12 +505,35 @@ async def game_info(
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
 @bot.tree.command(name="game-list", description="View a list of all games")
+@app_commands.describe(
+    page_length="The length of the list per page. Defaults to 10"
+)
 async def game_list(
-    interaction: discord.Interaction
+    interaction: discord.Interaction,
+    page_length: int = 10
 ):
-    pass
+    original = fe.list_games()
+    games = filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original)
+    async def get_page(page: int):
+        embed = discord.Embed(title="Currently running games", description="")
+        offset = (page - 1) * page_length
+        for game in games:
+            embed.add_field(
+                name=f"{game["name"]}: [{game["id"]}]",
+                value=f"""
+                    Owned by: <@{game["owner"]}>\n
+                    Pick date: {game["pick_date"] or "Not set"}\n
+                    Starting Cash: {int(game["starting_money"])}\n
+                    Starting on ${game["start_date"]} and ending on {game[""]}\n
+                    """
+                )
+        n = Pagination.compute_total_pages(len(games), page_length)
+        embed.set_footer(text=f"Page {page} of {n}")
+        return embed, n
+    await Pagination(interaction, get_page).navigate()
+    
 
-@bot.tree.command(name="my-games", description="View your games and their status")
+@bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
     interaction: discord.Interaction
 ):
@@ -533,32 +552,16 @@ async def my_games(
         # Add each game to the embed
         for game in games:
             # Create status indicator
-            status_emoji = "🟢" if game['status'] == 'open' else "🔴"
+            status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
             
             # Add game field
-            embed.add_field(name=f"{status_emoji} Game #{game['id']}: {game['name']}")
+            embed.add_field(name=f"{status_emoji} {game['name']}", value=f"ID:{game['id']}")
     
     # Add footer with command usage
     embed.set_footer(text=f"Use /game-info <game_id> for more details")
     
     # Send the response
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# TODO Get leaderboard data from backend
-# TODO Create autofill for user's games
-# TODO Create paginated embed with leaderboard
-# TODO Add navigation buttons if multiple pages
-@bot.tree.command(name="leaderboard", description="View game leaderboard")
-@app_commands.describe(
-    game_id="ID of the game",
-    user_id="Optional: View specific user's position"
-)
-async def leaderboard(
-    interaction: discord.Interaction, 
-    game_id: int, 
-    user_id: discord.User = None
-):
-    pass
 
 # Run the bot using the token
 if TOKEN:
