@@ -611,11 +611,12 @@ class Frontend: # This will be where a bot (like discord) interacts
         return games
     
     
-    def game_info(self, game_id:int): 
+    def game_info(self, game_id: int): 
         """Get information about a specific game.
 
         Args:
             game_id (int): Game ID
+            show_leaderboard (bool): Whether or not to show the leaderboard. Defaults to true
 
         Returns:
             dict: Game information
@@ -716,7 +717,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         pass
 
     def get_all_participants(self, game_id: int):
-        return self.backend.get_all_game_members(game_id=game_id)
+        return self.backend.get_all_game_members(game_id=game_id, sort_by_value=True)
 
 # TESTING
 if __name__ == "__main__":

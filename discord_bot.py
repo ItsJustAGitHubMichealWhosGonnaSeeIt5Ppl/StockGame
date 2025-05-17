@@ -490,8 +490,12 @@ async def game_info(
     game_id: int,
     show_leaderboard: bool = True
 ):
-    info = fe.game_info(game_id, show_leaderboard)
+    info = fe.game_info(game_id)
+    leaderboard_info = None
+    if show_leaderboard:
+        leaderboard_info = fe.get_all_participants(game_id)
     print(info)
+    print(leaderboard_info)
 
 
     # await interaction.response.send_message(embed=embed, ephemeral=True)
