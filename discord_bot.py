@@ -512,7 +512,7 @@ async def game_list(
     page_length: int = 10
 ):
     original = fe.list_games()
-    games = filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original)
+    games = list(filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original))
     async def get_page(page: int):
         embed = discord.Embed(title="Currently running games", description="")
         offset = (page - 1) * page_length
@@ -523,7 +523,7 @@ async def game_list(
                     Owned by: <@{game["owner"]}>\n
                     Pick date: {game["pick_date"] or "Not set"}\n
                     Starting Cash: {int(game["starting_money"])}\n
-                    Starting on ${game["start_date"]} and ending on {game[""]}\n
+                    Starting on {game["start_date"]} and ending on {game["end_date"]}\n
                     """
                 )
         n = Pagination.compute_total_pages(len(games), page_length)
