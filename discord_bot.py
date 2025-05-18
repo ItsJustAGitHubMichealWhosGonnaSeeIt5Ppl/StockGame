@@ -490,15 +490,38 @@ async def game_info(
     game_id: int,
     show_leaderboard: bool = True
 ):
-    info = fe.game_info(game_id)
-    leaderboard_info = None
-    if show_leaderboard:
-        leaderboard_info = fe.get_all_participants(game_id)
-    print(info)
-    print(leaderboard_info)
+    game = fe.game_info(game_id)
+    leaderboard_info = fe.get_all_participants(game_id)
+    embed = discord.Embed(title=f"Info for {game["name"]}: [{game["id"]}]", description=f"""
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(leaderboard_info)}** members participating
+                    """)
+    embed.set_footer(text="Dates are formatted as (YYYY/MM/DD)")
 
-
-    # await interaction.response.send_message(embed=embed, ephemeral=True)
+    if not show_leaderboard:
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    leaderboard_info = leaderboard_info[:10]
+    composed_str = "```\n"
+    for i in range(len(leaderboard_info)):
+        if i == 0:
+            composed_str += "🥇: "
+        elif i == 1:
+            composed_str += "🥈: "
+        elif i == 2:
+            composed_str += "🥉: "
+        else:
+            composed_str += f"{i + 1}: "
+        info = leaderboard_info[i]
+        composed_str += f"{info["name"]} [{info["participant_id"]}] | Aggregate Value ${info["current_value"]} | Joined {parser.parse(info["joined"])}\n"
+    
+    composed_str += "```"
+    embed.add_field(name="Leaderboard", value=composed_str)
+    await interaction.response.send_message(embed=embed)
 
 # TODO get list of public games
 #   - list the user count
