@@ -30,7 +30,7 @@ from stock_datatypes import Status
 #TODO implement custom types
 from sqlite_creator_real import create as create_db
 
-version = "0.0.2" #TODO should frontend and backend have different versions?
+version = "???" #TODO should frontend and backend have different versions?
 
 class Backend:
     # Raise Exceptions if bad data is passed in
@@ -43,24 +43,30 @@ class Backend:
         self.logger = logging.getLogger('StockBackend')
         self.sql = SqlHelper(db_name)
         # Try to create DB
-        self.version = "0.0.2"
+
         
     # # INTERNAL # #
-    def _single_get(self, table:str, resp:Status)-> tuple: # Handle single gets
+    def _single_get(self, table:str, resp:Status)-> dict: # Handle single gets
         #TODO add Literal for table
         if table == 'users':
             ubj_str = 'user'
-        elif table== 'games':
+        elif table == 'games':
             ubj_str = 'game'
-        elif table== 'stocks':
+        elif table == 'stocks':
             ubj_str = 'stock'
+        elif table == 'stock_prices':
+            ubj_str = 'stock price'
+        elif table == 'stock_picks':
+            ubj_str = 'stock pick'
+        elif table == 'game_participants':
+            ubj_str = 'game participant'
         else:
-            raise ValueError('Invalid `table`.')
+            raise ValueError(f'Invalid `table` {table}.')
         
         if resp['status'] == 'success':
             assert isinstance(resp['result'], tuple)
             if len(resp['result']) == 1: # Single object (expected)
-                return self._reformat_sqlite(resp['result'][0], table=table)
+                return self._reformat_sqlite(resp['result'], table=table)[0]
             elif len(resp['result']) == 0: # No results
                 raise LookupError(f'{ubj_str.capitalize()} not found.')
             else:
@@ -68,16 +74,7 @@ class Backend:
         else:
             raise Exception('Failed to get {ubj_str}.', resp)
         
-    def _many_get(self, table:str, resp:Status):
-        if table == 'users':
-            ubj_str = 'user'
-        elif table== 'games':
-            ubj_str = 'game'
-        elif table== 'stocks':
-            ubj_str = 'stock'
-        else:
-            raise ValueError('Invalid `table`.')
-        
+    def _many_get(self, table:str, resp:Status)-> tuple:
         if resp['status'] == 'success':
             assert isinstance(resp['result'], tuple)
             return self._reformat_sqlite(resp['result'], table='users') 
@@ -170,27 +167,32 @@ class Backend:
             formatted_data.append(item)
         return tuple(formatted_data)
     
-    # # USER RELATED # #
     
-    def add_user(self, user_id:int, display_name:Optional[str]=None, permissions:int = 210):
+    # # USER ACTIONS # #
+    def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
 
         Args:
             user_id (int): UNIQUE ID to identify user.
-            display_name (str): Username/Displayname for user
+            source (str): Source of user.  EG: Discord.
+            display_name (str): Username/Displayname for user.
             permissions (int, optional): User permissions (see). Defaults to 210.
         """
         #TODO Add user permissions docstring
         items = {
-            'user_id': user_id, 
-            'display_name':display_name if display_name else user_id, # Set display name to user ID if there isnt one supplied
+            'user_id': user_id,
+            'display_name':display_name,
+            'source': source,
             'permissions': permissions,
             'datetime_created': _iso8601()
             }
         
         resp = self.sql.insert(table='users', items=items)
         if resp['status'] != 'success': #TODO errors
-            raise Exception(f'Failed to add user.', resp) 
+            if resp['reason'] == 'SQLITE_CONSTRAINT_PRIMARYKEY':
+                raise ValueError(f'User with ID {user_id} already exists.')
+            else:
+                raise Exception(f'Failed to add user.', resp)
         
     def get_user(self, user_id:int):
         """Get a single user
@@ -224,16 +226,13 @@ class Backend:
             columns = ['*']
         
         resp = self.sql.get(table='users', columns=columns)
-        if resp['status'] == 'success':
-            assert isinstance(resp['result'], tuple)
-            if ids_only:
-                users = tuple([user['user_id'] for user in resp['result']])
-                return users
-            else:
-                return self._reformat_sqlite(resp['result'], table='users') 
+        users = self._many_get(table='users', resp=resp)
+        if ids_only:
+            ids = tuple([user['user_id'] for user in users])
+            return ids 
         else:
-            raise Exception('Failed to get users.', resp)
-    
+            return users
+         
     def update_user(self, user_id:int, display_name:Optional[str]=None, permissions:Optional[int]=None):
         """Update an existing user
 
@@ -260,10 +259,10 @@ class Backend:
         
         resp = self.sql.delete(table="users", filters={'user_id': user_id}) 
         if resp['status'] != 'success': #TODO errors
-            raise Exception(f'Failed to delete user {user_id}.', resp) 
+            raise Exception(f'Failed to remove user {user_id}.', resp) 
     
-    # # GAME RELATED # #
     
+    # # GAME ACTIONS # #
     def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
@@ -390,11 +389,7 @@ class Backend:
             statuses.append('"ended"')
         
         resp = self.sql.send_query(query=query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values=values)
-        if resp['status'] == 'success':
-            assert isinstance(resp['result'], tuple)
-            return self._reformat_sqlite(resp['result'], table='games') # Send games data to be reformatted #TODO test
-        else:
-            raise Exception('Failed to get games.', resp) # TODO more errors
+        return self._many_get(table='games', resp=resp)
         
     def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, draft_mode:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None):
         """Update an existing game
@@ -417,7 +412,7 @@ class Backend:
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
-        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today():
+        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date():
             if start_date or starting_money or pick_date or draft_mode:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `draft_mode` once game has started.')
         
@@ -440,6 +435,386 @@ class Backend:
         if resp['status'] != 'success': #TODO errors
             raise Exception(f'Failed to update game {game_id}.', resp) 
     
+    
+    # # STOCK ACTIONS # #
+    def add_stock(self, ticker:str, exchange:str, company_name:str):
+        """Add a stock
+
+        Args:
+            ticker (str): Stock ticker.  Eg: 'MSFT'.
+            exchange (str): Exchange stock is listed on.
+            company_name (str): Company name.
+        """        
+        #TODO list of valid exchanges?
+        items = {
+            'ticker': ticker.upper(),
+            'exchange': exchange,
+            'company_name': company_name
+            } # I guess not all stocks have a long name?
+
+        resp = self.sql.insert(table='stocks', items=items)
+        if resp['status'] != 'success': #TODO errors
+            if False: #TODO what is returned when the stock ticker already exists
+                raise ValueError(f'Stock with ticker {ticker} already exists.')
+            else:
+                raise Exception(f'Failed to add stock.', resp)
+    
+    def get_stock(self, ticker_or_id:str | int)-> dict:
+        """Get a stock
+
+        Args:
+            ticker_or_id (str | int): Stock ID (int) or ticker (str).
+
+        Returns:
+            dict: Stock information.
+        """
+        if isinstance(ticker_or_id, int): # ID
+            filters={'ticker': str(ticker_or_id)}
+        else: # Ticker
+            filters = {'stock_id': int(ticker_or_id)}
+        resp = self.sql.get(table='stocks',filters=filters)
+        return self._single_get(table='stocks', resp=resp)
+        
+    def get_many_stocks(self, company_name:Optional[str]=None, exchange:Optional[str]=None, tickers_only:bool=False)-> tuple:
+        """Get multiple stocks
+
+        Args:
+            company_name (Optional[str], optional): Filter by company name.
+            exchange (Optional[str], optional): Filter by exchange.
+            tickers_only (bool, optional): Only return tickers. Defaults to False.
+
+        Returns:
+            tuple: Matching stocks.
+        """
+        filters = {
+            'company_name': company_name,
+            'exchange': exchange
+            }
+        columns = [] #TODO does empty list cause no columns to be returned?
+        if tickers_only:
+            columns = ['ticker']
+
+        resp = self.sql.get(table='stocks', columns=columns, filters=filters)
+        stocks = self._many_get(table='stocks', resp=resp)
+        if tickers_only:
+            tickers = tuple([ticker['ticker'] for ticker in stocks])
+            return tickers
+        else:
+            return stocks
+    
+    def remove_stock(self, ticker_or_id:str | int): 
+        """Remove a stock
+
+        Args:
+            ticker_or_id (str | int): Stock ID (int) or ticker (str).
+        """
+        if isinstance(ticker_or_id, int): # ID
+            filters={'ticker': str(ticker_or_id)}
+        else: # Ticker
+            filters = {'stock_id': int(ticker_or_id)}
+            
+        resp = self.sql.delete(table="stocks", filters=filters) 
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to delete stock {ticker_or_id}.', resp) 
+    
+    
+    # # STOCK PRICE ACTIONS # #
+    def add_stock_price(self, ticker_or_id:str | int, price:float, datetime:Optional[str]=None): #TODO IF date is none use today #TODO maybe use stock_ids here? #TODO this won't handle the different game types 
+        """Add price data for a stock (should be done at close)
+
+        Args:
+            ticker_or_id (str | int): Stock ID (int) or ticker (str).
+            price (float): Stock price.
+            datetime (str, optional): Price datetime Format:`YYYY-MM-DD HH:MM:SS`.  If not provided, current datetime will be used.
+        """
+        if datetime and not self._validate_date(datetime, '%Y-%m-%d %H:%M:%S'): #Try to validate date
+            raise ValueError('Invalid `datetime` format.')
+        else:
+            datetime = _iso8601() # Current datetime as string
+            
+        stock_id = self.get_stock(ticker_or_id)['id'] #If stock is invalid, an error will be thrown anyway.
+        
+        items = {
+            'stock_id':int(stock_id), 
+            'price': float(price), 
+            'datetime': str(datetime)
+            }
+        
+        resp = self.sql.insert(table='stock_prices', items=items)
+        if resp['status'] != 'success': #TODO errors
+                raise Exception(f'Failed to add stock price for {ticker_or_id}.', resp)
+    
+    def get_stock_price(self, price_id:int) -> dict: #TODO add get_stock_price
+        """Get a single stock price by ID.
+
+        Args:
+            price_id (int): Price ID.
+
+        Returns:
+            dict: Stock price information.
+        """
+        resp = self.sql.get(table='stock_prices', filters={'price_id': price_id})
+        return self._single_get(table='stock_prices', resp=resp)
+    
+    def get_many_stock_prices(self, stock_id:Optional[str]=None, datetime:Optional[str]=None): # List stock prices, allow some filtering 
+        """List stock prices.
+
+        Args:
+            stock_id (str, optional): Filter by a stock ID. Defaults to None.
+            date (str, optional): Filter by a date.  Formats:  `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD`, `YYYY-MM-DD HH:`, etc..  Will use todays DATE if blank.
+
+        Returns:
+            list: Stock price info
+        """
+        if not datetime:
+            datetime = _iso8601('date')
+        order = {'datetime': "ASC"}  # Sort by price date
+        filters = {
+            'stock_id': stock_id, 
+            ('LIKE', 'datetime'): datetime + '%' # Match like objects
+            } 
+
+        resp = self.sql.get(table='stock_prices',filters=filters, order=order) 
+        return self._many_get(table='stock_prices', resp=resp)
+    
+    
+    # # STOCK PICK ACTIONS # #
+    def add_stock_pick(self, participant_id:int, stock_id:int,): # This is essentially putting in a buy order. End users should not be interacting with this directly 
+        """Create stock pick.
+
+        Args:
+            participant_id (int): Participant ID. Use get_participant_id() with user ID and game ID if you don't have it
+            stock_id (int): Stock ID.
+        """
+        player = self.get_participant(participant_id)
+        if player['status'] != 'active':
+            raise ValueError("User is not active in game.")
+        
+        game = self.get_game(game_id=player['game_id']) 
+        if datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date(): # Check that pick date hasn't passed
+            raise ValueError('Unable to add pick, past `pick_date`') #TODO allow this through backend
+        
+        picks = self.get_many_stock_picks(participant_id=participant_id, status=['pending_buy', 'owned', 'pending_sell'])
+        if len(picks) >= game['total_picks']: #
+            raise ValueError("Already at maximum picks.")
+        
+        items = {
+            'participation_id':participant_id,
+            'stock_id':stock_id,
+            'datetime_updated': _iso8601()
+            }
+        
+        resp = self.sql.insert(table='stock_picks', items=items)
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to add pick.', resp)
+    
+    def get_stock_pick(self, pick_id:int)-> dict:
+        """Get a single stock pick
+
+        Args:
+            pick_id (int): Pick ID.
+
+        Returns:
+            dict: Single stock pick
+        """
+        
+        resp = self.sql.get(table='stock_picks', filters={'pick_id': pick_id})
+        return self._single_get(table='stock_picks', resp=resp)
+    
+    def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None): 
+        """List stock picks.  Optionally, filter by a status or participant ID
+
+        Args:
+            participant_id (int, optional): Filter by a participant ID.
+            status (str | list, optional): Filter by a status(es) ('pending_buy', 'owned', 'pending_sell', 'sold').
+            stock_id(int, optional): Filter by stock ID.
+            
+        Returns:
+            list: List of stock picks
+        """
+        valid_statuses = ['pending_buy', 'owned', 'pending_sell', 'sold']
+        statuses = []
+        if status: # validate statuses
+            if isinstance(status, str):
+                status = [status]
+            for st in status: # Chec kthat 
+                if st not in valid_statuses:
+                    raise ValueError(f'invalid `status` {st}.')
+                statuses.append(f'"{st}"') # Add valid statues
+        
+            filters = { 
+            ('IN', 'status'): "" + "\n".join(statuses),
+            'participation_id': participant_id,
+            'stock_id': stock_id
+            }
+
+        resp = self.sql.get(table='stock_picks', filters=filters)
+        return self._many_get(table='stock_picks', resp=resp)
+
+    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None): #Update a single stock pick
+        """Update a stock pick
+
+        Args:
+            pick_id (int): Pick ID.
+            current_value (float): Current value (shares * current stock price)
+            shares (Optional[float], optional): Shares.
+            start_value (Optional[float], optional): Starting value of pick.
+            status (Optional[str], optional): Status ('pending_buy', 'owned', 'pending_sell', 'sold').
+        """
+        items = {
+            'shares': shares,
+            'start_value': start_value,
+            'current_value': current_value,
+            'status': status,
+            'datetime_updated': _iso8601()
+            }
+        
+        resp = self.sql.update(table='stock_picks', items=items, filters={'pick_id': pick_id})
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to update pick.', resp)
+    
+    def remove_stock_pick(self, pick_id:int):
+        """Remove a stock pick
+
+        Args:
+            pick_id (int): Pick ID.
+        """
+        
+        resp = self.sql.delete(table='stock_picks', filters={'pick_id': pick_id})
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to remove pick.', resp)
+    
+
+    # # GAME PARTICIPATION ACTIONS # #
+    def add_participant(self, user_id:int, game_id:int, team_name:Optional[str]=None):
+        """Add a game participant
+        
+        No checks are done here, any game can be joined.  Frontend will handle validation for this
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            team_name (Optional[str], optional): Nickname for this specific game.
+        """
+        items = {
+            'user_id':user_id, 
+            'game_id':game_id,
+            'name': team_name,
+            'datetime_joined': _iso8601()
+            }
+    
+        resp = self.sql.insert(table='game_participants', items=items)
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to add participant.', resp)
+        
+    def get_participant(self, participant_id:int): # Get game member info
+        """Get a game participant's information
+
+        Args:
+            participant_id (int): Participant ID.
+
+        Returns:
+            dict: Participant information.
+        """
+
+        resp = self.sql.get(table='game_participants', filters={'participation_id': participant_id}) 
+        return self._single_get(table='game_participants', resp=resp)
+        
+    def get_many_participants(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False):
+        """Get multiple
+
+        Args:
+            game_id (Optional[int], optional): Filter by game ID. 
+            user_id (Optional[int], optional): Filter by user ID.
+            status (Optional[str], optional): Filter by status ('pending', 'active', 'inactive').
+            sort_by_value (bool, optional): Whether results should be sorted by value.
+
+        Returns:
+            tuple: Matching participants.
+        """
+        if status and status not in ['pending', 'active', 'inactive']: # TODO support multiple statuses
+            raise ValueError('Invalid status!')
+        
+        filters = {
+            'user_id': user_id,
+            'game_id': game_id,
+            'status':status
+            }
+        
+        order={'game_id': 'DESC'}
+        if sort_by_value:
+            order['current_value'] = 'DESC'
+        
+        resp = self.sql.get(table='game_participants', order=order, filters=filters, ) 
+        return self._many_get(table='game_participants', resp=resp)
+    
+    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None):
+        """Update a game participant
+
+        Args:
+            participant_id (int): Participant ID.
+            name (Optional[str], optional): Team name.
+            status (Optional[str], optional): Status ('pending', 'active', 'inactive').
+            current_value (Optional[float], optional): Current portfolio value.
+        """
+        items = {'name': team_name,
+                 'status': status,
+                 'current_value': current_value,
+                 'datetime_updated': _iso8601()}
+        
+        resp = self.sql.update(table='game_participants', filters={'participation_id': participant_id}, items=items)
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to update participant {participant_id}.', resp)
+        
+    def remove_participant(self, participant_id:int):
+        """Remove a game participant
+
+        Args:
+            participant_id (int): Participant ID.
+        """
+        resp = self.sql.delete(table="game_participants", filters={'participant_id': participant_id}) 
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to remove participant {participant_id}.', resp) 
+    
+    
+    # # MISC MAYBE MOVE # #
+    def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
+        pass
+    
+    def update_game_members(self, game_id:int):
+        game = self.get_game(game_id=game_id)
+        if game['status'] != 'active':
+            return "Game not active"
+        members = self.list_game_members(game_id=game['id'])
+        for member in members:
+            portfolio_value = 0.0
+            picks = self.list_stock_picks(participant_id=member['id'], status='owned')
+            for pick in picks:
+                portfolio_value += pick['current_value']
+            update = self.update_game_member(participant_id=member['id'], current_value=portfolio_value)
+            
+    def update_stock_picks(self, date:str, game_id:Optional[int]=None): #TODO allow blank date to use latest
+        #TODO implement game_id filtering
+        pending_picks = self.list_stock_picks(status='pending_buy') #TODO handle pending_sell here too
+        for pick in pending_picks:
+            game_participant = self.get_game_member(participant_id=pick['participant_id']) #This is also annoying
+            game = self.get_game(game_id=game_participant['game_id']) #This is annoying
+            if game['status'] != 'active': # Won't buy stocks for games that have not started
+                continue #TODO log skipped games
+            
+            price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data #TODO Set to date or datetime depending on what the update frequency is. 
+            buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
+            shares = buying_power / price['price'] # Total shares owned
+            value = shares * price['price']
+            self.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=value, current_value=value, status='owned')
+        
+        all_picks = self.list_stock_picks(status='owned')
+        for pick in all_picks:
+            price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data
+            value = pick['shares'] * price['price']
+            self.update_stock_pick(pick_id=pick['id'], current_value=value)
+        #TODO return something
+        
     def update_games(self): # Update existing games
         games = self.get_many_games(include_private=True)
         if len(games) > 0:
@@ -465,370 +840,69 @@ class Backend:
             self.update_game(game_id=game['id'], aggregate_value=aggr_val) # Update total combined value
         else:
             raise Exception('Failed to get games to be updated.', games)
-    
-    # # STOCK ACTIONS # #
-    
-    def add_stock(self, ticker:str):
-        """Add a stock
+        
+    def find_stock_prices(self):
+        """Find and update stock prices for ALL stocks
+        
+        """
+        # THIS WILL NOT VALIDATE WHETHER IT IS THE END OF THE DAY OR NOT, THAT IS UP TO YOU TO DO!
+        today = _iso8601('date')
+        tickers = [ticker['ticker'] for ticker in self.get_many_stocks()]
+        if len(tickers) > 0:
+            prices = yf.Tickers(tickers).tickers
+            for ticker, price in prices.items(): # update pricing
+                price = price.info['regularMarketPrice']
+                self.add_stock_price(ticker_or_id=ticker, price=price, datetime=today) # Update pricing
+                
+    def find_stock(self, ticker:str): 
+        """Find and add a stock
 
         Args:
-            ticker (str): Stock ticker. Format should be 'MSFT'
-
-        Returns:
-            str: status/error #TODO should this raise an error instead? Yes
+            ticker (str): Stock ticker.  Eg: 'MSFT'.
         """        
         #TODO regex the subimissions to check for invalid characters and save time.
         #TODO should only USD stocks be allowed/limit exchanges?
-        #TODO what happens if multiple stocks are returned (probably something bad)
-        #TODO maybe the stock details should be gathered elsewhere.
-        existing_tickers = self.list_stocks(tickers_only=True)
-        if ticker in existing_tickers:
-            return "Ticker already exists"
+        try: # Check if the stock exists
+            self.get_stock(ticker_or_id=ticker)
+        except LookupError:
+            raise ValueError(f'Stock with ticker {ticker} already exists.')
         
         stock = yf.Ticker(ticker)
         try:
             info = stock.info
         except AttributeError: # If stock isn't valid, an attribute error should be raised
-            info = []
+            info = [] # Set list to 0 length so error is thrown
     
-        if len(info) > 0: # Try to verify ticker is real and get the relevant info
-            items = {'ticker': ticker.upper(),
-                       'exchange': info['fullExchangeName'],
-                       'company_name': info['displayName'] if 'displayName' in info else info['shortName']} # I guess not all stocks have a long name?
-
-            stock = self.sql.insert(table='stocks', items=items)
-            return stock
+        if len(info) == 1: # Try to verify ticker is real and get the relevant infos
+            self.add_stock(ticker=ticker.upper(),
+                exchange=info['fullExchangeName'],
+                company_name=info['displayName'] if 'displayName' in info else info['shortName'])
+        
+        elif len(info) > 1:
+            raise ValueError(f'Expected one stock, but got {len(info)}.', info)
         else:
-            return "Ticker invalid" #TODO is this a good way to verify? No
-    
-    def get_stock(self, ticker_or_id:str | int)-> dict:
-        """Get a stock
-
-        Args:
-            ticker_or_id (str | int): Stock ID (int) or ticker (str).
-
-        Returns:
-            dict: Stock information.
-        """
-        if isinstance(ticker_or_id, int): # ID
-            filters={'ticker': ticker_or_id}
-        else: # Ticker
-            filters = {'stock_id': int(ticker_or_id)}
-        resp = self.sql.get(table='stocks',filters=filters)
-        return self._single_get(table='stocks', resp=resp)
-        
-    def get_many_stocks(self, tickers_only:bool=False)-> tuple:
-        """Get multiple stocks
-
-        Args:
-            tickers_only (bool, optional): Only return tickers. Defaults to False.
-
-        Returns:
-            tuple: All stocks (includes details unless tickers_only is set)
-        """
-        columns = []
-        if tickers_only:
-            columns = ['ticker']
-            
-        resp = self.sql.get(table='stocks', columns=columns)
-        
-        if tickers_only:
-            tickers = [ticker['ticker'] for ticker in resp]
-            return tickers
-    
-        else:
-            return self._reformat_sqlite(stocks, table='stocks')
-    
-    def remove_stock(self, ticker:str): #TODO add remove_stock
-        pass
-    
-    # # STOCK PRICE ACTIONS # #
-    
-    def add_stock_price(self, ticker:str, price:float, date:Optional[str]=None): #TODO IF date is none use today #TODO maybe use stock_ids here? #TODO this won't handle the different game types 
-        """Add price data for a stock (should be done at close)
-
-        Args:
-            ticker (str): Stock ticker
-            price (float): Stock price 
-            datetime (str): ISO8601 (YYYY-MM-DD)
-        """
-        #AI IS FUCKING STUPID AND CLAIMS WE ABSOLUTELY NEED THE STOCK_ID TO BE ITS OWN THING, SO HERE IS THE SHIT WORKAROUND. FUCK YOU AI
-        stock_id = self.get_stock(ticker)['id'] #TODO add some sort of error catching here
-        
-        items = {'stock_id':int(stock_id), 
-                 'price': float(price), 
-                 'datetime': str(datetime)}
-        
-        stock = self.sql.insert(table='stock_prices', items=items)
-        return stock 
-    
-    def list_stock_prices(self, stock_id:Optional[str]=None, date:Optional[str]=None): # List stock prices, allow some filtering 
-        """List stock prices.
-
-        Args:
-            stock_id (str, optional): Filter by a stock ID. Defaults to None.
-            date (str, optional): Filter by a date. Defaults to None.
-
-        Returns:
-            list: Stock price info
-        """
-        order = {'datetime': "DESC"}  # Sort by price date
-        filters = {'stock_id': stock_id, 
-                   'datetime': date}
-
-        prices = self.sql.get(table='stock_prices',filters=filters, order=order) 
-        prices = self._reformat_sqlite(prices, table='stock_prices')
-        return prices
-    
-    def get_stock_price(self, price_id:int): #TODO add get_stock_price
-        pass
-    
-    def update_stock_prices(self):
-        """Update stock prices
-        
-        Will skip stocks that have already been updated today
-        """
-        # THIS WILL NOT VALIDATE WHETHER IT IS THE END OF THE DAY OR NOT, THAT IS UP TO YOU TO DO!
-        today = _iso8601('date')
-        
-        updated = [s_id['stock_id'] for s_id in self.list_stock_prices(date=today)] # Skip stocks that have already been updated
-        tickers = self.list_stocks() # Get all stock tickers currently in game
-        tickers = [ticker['ticker'] for ticker in tickers if ticker['id'] not in updated]
-        if len(tickers) > 0:
-            
-            prices = yf.Tickers(tickers).tickers
-            for ticker, price in prices.items(): # update pricing
-                price = price.info['regularMarketPrice']
-                self.add_stock_price(ticker=ticker, price=price, datetime=today) # Update pricing
-    
-    # # STOCK PICK ACTIONS # #
-    
-    def add_stock_pick(self, participant_id:int, stock_id:int,): # This is essentially putting in a buy order. End users should not be interacting with this directly 
-        """Create stock pick.
-
-        Args:
-            participant_id (int): Participant ID. Use get_participant_id() with user ID and game ID if you don't have it
-            stock_id (int): Stock ID.
-
-        Returns:
-            unk: No idea
-        """#TODO what does this return
-        player = self.get_game_member(participant_id)
-        if player['status'] != 'active':
-            raise ValueError("User is not active in game.")
-        
-        game = self.get_game(game_id=player['game_id']) #TODO validate that game hasn't already started?
-        
-        stocks = self.list_stock_picks(participant_id=participant_id)
-        
-        if len(stocks) >= game['total_picks']: #TODO this does not account for stocks that have been sold
-            raise ValueError("Maximum stocks selected.")
-        
-        items = {'participation_id':participant_id,
-                 'stock_id':stock_id,
-                 'datetime_updated': _iso8601()}
-        
-        pick = self.sql.insert(table='stock_picks', items=items)
-        return pick
-    
-    def list_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str]=None, stock_id:Optional[int]=None): 
-        """List stock picks.  Optionally, filter by a status or participant ID
-
-        Args:
-            participant_id (int, optional): Filter by a participant ID. Defaults to None.
-            status (str, optional): Filter by a status ('pending_buy', 'owned', 'pending_sell', 'sold'). Defaults to None.
-
-        Returns:
-            list: List of stock picks
-        """
-        if status and status not in ['pending_buy', 'owned', 'pending_sell', 'sold']:
-            raise ValueError(f'Status {status} is not valid!')
-        
-        filters = {'status': status,
-                   'participation_id': participant_id,
-                   'stock_id': stock_id}
-
-        picks = self.sql.get(table='stock_picks', filters=filters)
-        return self._reformat_sqlite(picks, table='stock_picks')
-    
-    def get_stock_pick(self, pick_id:int):
-        filters = {'pick_id': pick_id}
-        pick = self.sql.get(table='stock_picks', filters=filters)
-        return self._reformat_sqlite(pick, table='stock_picks')[0]
-    
-    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[int]=None, start_value:Optional[float]=None,  status:Optional[str]=None): #Update a single stock pick
-        items = {'shares': shares,
-                 'start_value': start_value,
-                 'current_value': current_value,
-                 'status': status,
-                 'datetime_updated': _iso8601()}
-        
-        filters = {'pick_id': pick_id}
-        
-        pick = self.sql.update(table="stock_picks", filters=filters, items=items)
-        return pick # TODO add error handling
-    
-    def remove_stock_pick(self, pick_id:int):
-        #TODO more validation?
-        delete = self.sql.delete(table='stock_picks', filters={'pick_id': pick_id, 'status': 'pending_buy'})
-        return delete
-    
-    def update_stock_picks(self, date:str, game_id:Optional[int]=None): #TODO allow blank date to use latest
-        #TODO implement game_id filtering
-        pending_picks = self.list_stock_picks(status='pending_buy') #TODO handle pending_sell here too
-        for pick in pending_picks:
-            game_participant = self.get_game_member(participant_id=pick['participant_id']) #This is also annoying
-            game = self.get_game(game_id=game_participant['game_id']) #This is annoying
-            if game['status'] != 'active': # Won't buy stocks for games that have not started
-                continue #TODO log skipped games
-            
-            price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data #TODO Set to date or datetime depending on what the update frequency is. 
-            buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
-            shares = buying_power / price['price'] # Total shares owned
-            value = shares * price['price']
-            self.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=value, current_value=value, status='owned')
-        
-        all_picks = self.list_stock_picks(status='owned')
-        for pick in all_picks:
-            price = self.list_stock_prices(stock_id=pick['stock_id'],date=date)[0] #TODO handle no data
-            value = pick['shares'] * price['price']
-            self.update_stock_pick(pick_id=pick['id'], current_value=value)
-        #TODO return something
-
-    # # GAME PARTICIPATION ACTIONS # #
-    def add_user_to_game(self, user_id:int, game_id:int, name:Optional[str]=None):
-        items = {'user_id':user_id, 
-                 'game_id':game_id,
-                 'name': name,
-                 'datetime_joined': _iso8601()}
-        
-        game = self.sql.insert(table='game_participants', items=items)
-        if game['status'] == 'success':
-            return game 
-        
-        else:
-            reason = game['reason']
-            if reason == 'SQLITE_CONSTRAINT_FOREIGNKEY':
-                game['reason'] = 'Game ID or User ID is invalid'
-            
-            elif reason == 'SQLITE_CONSTRAINT_UNIQUE':
-                game['reason'] = 'User has already been added to this game'
-
-            return game # Return game with updated errors
-    
-        
-    def remove_user_from_game(self, game_id:int, user_id:int): #TODO add remove_user_from_game
-        pass
-    
-    def get_participant_id(self, user_id:int, game_id:int): # Will save time
-        """Get a participant ID from user and game ID.
-
-        Args:
-            user_id (int): User ID.
-            game_id (int): Game ID.
-
-        Returns:
-            int: Participant ID.
-        """
-
-        participant = self.sql.get(table='game_participants', columns=['participation_id'], filters={'user_id': user_id, 'game_id': game_id})
-        if 'status' in 
-        return participant # Drill down 
-
-    def list_game_members(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False):
-        
-        if status and status not in ['pending', 'active', 'inactive']:
-            raise ValueError('Invalid status!')
-        
-        filters = {'user_id': user_id,
-                   'game_id': game_id,
-                   'status':status}
-        
-        order={'game_id':'DESC'}
-        if sort_by_value:
-            order['current_value'] = 'DESC'
-        
-        participants = self.sql.get(table='game_participants', columns=['*'], order=order, filters=filters, ) 
-        return self._reformat_sqlite(participants, table='game_participants')
-
-    def get_game_member(self, participant_id:int): # Get game member info
-        """Get participant information from ID
-
-        Args:
-            participant_id (int): Participant ID.
-
-        Returns:
-            dict: Game participant information
-        """
-        filters = {'participation_id': participant_id}
-        participant = self.sql.get(table='game_participants', filters=filters) 
-        return self._reformat_sqlite(participant)[0] #TODO test
-    
-    def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
-        pass
-
-    def get_all_game_members(self, game_id: int, sort_by_value: bool = False):
-        """Get all participants with a game ID
-
-        Args:
-            game_id (int): The ID of the game to filter by
-        
-        Returns:
-            list: List of game participants
-        """
-        filters = {'game_id': game_id}
-
-        participants = None
-        if sort_by_value:
-            participants = self.sql.get(table="game_participants", filters=filters, order={"current_value": "DESC"})
-        else:
-            participants = self.sql.get(table="game_participants", filters=filters)
-        return self._reformat_sqlite(participants)
-
-
-
-
-        return self._reformat_sqlite(participant, table='game_participants')[0]
-    
-    def update_game_member(self, participant_id:int, name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None):  
-        items = {'name': name,
-                 'status': status,
-                 'current_value': current_value,
-                 'datetime_updated': _iso8601()}
-        
-        game = self.sql.update(table='game_participants', filters={'participation_id': participant_id}, items=items)
-        return game
-
-    def update_game_members(self, game_id:int):
-        game = self.get_game(game_id=game_id)
-        if game['status'] != 'active':
-            return "Game not active"
-        members = self.list_game_members(game_id=game['id'])
-        for member in members:
-            portfolio_value = 0.0
-            picks = self.list_stock_picks(participant_id=member['id'], status='owned')
-            for pick in picks:
-                portfolio_value += pick['current_value']
-            update = self.update_game_member(participant_id=member['id'], current_value=portfolio_value)
+            raise ValueError(f'Invalid `ticker` {ticker}.')
 
 class GameLogic: # Might move some of the control/running actions here
     pass
             
 # INTERFACE INTERACTIONS.  SHOULD EXPECT CRAP FROM USERS AND VALIDATE DATA
 class Frontend: # This will be where a bot (like discord) interacts
-    def __init__(self, database_name:str, owner_user_id:int, default_permissions:int=210):
-        """For use with a discord bot or other frontend. 
+    def __init__(self, database_name:str, owner_user_id:int, default_permissions:int=210, source:Optional[str]=None):
+        """For use with a discord bot or other frontend
         
         Provides  basic error handling, data validation, more user friendly commands, and more.
 
         Args:
+            database_name (str): Name of database.
             owner_user_id (int): User ID of the owner.  This user will be able to control everything.
-            default_permissions (int, optional): Default permissions for new users. Defaults to 210. (Users can view and join games, but not create their own)
+            source (str, optional): Source.  EG: Discord. Used when creating users.
+            default_permissions (int, optional): Default permissions for new users. Defaults to 210. (Users can view and join games, but not create their own).
         """
-        self.version = "0.0.1"
+        self.source = source if source else 'Frontend'
         self.backend = Backend(database_name)
         self.default_perms = default_permissions
-        self.register(owner_user_id,owner_user_id) # Try to register user
+        self.register(user_id=owner_user_id, owner_user_id) # Try to register user
         self.backend.update_user(user_id=owner_user_id, permissions=288)
         self.owner_id = owner_user_id
     
@@ -966,25 +1040,22 @@ class Frontend: # This will be where a bot (like discord) interacts
     
     # User actions (Return information that is relevant to a specific user)
     
-    def register(self, user_id:int, username:str):
+    def register(self, user_id:int, source:Optional[str]=None, username:Optional[str]=None):
         """Register user to allow gameplay
 
         Args:
             user_id (int): User ID.
-            username (str): Display name/username
+            source (str, optional): Source of user.  EG: Discord.  If blank, will use default source set in frontend.
+            username (str, optional): Display name/username.
 
         Returns:
             dict: Status/result
         """
-        user = self.backend.add_user(user_id=user_id ,display_name=username, permissions=self.default_perms)
-        if user['status'] == 'success':
+        try:
+            self.backend.add_user(user_id=user_id, source=source, display_name=username, permissions=self.default_perms)
             return "Registered"
-        
-        elif user['reason'] == 'SQLITE_CONSTRAINT_PRIMARYKEY':
+        except ValueError: # user already exists
             return "User already registered"
-        
-        else: #TODO add logging here
-            return "Unknown error occurred while registering user"
 
     def change_name(self, user_id:int, name:str):
         """Change your display name (nickname).
@@ -1199,6 +1270,7 @@ if __name__ == "__main__":
     OWNER = os.getenv("OWNER") # Set owner ID from env
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
     #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
+    game.backend.update_game(game_id=1, name='TestGameUpd')
     for user in test_users: # Add some random users
         print(game.register(user_id=user, username=str(user)))
         game.join_game(user_id=user,game_id=1)

@@ -11,15 +11,29 @@ import os
 
 
 def create(db_name:str):
+    version = "0.0.2"
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
+    
+    # Permissions/roles
+    # Will allow for discord role permissions instead of what we have now.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_roles (
+        role_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord role ID)
+        role_name TEXT DEFAULT NULL,                -- User display name
+        source TEXT NOT NULL,                       -- role source
+        datetime_created TEXT NOT NULL              -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+    );""")
+    
+    
     # Users table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
         display_name TEXT,                          -- User display name
-        permissions INT NOT NULL DEFAULT 210,       -- Store users permissions.
+        source TEXT NOT NULL,                       -- User source
+        permissions INT NOT NULL DEFAULT 210,       -- Store users permissions
         datetime_created TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
     );""")
 
@@ -55,9 +69,11 @@ def create(db_name:str):
     # Stocks table 
     cursor.execute("""CREATE TABLE IF NOT EXISTS stocks (
         stock_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ticker TEXT NOT NULL UNIQUE,    -- Stock ticker
+        ticker TEXT NOT NULL,           -- Stock ticker
         exchange TEXT NOT NULL,         -- Stock exchange that it is listed on
-        company_name TEXT               -- Optional?
+        company_name TEXT,              -- Optional?
+        
+        UNIQUE (ticker, exchange)
     );""")
 
     # Stock price (current and historical) table

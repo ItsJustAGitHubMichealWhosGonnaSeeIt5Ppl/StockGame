@@ -173,13 +173,17 @@ class SqlHelper: # Simple helper for SQL
         return tuple(formatted_items)
     
     def _sql_filters(self, filters:dict)-> tuple[str, list[str | int | float | bool]]:
+        
         filter_str = "" # Will contain filter string (if any)
         filter_vars = list()
         filter_items = list()
         if filters: # Create filter string (if exists)
             for var, item in filters.items():
                 if item != None: # Skip blank items
-                    filter_vars.append(var + "=?")
+                    if isinstance(var, tuple): # Support LIKE and NOT by sending a line like this var = ('LIKE', '<query>')
+                        filter_vars.append(f'{var[0]} {var[1].UPPER()} ?')
+                    else:
+                        filter_vars.append(var + " = ?")
                     filter_items.append(item)
     
             if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
