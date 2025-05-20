@@ -1,5 +1,6 @@
 import sqlite3
 import os 
+from dotenv import load_dotenv
 
 #TODO is this GDPR compliant, and does it need to be?
 
@@ -8,6 +9,8 @@ import os
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
+
+load_dotenv();
 
 DB_NAME = os.getenv('DB_NAME')
 conn = sqlite3.connect(DB_NAME)
