@@ -21,8 +21,7 @@ from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv, dotenv_values
-from helpers.views import Pagination
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -46,6 +45,7 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
+    print(Backend().get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -86,6 +86,8 @@ async def create_game_advanced(
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
+    result = fe.new_game(
+        owner=interaction.user.id,
     result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
