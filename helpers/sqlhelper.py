@@ -2,8 +2,19 @@
 import sqlite3
 from datetime import datetime
 import functools
+import logging
+from stock_datatypes import Status, QueryModes, Statuses
+from typing import Optional
 
-def _unix_timestamp(): # Get a unix timestamp #TODO add docstring
+
+
+
+def _unix_timestamp(): # Get a unix timestamp
+    """Creates a unix timestamp from the current time
+
+    Returns:
+        int: Unix timestamp for NOW
+    """
     return int(datetime.now().timestamp())
 
 def _iso8601(date_type:str='datetime'): # 
@@ -59,12 +70,14 @@ def open_and_close(func): #TODO MAKE THIS NOT AI
     return wrapper
 
 class SqlHelper: # Simple helper for SQL
-    def __init__(self, db_name:str): #TODO add logging
+    def __init__(self, db_name:str):
         """SQLlite helper tool
 
         Args:
             db_name (str): Database name
         """
+        self.logger = logging.getLogger('SqlHelper')
+        self.logger.info('Logging for SqlHelper started')
         self.db = db_name
         try: #TODO can we check if the DB is locked?
             self._open_connection()
@@ -81,62 +94,69 @@ class SqlHelper: # Simple helper for SQL
     def _close_connection(self): # Stop/close connection
             self.conn.close()
     
-    def _simple_status(self, status:str='success', reason:str='none', more_info:str='None'):
-        """Generate simple status messages
+    def _simple_status(self, status:Statuses='success', reason:str='NA', result: str | int | dict | tuple | Exception | None=None, more_info:str | int | dict | tuple | Exception | None='NA')-> Status:
+
+        """Simple status and results object
 
         Args:
             status (str, optional): Status. Defaults to 'success'.
-            reason (str, optional): Reason. Defaults to 'none'.
-            more_info (str, optional): Extra info. Defaults to 'None'.
+            reason (str, optional): Reason. Defaults to 'NA'.
+            result (str | int | dict | list | Exception | None, optional): Result item (if any).  
+            more_info (str | int | dict | list | Exception | None, optional): Extra info. Defaults to 'NA'.
 
         Returns:
-            dict: Status/result
+            Status: Status/result
         """
         return {'status':status,
             'reason':reason,
+            'result': result,
             'more_info':more_info}
         
-    def _run_query(self, query:str, values:list, mode:str):
+    def _run_query(self, query:str, values:Optional[list]=None, mode: QueryModes ='get')-> Status:
         try:
-            resp = self.cur.execute(query, values)
+            if values:
+                resp = self.cur.execute(query, values)
+            else: # Run without values, prevents error
+                resp = self.cur.execute(query)
             self.conn.commit()
-            if mode in ['insert','update', 'delete']:
-                return self._simple_status(reason=f'{mode}', more_info=self.cur.lastrowid) # Simple status
+            if mode in ['insert', 'update', 'delete']:
+                return self._simple_status(reason=f'{mode}', result=self.cur.lastrowid) # Simple status
             elif mode in ['get']: 
                 resp = self.cur.fetchall()
-                return self._format(resp, self.cur.description)
-            elif mode in ['advanced_get']: # in case the respose columns have duplicate names
+                return self._simple_status(status='success', reason='got rows', result=self._format(resp, self.cur.description))
+            elif mode in ['raw-get']: # in case the respose columns have duplicate names
                 resp = self.cur.fetchall() 
-                return resp, self.cur.description
-                
+                return self._simple_status(status='success', reason='valid query', result=(resp, self.cur.description))
+            else: # Raise error if mode isn't alowed
+                raise ValueError(f'Invalid mode {mode}.')
             
         except sqlite3.IntegrityError as e:
-            if e.sqlite_errorcode == 2067: # Unique constraint failed
+            if e.sqlite_errorcode == 2067: # Unique constraint failed # type: ignore is custom exception
                 return self._simple_status(status='error',
                                    reason='SQLITE_CONSTRAINT_UNIQUE',
-                                   more_info=e.args[0].split(':')[1])
+                                   result=e.args[0].split(':')[1])
                 
-            elif e.sqlite_errorcode == 1555: # Unique constraint failed for primary key
+            elif e.sqlite_errorcode == 1555: # Unique constraint failed for primary key # type: ignore is custom exception
                 return self._simple_status(status='error',
                                    reason='SQLITE_CONSTRAINT_PRIMARYKEY',
-                                   more_info=e.args[0].split(':')[1].strip())
+                                   result=e.args[0].split(':')[1].strip())
             
-            elif e.sqlite_errorcode == 787: # Foreign Key Constraint Failed
+            elif e.sqlite_errorcode == 787: # Foreign Key Constraint Failed # type: ignore is custom exception
                 return self._simple_status(status='error',
                                    reason='SQLITE_CONSTRAINT_FOREIGNKEY',
-                                   more_info=e.args[0])
+                                   result=e.args[0])
             
-            else:
+            else: # Unknown SQLite error
                 return self._simple_status(status='error',
-                                   reason='IntegrityError',
-                                   more_info=e)
+                                   reason=str(e.sqlite_errorname),  # type: ignore is custom exception
+                                   result=e)
     
         except Exception as e:
             return self._simple_status(status='error',
                                    reason='OTHER ERROR',
-                                   more_info=e)
+                                   result=e)
 
-    def _format(self, items:list, keys:list):
+    def _format(self, items:list | tuple, keys:list | tuple)-> tuple[dict]:
         item_keys = [key[0] for key in keys] # Extract keys
         formatted_items = []
         
@@ -150,9 +170,9 @@ class SqlHelper: # Simple helper for SQL
                 
             formatted_items.append(formatted_item)
             
-        return formatted_items
+        return tuple(formatted_items)
     
-    def _sql_filters(self, filters:dict):
+    def _sql_filters(self, filters:dict)-> tuple[str, list[str | int | float | bool]]:
         filter_str = "" # Will contain filter string (if any)
         filter_vars = list()
         filter_items = list()
@@ -172,13 +192,19 @@ class SqlHelper: # Simple helper for SQL
         values = list()
         questionmarks = list()
         for key, val in items.items():
-            if val != None:  # Skip blank items
-                if mode == 'insert':
-                    keys.append(key)
-                elif mode == 'set':
-                    keys.append(key +'=?')
+            if val == None:  # Skip blank items
+                continue
+            elif val == 'NULL': # Allows a field be set back to none/null
+                values.append(None)
+            else:
                 values.append(val)
-                questionmarks.append("?")
+                
+            if mode == 'insert':
+                keys.append(key)
+            elif mode == 'set':
+                keys.append(key +'=?')
+
+            questionmarks.append("?")
         
         return keys, values, questionmarks
     
@@ -193,7 +219,7 @@ class SqlHelper: # Simple helper for SQL
         
         
     @open_and_close    
-    def get(self, table:str, columns:list=["*"], filters:dict=None, order:dict=None): 
+    def get(self, table:str, columns:list=["*"], filters:Optional[dict]=None, order:Optional[dict]=None) -> Status: 
         """Run SQL get queries
         
         THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
@@ -210,22 +236,24 @@ class SqlHelper: # Simple helper for SQL
         if len(columns) == 0:
             columns = ['*']        
         sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
-        
-        filter_str, filter_items = self._sql_filters(filters)
+        filter_str = None
+        if filters:
+            filter_str, filter_items = self._sql_filters(filters)
+            
             
         order_str = "" # Will contain order string (if any)
         order_items = list()
         if order:
             for var, direction in order.items():
                 if direction.lower() not in ['asc', 'desc']: # Skip invalid order/sort
-                    raise ValueError(f'Invalid order direction {direction} specified for {var}@')
+                    raise ValueError(f'Invalid order direction {direction} specified for {var}')
                 
                 order_items.append(f"{var} {direction.upper()}") 
             
             order_str = "ORDER BY " + ", ".join(order_items)
             
         sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
-        return self._run_query(sql_query, filter_items, mode='get')
+        return self._run_query(sql_query, values=filter_items, mode='get')  # type: ignore its a list or status, idk why it has a hard time understanding that but im sick of trying to fix it
     
     @open_and_close
     def update(self, table:str, filters:dict, items:dict):
@@ -240,10 +268,21 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, all_items, mode='update')
     
     @open_and_close
-    def delete(self, table:str, filters:dict):
+    def delete(self, table:str, filters:dict={}):
         sql_query = """DELETE FROM {table} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
         
         sql_query = sql_query.format(table=table, filters=filter_str)
         return self._run_query(sql_query, filter_items, mode='delete')
+    
+    @open_and_close
+    def send_query(self, query, values: Optional[list]=None , mode:QueryModes='get'): # Send an SQL query directly
+        return self._run_query(query=query, values=values, mode=mode)
+    
+    @open_and_close
+    def delete_table(self, table:str): # Drop that shit
+        query = """DROP TABLE IF EXISTS ?
+        VALUES(?,)"""
+        values = [table]
+        return self._run_query(query=query, values=values, mode='delete')

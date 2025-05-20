@@ -21,8 +21,7 @@ from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv, dotenv_values
-from .helpers.views import Pagination
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -46,7 +45,7 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(fe.backend.get_game(1))
+    print(Backend().get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -89,6 +88,8 @@ async def create_game_advanced(
     # Create game using frontend and get the result
     result = fe.new_game(
         owner=interaction.user.id,
+    result = fe.new_game(
+        user_id=interaction.user.id,
         name=name,
         start_date=start_date,
         end_date=end_date,
@@ -491,11 +492,38 @@ async def game_info(
     game_id: int,
     show_leaderboard: bool = True
 ):
-    info = fe.game_info(game_id, show_leaderboard)
-    print(info)
+    game = fe.game_info(game_id)
+    leaderboard_info = fe.get_all_participants(game_id)
+    embed = discord.Embed(title=f"Info for {game["name"]}: [{game["id"]}]", description=f"""
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(leaderboard_info)}** members participating
+                    """)
+    embed.set_footer(text="Dates are formatted as (YYYY/MM/DD)")
 
-
-    # await interaction.response.send_message(embed=embed, ephemeral=True)
+    if not show_leaderboard:
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    leaderboard_info = leaderboard_info[:10]
+    composed_str = "```\n"
+    for i in range(len(leaderboard_info)):
+        if i == 0:
+            composed_str += "🥇: "
+        elif i == 1:
+            composed_str += "🥈: "
+        elif i == 2:
+            composed_str += "🥉: "
+        else:
+            composed_str += f"{i + 1}: "
+        info = leaderboard_info[i]
+        composed_str += f"{info["name"]} [{info["participant_id"]}] | Aggregate Value ${info["current_value"]} | Joined {parser.parse(info["joined"])}\n"
+    
+    composed_str += "```"
+    embed.add_field(name="Leaderboard", value=composed_str)
+    await interaction.response.send_message(embed=embed)
 
 # TODO get list of public games
 #   - list the user count
@@ -513,22 +541,24 @@ async def game_list(
     page_length: int = 10
 ):
     original = fe.list_games()
-    games = filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original)
+    games = list(filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original))
     async def get_page(page: int):
         embed = discord.Embed(title="Currently running games", description="")
         offset = (page - 1) * page_length
         for game in games:
+            game_members = fe.get_all_participants(game["id"])
             embed.add_field(
                 name=f"{game["name"]}: [{game["id"]}]",
                 value=f"""
-                    Owned by: <@{game["owner"]}>\n
-                    Pick date: {game["pick_date"] or "Not set"}\n
-                    Starting Cash: {int(game["starting_money"])}\n
-                    Starting on ${game["start_date"]} and ending on {game[""]}\n
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(game_members)}** members participating
                     """
                 )
         n = Pagination.compute_total_pages(len(games), page_length)
-        embed.set_footer(text=f"Page {page} of {n}")
+        embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
         return embed, n
     await Pagination(interaction, get_page).navigate()
     

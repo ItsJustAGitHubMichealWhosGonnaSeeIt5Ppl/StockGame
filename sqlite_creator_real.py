@@ -1,7 +1,6 @@
 import sqlite3
 import os 
 
-#TODO is this GDPR compliant, and does it need to be?
 
 
 #NOTE ISO8601 applies to both (YYYY-MM-DD HH:MM:SS) and (YYYY-MM-DD)! keys should be named according to below
@@ -67,8 +66,10 @@ def create(db_name:str):
         stock_id INTEGER NOT NULL,
         price REAL NOT NULL,           -- Closing price of stock
         datetime TEXT NOT NULL,      -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-        FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE CASCADE,  -- When a ticker is deleted from the main table, all references to it will also be deleted?
-        UNIQUE (stock_id, datetime)                                           -- Ensure only one price per stock per day
+        
+    FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE CASCADE,  -- When a ticker is deleted from the main table, all references to it will also be deleted?
+        
+    UNIQUE (stock_id, datetime)                                           -- Ensure only one price per stock per day
     );""")
     #cursor.execute("CREATE INDEX IF NOT EXISTS idx_stock_prices ON stock_prices(stock_id, price, price_date);") # I think this will be more useful to have?
 
@@ -85,7 +86,8 @@ def create(db_name:str):
         
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
         FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
-        UNIQUE (user_id, game_id) -- A user can only join a specific game once
+        
+    UNIQUE (user_id, game_id) -- A user can only join a specific game once
     );""")
 
     # Stock picks table.  Store a users stock picks for their game(s).  Buy date not needed since game_participants join date can be used
@@ -101,7 +103,8 @@ def create(db_name:str):
         
         FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
         FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
-        UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
+        
+    UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
     );""")
 
     conn.commit()

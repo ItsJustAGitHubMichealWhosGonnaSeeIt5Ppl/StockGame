@@ -4,6 +4,30 @@ import logging
 import os
 from datetime import datetime, date
 from helpers.sqlhelper import SqlHelper, _iso8601
+from typing import Optional
+from stock_datatypes import Status
+
+### Methods (in order)
+## add (create)
+# Return nothing if successful
+
+## get
+# Raise error if the response is not 1 user
+
+## get_many (list)
+# Return 0+ items
+# Raise error if search fails
+
+## update
+# Return nothing if successful
+
+## delete
+# Return nothing if successful
+
+
+
+
+#TODO implement custom types
 from sqlite_creator_real import create as create_db
 
 logging.basicConfig(filename='stock_game.log', 
@@ -21,11 +45,33 @@ class Backend:
         """Backend
         """
         create_db(db_name) # Try to create DB
+        self.logger = logging.getLogger('StockBackend')
         self.sql = SqlHelper(db_name)
         # Try to create DB
         self.version = "0.0.2"
+        
+    # # INTERNAL # #
+    def _validate_date(self, date:str, format:str='%Y-%m-%d')-> bool: # Will return a datetime object
+        """Attempt to validate a string formatted date
+
+        Args:
+            date (str): Unvalidated date.
+            format (str, optional): datetime formatting string. Defaults to '%Y-%m-%d'.
+
+        Returns:
+            bool:  True if valid.
+        """
+        try:
+            validated: datetime = datetime.strptime(date, format)
+        except ValueError:
+            return False
+        
+        return True
+            
+    def _error_datatype_wrong(self, variable:str, correct_type:str):#TODO might use this 
+        pass 
     
-    def _reformat_sqlite(self, data:list, table:str, custom_keys:dict=None): # Reformat data from the database into more friendly 
+    def _reformat_sqlite(self, data:tuple, table:str, custom_keys:Optional[dict]=None) -> tuple[dict[str, str | int | float | bool]]: # Reformat data from the database into more friendly 
         """Reformat the data from SQLite database to make it easier to work with
 
         Args:
@@ -34,7 +80,7 @@ class Backend:
             custom_keys (dict, optional): Custom key names
         
         Returns:
-            list: List of reformatted data
+            tuple: List of reformatted data
         """
         formatted_data = [] # Data will be stored here
         if custom_keys: # Allow custom key mapping
@@ -59,6 +105,7 @@ class Backend:
             # Users
             'display_name': 'username',
             }
+        for raw_data in data: # Reformat data from SQLite
             
             if table == 'users': # Handle specific items that need to be added 
                 keys['user_id'] = 'id'
@@ -88,43 +135,64 @@ class Backend:
                     item[key] = val
                     
             formatted_data.append(item)
-        return formatted_data
+        return tuple(formatted_data)
     
-    # # USER ACTIONS # #
+    # # USER RELATED # #
     
-    def add_user(self, user_id:int, display_name:str=None, permissions:int = 210):
+    def add_user(self, user_id:int, display_name:Optional[str]=None, permissions:int = 210) -> Status:
         """Create a game user
 
         Args:
             user_id (int): UNIQUE ID to identify user.
             display_name (str): Username/Displayname for user
             permissions (int, optional): User permissions (see). Defaults to 210.
+        """
+        #TODO Add user permissions docstring
+        items = {
+            'user_id': user_id, 
+            'display_name':display_name if display_name else user_id, # Set display name to user ID if there isnt one supplied
+            'permissions': permissions,
+            'datetime_created': _iso8601()
+            }
         
-        Returns:
-            dict: Result/status
-        """#TODO Add user permissions docstring
-        items = {'user_id': user_id, 
-                 'display_name':display_name if display_name else user_id, # Set display name to user ID if there isnt one supplied
-                 'permissions': permissions,
-                 'datetime_created': _iso8601()}
+        resp = self.sql.insert(table='users', items=items)
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to add user.', resp) 
         
-        user = self.sql.insert(table='users', items=items)
-        return user
-        
-    def remove_user(self, user_id:int):
-        delete = self.sql.delete(table='users', filters={'user_id': user_id})
-        return delete
-    
-    def list_users(self, ids_only:bool=False):
-        """List all users
+    def get_user(self, user_id:int):
+        """Get a single user
 
         Args:
-            ids_only (bool, optional): Only return user IDs. Defaults to False.
+            user_id (int): User ID.
 
         Returns:
-            list: All users (includes details unless ids_only is set)
+            dict: User information.
         """
-        
+        resp = self.sql.get(table='users', filters={'user_id': user_id})
+        if resp['status'] == 'success':
+            assert isinstance(resp['result'], tuple)
+            if len(resp['result']) == 1: # Single user (expected)
+                return self._reformat_sqlite(resp['result'][0], table='users') 
+            elif len(resp['result']) == 0: # No results
+                raise LookupError(f'No user with ID {user_id} found.')
+            else:
+                raise LookupError(f'Returned more than one user.', resp['result'])
+        else:
+            raise Exception('Failed to get user.', resp)
+    
+    def get_many_users(self, display_name:Optional[str]=None, source:Optional[str]=None, permissions:Optional[int]=None, ids_only:bool=False) -> tuple: 
+        """Get multiple users
+
+        Args:
+            display_name (Optional[str], optional): Filter by display name.
+            source (Optional[str], optional): Filter by source.
+            permissions (Optional[int], optional): Filter by permission.
+            ids_only (bool, optional): Return only user IDs. Defaults to False.
+
+        Returns:
+            tuple: Matching users.
+        """
+        #TODO implement source and permission filtering
         if ids_only:
             columns = ['user_id']
             
@@ -137,95 +205,96 @@ class Backend:
             return users
         
         else:
-            return self._reformat_sqlite(users, table='users')
-        
-    def get_user(self, user_id:int):
-        """Get a single user by ID
+            raise Exception('Failed to get users.', resp)
+    
+    def update_user(self, user_id:int, display_name:Optional[str]=None, permissions:Optional[int]=None):
+        """Update a user
 
         Args:
             user_id (int): User ID.
-
-        Returns:
-            dict: User information
+            display_name (Optional[str], optional): Display name.
+            permissions (Optional[str], optional): Permissions.
         """
-        filters = {'user_id': user_id}
-        user = self.sql.get(table='users', filters=filters)
-        return self._reformat_sqlite(user, table='users')[0] #TODO add error handling
-    
-    def update_user(self, user_id:int, display_name:str=None, permissions:str=None): 
-        items = {'display_name': display_name,
-                 'permissions': permissions}
+        items = {
+            'display_name': display_name,
+            'permissions': permissions
+            }
         
-        filters = {'user_id': user_id}
-        self.sql.update(table="users", filters=filters, items=items)
+        resp = self.sql.update(table="users", filters={'user_id': user_id}, items=items) 
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to update user {user_id}.', resp) 
+        
+    def remove_user(self, user_id:int): #TODO add remove_user
+        pass
     
-    # # GAME MANAGEMENT ACTIONS # #
+    # # GAME RELATED # #
     
-    def add_game(self, owner:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
 
         Args:
-            owner (int): ID of game creator/owner
-            name (str): Name for this game
-            start_date (str): Start date in ISO8601 (YYYY-MM-DD)
-            end_date (str, optional): End date ISO8601 (YYYY-MM-DD). Defaults to None.
+            user_id (int): Game creators user ID.
+            name (str): Name for this game.
+            start_date (str): Start date.  Format: `YYYY-MM-DD`.
+            end_date (str, optional): End date.  Format: `YYYY-MM-DD`.  Leave blank for infinite game.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
-            pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Defaults to None (allow players to join anytime)
-            private_game(bool, optional): Whether the game is private or not
+            pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
+            private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            draft_mode (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Defaults to False.
-            sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False.
-            update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'.
+            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
+            sell_during_game (bool, optional): Whether users can sell stocks during the game.  Defaults to False. - NOT IMPLEMENTED
+            update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'. - NOT IMPLEMENTED
             
         Returns:
-            str: Game creation status
+            Status: Game creation status.
         """
-        #TODO should all errors be checked at once?
-        if update_frequency not in ['daily', 'hourly', 'minute', 'realtime']:
-            raise ValueError(f'{update_frequency} is not a valid updated frequency.')
-        
-        if draft_mode and datetime.strptime(start_date, "%Y-%m-%d").date() < datetime.strptime(pick_date, "%Y-%m-%d").date():
-            raise ValueError("Pick date must be before start date when draft mode is enabled.")
+        #TODO make a Literal for update_frequency
+ 
+        # Date formatting validation
+        if not self._validate_date(start_date):
+            raise ValueError('Invalid `start_date` format.')
+        if end_date: # Enddate stuff
+            if not self._validate_date(end_date):
+                raise ValueError('Invalid `end_date` format.')
+            if datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
+                raise ValueError('`end_date` must be after `start_date`.')
             
-        elif starting_money < 1.0:
-            raise ValueError("Starting money must be atleast 1.")
+        if pick_date and not self._validate_date(pick_date):
+            raise ValueError('Invalid `pick_date` format.')
+        #TODO should we check if pick_date is after end_date?  Doesn't cause an issue, just kinda silly
         
-        elif total_picks < 1:
-            raise ValueError("Stock picks must be atleast 1.")
-        
-        elif end_date != None and datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
-            raise ValueError("End date cannot be before start date.")
-        
-        items = {'name': name,
-                 'owner_user_id': owner,
-                 'start_money': starting_money,
-                 'pick_count': total_picks,
-                 'draft_mode': draft_mode,
-                 'pick_date': pick_date,
-                 'private_game': private_game,
-                 'allow_selling': sell_during_game,
-                 'update_frequency': update_frequency,
-                 'start_date': start_date,
-                 'end_date': end_date,
-                 'datetime_created': _iso8601()}
-
-        game = self.sql.insert(table='games', items=items)
-        return game #TODO error catching and checking
+        if draft_mode: # Draftmode checks
+            if not pick_date:
+                raise TypeError('`pick_date` required when `draft_mode` is enabled.')
+            if datetime.strptime(start_date, "%Y-%m-%d").date() < datetime.strptime(pick_date, "%Y-%m-%d").date(): # Date format is already validated
+                raise ValueError('`start_date` must be after `pick_date` when `draft_mode` is enabled.')
     
-    def list_games(self, show_private:bool=False): # List all games
-        """List all games
+        # Misc
+        if starting_money < 1.0:
+            raise ValueError('`starting_money` must be atleast `1.0`.')
+        if total_picks < 1:
+            raise ValueError('`total_picks` must be atleast `1`.')
+        
+        items = {
+            'name': name,
+            'owner_user_id': user_id,
+            'start_money': starting_money,
+            'pick_count': total_picks,
+            'draft_mode': draft_mode,
+            'pick_date': pick_date,
+            'private_game': private_game,
+            'allow_selling': sell_during_game,
+            'update_frequency': update_frequency,
+            'start_date': start_date,
+            'end_date': "None" if end_date == None else end_date,  # is this needed?, no but I like it.
+            'datetime_created': _iso8601()
+            }
 
-        Args:
-            show_private (bool, optional): Whether to show private games. Defaults to False (no).
-
-        Returns:
-            list: List of games
-        """
-        filters = {'private_game': show_private if show_private == False else None} #TODO This is a bad solution
-        games = self.sql.get(table='games',filters=filters) 
-        return self._reformat_sqlite(games, table='games') # Send games data to be reformatted
+        resp = self.sql.insert(table='games', items=items) #TODO Find errors
+        if resp['status'] != 'success': #TODO errors
+            raise Exception(f'Failed to add game.', resp) 
     
     def get_game(self, game_id:int):
         """Get a single game by ID
@@ -243,6 +312,19 @@ class Backend:
         else:
             game = self._reformat_sqlite(game, table='games')[0]
             return game
+    
+    def get_many_games(self, ): # List all games
+        """Get a list of games
+
+        Args:
+
+        Returns:
+            list: List of games
+        """
+        filters = {}    #TODO Get date filtering working #TODO send back less information by default?
+        
+        games = self.sql.get(table='games',filters=filters) 
+        return self._reformat_sqlite(games, table='games') # Send games data to be reformatted #TODO test
         
     def update_game(self, game_id:int, owner:int=None, name:str=None, start_date:str=None, end_date:str=None, status:str=None, starting_money:float=None, pick_date:str=None, private_game:bool=None, total_picks:int=None, draft_mode:bool=None, sell_during_game:bool=None, update_frequency:str=None, aggregate_value:float=None):
         #TODO only allow starting money, picks to be edited before game has started
@@ -366,7 +448,7 @@ class Backend:
     
     # # STOCK PRICE ACTIONS # #
     
-    def add_stock_price(self, ticker:str, price:float, datetime:str): #TODO maybe use stock_ids here?
+    def add_stock_price(self, ticker:str, price:float, date:Optional[str]=None): #TODO IF date is none use today #TODO maybe use stock_ids here? #TODO this won't handle the different game types 
         """Add price data for a stock (should be done at close)
 
         Args:
@@ -384,7 +466,7 @@ class Backend:
         stock = self.sql.insert(table='stock_prices', items=items)
         return stock 
     
-    def list_stock_prices(self, stock_id:str=None, date:str=None): # List stock prices, allow some filtering 
+    def list_stock_prices(self, stock_id:Optional[str]=None, date:Optional[str]=None): # List stock prices, allow some filtering 
         """List stock prices.
 
         Args:
@@ -402,7 +484,7 @@ class Backend:
         prices = self._reformat_sqlite(prices, table='stock_prices')
         return prices
     
-    def get_stock_price(price_id:int): #TODO add get_stock_price
+    def get_stock_price(self, price_id:int): #TODO add get_stock_price
         pass
     
     def update_stock_prices(self):
@@ -453,7 +535,7 @@ class Backend:
         pick = self.sql.insert(table='stock_picks', items=items)
         return pick
     
-    def list_stock_picks(self, participant_id:int=None, status:str=None, stock_id:int=None): 
+    def list_stock_picks(self, participant_id:Optional[int]=None, status:str=None, stock_id:int=None): 
         """List stock picks.  Optionally, filter by a status or participant ID
 
         Args:
@@ -478,7 +560,7 @@ class Backend:
         pick = self.sql.get(table='stock_picks', filters=filters)
         return self._reformat_sqlite(pick, table='stock_picks')[0]
     
-    def update_stock_pick(self, pick_id:int, current_value:float,  shares:int=None, start_value:float=None,  status:str=None): #Update a single stock pick
+    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[int]=None, start_value:float=None,  status:Optional[str]=None): #Update a single stock pick
         items = {'shares': shares,
                  'start_value': start_value,
                  'current_value': current_value,
@@ -552,15 +634,12 @@ class Backend:
         Returns:
             int: Participant ID.
         """
-        filters = {'user_id': user_id,
-                   'game_id': game_id}
-        participant = self.sql.get(table='game_participants', columns=['participation_id'], filters=filters)
-        if len(participant) > 0: 
-            return participant[0]['participation_id']
-        else:
-            return 'Not found' #TODO should this be more clear?
 
-    def list_game_members(self, game_id:int=None, user_id:int=None, status:str=None, sort_by_value:bool=False): 
+        participant = self.sql.get(table='game_participants', columns=['participation_id'], filters={'user_id': user_id, 'game_id': game_id})
+        if 'status' in 
+        return participant # Drill down 
+
+    def list_game_members(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False):
         
         if status and status not in ['pending', 'active', 'inactive']:
             raise ValueError('Invalid status!')
@@ -587,6 +666,32 @@ class Backend:
         """
         filters = {'participation_id': participant_id}
         participant = self.sql.get(table='game_participants', filters=filters) 
+        return self._reformat_sqlite(participant)[0] #TODO test
+    
+    def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
+        pass
+
+    def get_all_game_members(self, game_id: int, sort_by_value: bool = False):
+        """Get all participants with a game ID
+
+        Args:
+            game_id (int): The ID of the game to filter by
+        
+        Returns:
+            list: List of game participants
+        """
+        filters = {'game_id': game_id}
+
+        participants = None
+        if sort_by_value:
+            participants = self.sql.get(table="game_participants", filters=filters, order={"current_value": "DESC"})
+        else:
+            participants = self.sql.get(table="game_participants", filters=filters)
+        return self._reformat_sqlite(participants)
+
+
+
+
         return self._reformat_sqlite(participant, table='game_participants')[0]
     
     def update_game_member(self, participant_id:int, name:str=None, status:str=None, current_value:float=None):  
@@ -885,20 +990,23 @@ class Frontend: # This will be where a bot (like discord) interacts
 
         Returns:
             list: Stocks both owned and pending
-        """#TODO implement pending and sold
-        part_id = self.backend.get_participant_id(user_id=user_id, game_id=game_id)
-        if part_id == 'Not found':
+        """
+        #TODO hide sold stocks
+        part_id = self.backend.get_participant_id(user_id=user_id, game_id=game_id) 
+        if 'status' in part_id:
+            part_id['reason'] = 'User not found'
             return part_id
         picks = self.backend.list_stock_picks(participant_id=part_id)
         return picks
     
-    def start_draft(user_id:int, game_id:int): #TODO add
+    def start_draft(self, user_id:int, game_id:int): #TODO add
         pass
     
-    def update(self, user_id:int, game_id:int=None, force:bool=False): # Update games or a specific game #TODO make game_id actually do something #TODO add docstring
+    def update(self, user_id:int, game_id:Optional[int]=None, force:bool=False): # Update games or a specific game #TODO add docstring
         #TODO VALIDATION!!!!!!!!!
         if user_id != self.owner_id:
             return "You do not have permission to do this"
+        
         self.backend.update_games() # Sets game statuses
         self.backend.update_stock_prices() # Update stock prices #TODO only works with daily update for now
         self.backend.update_stock_picks(date=_iso8601('date')) # Update picks 
@@ -978,8 +1086,17 @@ class Frontend: # This will be where a bot (like discord) interacts
         user = self.backend.update_game_member(participant_id=participant_id, status='active')
         return user
 
+    def get_all_participants(self, game_id: int):
+        return self.backend.get_all_game_members(game_id=game_id, sort_by_value=True)
+    def manage_game(self, user_id:int,): #TODO allow game management here, including approving pending users
+        pass
+    
+    def approve_game_users(self, user_id:int):
+        pass
 # TESTING
 if __name__ == "__main__":
+    DB_NAME = str(os.getenv('DB_NAME')) # Only added so itll shut the fuck up about types
+    OWNER = int(os.getenv("OWNER")) # type: ignore # Set owner ID from env 
     test_users = [111, 222, 333, 444, 555, 666]
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
