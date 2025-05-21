@@ -163,7 +163,7 @@ def create(db_name:str):
     
 if __name__ == "__main__":
     
-    DB_NAME = os.getenv('DB_NAME')
+    DB_NAME = str(os.getenv('DB_NAME'))
     create(DB_NAME)
     
     

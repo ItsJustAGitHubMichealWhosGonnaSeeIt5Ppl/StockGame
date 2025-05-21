@@ -1,8 +1,9 @@
 import re
-import yfinance as yf
+import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone
+import pytz
 from helpers.sqlhelper import SqlHelper, _iso8601
 from typing import Optional
 from stock_datatypes import Status, Games
@@ -401,7 +402,7 @@ class Backend:
             name (Optional[str], optional): New game name. 
             start_date (Optional[str], optional): New start date.  Format: `YYYY-MM-DD`.  Cannot be changed once game has started.
             end_date (Optional[str], optional): New end date.  Format: `YYYY-MM-DD`.
-            status (Optional[str], optional): Status ('open', 'active', 'ended').  Shouldn't be changed manually.
+            status (Optional[str], optional): Status ('open', 'active', 'ended').  Once start date has passed, game will become 'active'.  Shouldn't be changed manually.
             starting_money (Optional[float], optional): Starting money.  Cannot be changed once game has started.
             pick_date (Optional[str], optional): Pick date.  Format: `YYYY-MM-DD`.  Cannot be changed once game has started.
             private_game (Optional[bool], optional): Game privacy. 
@@ -789,28 +790,85 @@ class GameLogic: # Might move some of the control/running actions here
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockGameLogic')
         self.be = Backend(db_name)
+        
+    def _market_time_offset(self): 
+        local_time = datetime.now()
+        nyc = pytz.timezone('America/New_York') # NYC timezone
+        market_time: datetime =datetime.now().astimezone(nyc)
+        diff = local_time - market_time
+        pass 
     
-    # Update stock prices
-    # Purchase pending stocks
-    # Update user portfolios
+    def update_game_statuses(self): # Update existing games #TODO docstring
+        """Update game statuses
+        
+        Sets games that have started to 'active' and games that have ended to 'ended'
+        """
+        games = self.be.get_many_games(include_private=True) # Get all games
+        if len(games) > 0:
+            for game in games: #TODO add log here
+                
+                # Start and end games
+                if game['status'] == 'open' and datetime.strptime(game['start_date'], "%Y-%m-%d").date() <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
+                    self.be.update_game(game_id=game['id'], status='active')
+                if game['status'] == 'active' and game['end_date'] and datetime.strptime(game['end_date'], "%Y-%m-%d").date() < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
+                    self.be.update_game(game_id=game['id'], status='ended')
+        else:
+            raise Exception('Failed to update game statuses.', games)
+        
+    def update_stock_prices(self):
+        """Find and update stock prices for all stocks currently in games (pending picks are included)
+        
+        Uses yfinance API.
+        """
+        #TODO Skip holidays
+        #TODO allow after hours data to be added here as long as its tagged
+        # Only get active stocks (stocks from games that are running)
+        query = """ SELECT *
+        FROM stocks
+        WHERE stock_id IN (SELECT stock_id
+            FROM stock_picks
+            WHERE status IS NOT "sold"
+            AND participation_id IN (SELECT participation_id
+                FROM game_participants
+                WHERE game_id IN (SELECT game_id
+                    FROM games
+                    WHERE status IS NOT "ended"
+                    )
+                )
+            )
+        """
+        active_stocks = self.be.sql.send_query(query)
+        if active_stocks['status'] == 'success':
+            assert isinstance(active_stocks['result'], tuple)
+            tickers = [tkr['ticker'] for tkr in active_stocks['result']]
+            if len(tickers) > 0:
+                prices = yf.Tickers(tickers).tickers
+                for ticker, price in prices.items(): # update pricing
+                    price = price.info['regularMarketPrice'] 
+                    try:
+                        self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=_iso8601()) # Update pricing
+                    except Exception as e:
+                        self.logger.exception(e) # Log exception
+                        pass #TODO find problems if/when they appear
+        else:
+            raise ValueError('Failed to update stock prices.', active_stocks)
     
-    def update_game_info(self, game_id:int): #TODO add update_game_info #TODO update player portfolio values
-        pass
     
-    def update_game_members(self, game_id:int):
-        game = self.be.get_game(game_id=game_id) # Error thrown if game ID is invalid
-        if game['status'] != 'active':
-            return "Game not active"
-        members = self.be.get_many_participants(game_id=game['id'])
-        for member in members:
-            portfolio_value = 0.0
-            picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
-            for pick in picks:
-                portfolio_value += pick['current_value']
-            update = self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
-            
-    def update_stock_picks(self, date:str, game_id:Optional[int]=None): #TODO allow blank date to use latest
+    def update_stock_picks(self, game_id:Optional[int]=None) -> None: # Update picks
         #TODO implement game_id filtering
+        #TODO instead of setting games to active, just use start and end date?
+        pending_query = """SELECT *
+        FROM stock_picks
+        WHERE status = "pending_buy"
+        AND participation_id IN (SELECT participation_id
+            FROM game_participants
+            status = "active"
+            AND game_id IN (SELECT game_id
+                FROM games
+                WHERE status IS "active"
+                )
+            )
+        """
         pending_picks = self.be.get_many_stock_picks(status='pending_buy') #TODO handle pending_sell here too
         for pick in pending_picks:
             game_participant = self.be.get_participant(participant_id=pick['participant_id']) #This is also annoying
@@ -830,20 +888,21 @@ class GameLogic: # Might move some of the control/running actions here
             value = pick['shares'] * price['price']
             self.be.update_stock_pick(pick_id=pick['id'], current_value=value)
         #TODO return something
+    
+    def update_participants(self, game_id:int):
+        game = self.be.get_game(game_id=game_id) # Error thrown if game ID is invalid
+        if game['status'] != 'active':
+            return "Game not active"
+        members = self.be.get_many_participants(game_id=game['id'])
+        for member in members:
+            portfolio_value = 0.0
+            picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
+            for pick in picks:
+                portfolio_value += pick['current_value']
+            update = self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
         
-    def update_games(self): # Update existing games
-        games = self.be.get_many_games(include_private=True)
-        if len(games) > 0:
-            for game in games: #TODO add log here
-                assert isinstance(game['id'], int)
-                assert isinstance(game['start_date'], str)
-                assert isinstance(game['end_date'], str)
-                if game['status'] == 'open' and datetime.strptime(game['start_date'], "%Y-%m-%d").date() <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
-                    self.be.update_game(game_id=game['id'], status='active')
-
-                if game['status'] == 'active' and game['end_date'] and datetime.strptime(game['end_date'], "%Y-%m-%d").date() < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
-                    self.be.update_game(game_id=game['id'], status='ended')
-
+    def update_games(self):
+            #TODO move this
             games = self.be.get_many_games(include_private=True) # Get games again
             aggr_val = 0
             for game in games:
@@ -854,23 +913,21 @@ class GameLogic: # Might move some of the control/running actions here
                 for member in members:
                     aggr_val += member['current_value']
             self.be.update_game(game_id=game['id'], aggregate_value=aggr_val) # Update total combined value
-        else:
-            raise Exception('Failed to get games to be updated.', games)
-        
-    def find_stock_prices(self):
-        """Find and update stock prices for ALL stocks
-        
+               
+    def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id
+        """Run all update commands/logic for games
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
+            force (bool, optional): Force update games that may not be updated due to frequency. Defaults to False.
         """
-        # THIS WILL NOT VALIDATE WHETHER IT IS THE END OF THE DAY OR NOT, THAT IS UP TO YOU TO DO!
-        #TODO only update stocks that are in active games
-        today = _iso8601('date')
-        tickers = [ticker['ticker'] for ticker in self.be.get_many_stocks()]
-        if len(tickers) > 0:
-            prices = yf.Tickers(tickers).tickers
-            for ticker, price in prices.items(): # update pricing
-                price = price.info['regularMarketPrice']
-                self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=today) # Update pricing
-                
+        self.update_game_statuses() # Update games statuses (start and stop)
+        self.update_stock_prices() # Update stock prices
+        self.update_stock_picks() # Update stock picks 
+        self.update_participants() # Update participants (set their total value, etc.)
+        self.update_games() # Sets game info (aggregate stuff, etc.)
+        
+            
     def find_stock(self, ticker:str): 
         """Find and add a stock
 
@@ -1172,23 +1229,17 @@ class Frontend: # This will be where a bot (like discord) interacts
     def start_draft(self, user_id:int, game_id:int): #TODO add
         pass
     
-    def update(self, user_id:int, game_id:Optional[int]=None, force:bool=False): # Update games or a specific game #TODO add docstring
-        #TODO VALIDATION!!!!!!!!!
-        #TODO move this into game logic
+    def force_update(self, user_id:int, game_id:Optional[int]=None):
+        """Force update game(s)
+
+        Args:
+            user_id (int): User ID.
+            game_id (Optional[int], optional): Game ID. If blank, all games will be updated.
+        """
         if user_id != self.owner_id:
-            return "You do not have permission to do this"
+            raise ValueError(f'User {user_id} does not have permission to update games')
         
-        self.gl.update_games() # Sets game statuses
-        self.gl.update_stock_prices() # Update stock prices #TODO only works with daily update for now
-        self.gl.update_stock_picks(date=_iso8601('date')) # Update picks 
-        
-        if game_id: #Update account values
-            games = [self.be.get_game(game_id)]
-        else:
-            games = self.be.get_many_games(include_private=True)
-        
-        for game in games: 
-            self.be.get_many_participants(game_id=game['id'])
+        self.gl.update_all(game_id=game_id, force=True) # 
         
         
     def manage_game(self, user_id:int, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, draft_mode:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None):
@@ -1269,6 +1320,8 @@ if __name__ == "__main__":
     many_games = game.be.get_many_games(include_private=True)
     game.be.update_game(game_id=1, name='TestGameUpd')
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
+    game.gl._market_time_offset()
+    game.gl.update_stock_prices()
     for user in test_users: # Add some random users
         print(game.register(user_id=user, username=str(user)))
         game.join_game(user_id=user,game_id=1)
