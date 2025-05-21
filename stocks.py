@@ -561,7 +561,7 @@ class Backend:
         resp = self.sql.get(table='stock_prices', filters={'price_id': price_id})
         return self._single_get(table='stock_prices', resp=resp)
     
-    def get_many_stock_prices(self, stock_id:Optional[str]=None, datetime:Optional[str]=None): # List stock prices, allow some filtering 
+    def get_many_stock_prices(self, stock_id:Optional[int]=None, datetime:Optional[str]=None): # List stock prices, allow some filtering 
         """List stock prices.
 
         Args:
@@ -929,9 +929,9 @@ class GameLogic: # Might move some of the control/running actions here
                 for pick in picks:
                     assert isinstance(pick['id'], int)
                     assert isinstance(pick['stock_id'], int)
-                    if game['update_frequency'] == 'daily' and pick['status'] == 'owned' and datetime.strptime(pick['last_updated'], "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                    if game['update_frequency'] == 'daily' and pick['status'] == 'owned' and datetime.strptime(str(pick['last_updated']), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
                         continue # Skip picks with daily update frequency that have been updated in the last 12 hours
-                    price = self.be.get_many_stock_prices(stock_id=pick['stock_id'],datetime=_iso8601('date'))[0]
+                    price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
                     #TODO check datetime here and decide if price should be used
                     buying_power = None,
                     shares = None
