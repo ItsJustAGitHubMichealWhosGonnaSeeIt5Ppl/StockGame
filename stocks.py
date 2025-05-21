@@ -99,9 +99,6 @@ class Backend:
             return False
         
         return True
-            
-    def _error_datatype_wrong(self, variable:str, correct_type:str):#TODO might use this 
-        pass 
     
     def _reformat_sqlite(self, data:tuple, table:str, custom_keys:Optional[dict]=None) -> tuple[dict[str, str | int | float | bool]]: # Reformat data from the database into more friendly 
         """Reformat the data from SQLite database to make it easier to work with
@@ -178,9 +175,8 @@ class Backend:
             user_id (int): UNIQUE ID to identify user.
             source (str): Source of user.  EG: Discord.
             display_name (str): Username/Displayname for user.
-            permissions (int, optional): User permissions (see). Defaults to 210.
+            permissions (int, optional): User permissions (see). - UNUSED in V1.0.0
         """
-        #TODO Add user permissions docstring
         items = {
             'user_id': user_id,
             'display_name':display_name,
@@ -452,7 +448,6 @@ class Backend:
             exchange (str): Exchange stock is listed on.
             company_name (str): Company name.
         """        
-        #TODO list of valid exchanges?
         items = {
             'ticker': ticker.upper(),
             'exchange': exchange,
@@ -460,8 +455,8 @@ class Backend:
             } # I guess not all stocks have a long name?
 
         resp = self.sql.insert(table='stocks', items=items)
-        if resp['status'] != 'success': #TODO errors
-            if False: #TODO what is returned when the stock ticker already exists
+        if resp['status'] != 'success': 
+            if resp['reason'] == 'SQLITE_CONSTRAINT_UNIQUE' and 'stocks.ticker' in str(resp['result']): 
                 raise ValueError(f'Stock with ticker {ticker} already exists.')
             else:
                 raise Exception(f'Failed to add stock.', resp)
@@ -497,7 +492,7 @@ class Backend:
             'company_name': company_name,
             'exchange': exchange
             }
-        columns = [] #TODO does empty list cause no columns to be returned?
+        columns = []
         if tickers_only:
             columns = ['ticker']
 
@@ -533,11 +528,14 @@ class Backend:
             ticker_or_id (str | int): Stock ID (int) or ticker (str).
             price (float): Stock price.
             datetime (str, optional): Price datetime Format:`YYYY-MM-DD HH:MM:SS`.  If not provided, current datetime will be used.
+        
+        Raises:
+            LookupError: Invalid Stock ID/Ticker.
         """
         if datetime and not self._validate_date(datetime, '%Y-%m-%d %H:%M:%S'): #Try to validate date
             raise ValueError('Invalid `datetime` format.')
-        else:
-            datetime = _iso8601() # Current datetime as string
+        elif not datetime:
+            datetime = _iso8601() # Current datetime as string if date was not provided
             
         stock_id = self.get_stock(ticker_or_id)['id'] #If stock is invalid, an error will be thrown anyway.
         
@@ -599,7 +597,7 @@ class Backend:
         
         game = self.get_game(game_id=player['game_id']) 
         if game['pick_date'] and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date(): # Check that pick date hasn't passed
-            raise ValueError('Unable to add pick, past `pick_date`') #TODO allow this through backend
+            raise ValueError('Unable to add pick, past `pick_date`')
         
         picks = self.get_many_stock_picks(participant_id=participant_id, status=['pending_buy', 'owned', 'pending_sell'])
         if len(picks) >= game['total_picks']: #
@@ -812,7 +810,7 @@ class GameLogic: # Might move some of the control/running actions here
         else:
             return False
 
-    def _market_time_offset(self): # If your timezone is EST then none of this is needed and I'll feel real dumb
+    def _market_time_offset(self): # If your timezone is EST then none of this is needed and I'll feel real dumb #TODO this is so awful oh my god
         """Get the market offset hours from current timezone.  Add or subtract this from times in DB
 
         Returns:
@@ -837,7 +835,7 @@ class GameLogic: # Might move some of the control/running actions here
         total_offset = (0 -local_offset_hours if local_offset == 'ahead'  else +local_offset_hours) + (0 -market_offset_hours if market_offset == 'ahead'  else +market_offset_hours)
         return total_offset
     
-    def update_game_statuses(self): # Update existing games #TODO docstring
+    def update_game_statuses(self):
         """Update game statuses
         
         Sets games that have started to 'active' and games that have ended to 'ended'
@@ -860,7 +858,7 @@ class GameLogic: # Might move some of the control/running actions here
         Uses yfinance API.
         """
         #TODO Skip holidays
-        #TODO allow after hours data to be added here as long as its tagged
+        #TODO allow after hours data to be added here as long as its tagged?
         #TODO don't run too often
         # Only get active stocks (stocks from games that are running)
         query = """ SELECT *
@@ -893,10 +891,12 @@ class GameLogic: # Might move some of the control/running actions here
         else:
             raise ValueError('Failed to update stock prices.', active_stocks)
     
-    def update_stock_picks(self, game_id:Optional[int]=None) -> None: # Update picks
+    def update_stock_picks(self, game_id:Optional[int]=None) -> None:
         """Update all owned and pending stock picks with current prices
         
-        Validates game type of daily, but nothing else for now
+        - Validates game type of daily, but nothing else for now
+        - Adds pending_buy stock picks for users (depending on time)
+        - Update owned stock pick values
 
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all games will be checked/run
@@ -948,6 +948,14 @@ class GameLogic: # Might move some of the control/running actions here
                     self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status) # Update
 
     def update_participants_and_games(self, game_id:Optional[int]=None):
+        """Update game participant and game information
+        
+        - Participant portfolio value
+        - Game Aggregate value
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
+        """
         if game_id:
             games = [self.be.get_game(game_id=game_id)]
         else:
@@ -967,7 +975,7 @@ class GameLogic: # Might move some of the control/running actions here
             
             self.be.update_game(game_id=game['id'], aggregate_value=aggr_val)
                
-    def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id
+    def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id #TODO allow force
         """Run all update commands/logic for games
 
         Args:
@@ -975,7 +983,7 @@ class GameLogic: # Might move some of the control/running actions here
             force (bool, optional): Force update games that may not be updated due to frequency. Defaults to False.
         """
         self.update_game_statuses() # Update games statuses (start and stop)
-        #self.update_stock_prices() # Update stock prices
+        self.update_stock_prices() # Update stock prices
         self.update_stock_picks() # Handle pending stock picks 
         self.update_participants_and_games() # Update participants (set their total value, etc.)
             
