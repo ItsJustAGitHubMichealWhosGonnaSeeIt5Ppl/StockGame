@@ -181,7 +181,9 @@ class SqlHelper: # Simple helper for SQL
             for var, item in filters.items():
                 if item != None: # Skip blank items
                     if isinstance(var, tuple): # Support LIKE and NOT by sending a line like this var = ('LIKE', '<query>')
-                        filter_vars.append(f'{var[1]} {var[0].upper()} '+ f'({item})' if var[0].lower() == 'in' else f'{item}')
+                        filter_vars.append(f'{var[1]} {var[0].upper()} ' + str(f'({item})' if var[0].lower() == 'in' else '?'))
+                        if not var[0].lower() == 'in':
+                            filter_items.append(item)
                     else:
                         filter_vars.append(var + " = ?")
                         filter_items.append(item)
