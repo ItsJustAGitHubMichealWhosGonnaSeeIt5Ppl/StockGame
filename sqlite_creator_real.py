@@ -1,5 +1,6 @@
 import sqlite3
 import os 
+from helpers.sqlhelper import SqlHelper
 
 
 
@@ -7,24 +8,59 @@ import os
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
+def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version without losing data
+    """Migrate v0.0.1 DB to v0.0.2
+    
 
-
-
+    Args:
+        db_name (str): Existing database name.
+        user_source (str): Default source to set for existing users.
+    """
+    sql = SqlHelper(db_name)
+    
+    # Create new column in user table
+    query = """ALTER TABLE users
+    ADD source TEXT"""
+    send = sql.send_query(query)
+    if send['status'] == 'error':
+        print(send) # Sometimes gives error but does what its asked anyway...
+    pass
 def create(db_name:str):
-    version = "0.0.2"
+    """Create database
+    
+    Version: 0.0.2a
+
+    Args:
+        db_name (str): Database name
+        
+    # Changelog
+    
+    ## [0.0.2b] - Unreleased
+    
+    ### Added
+    - sources column to users table
+
+    ### Fixed
+
+    ### Changed
+
+    ### Removed
+    """    
+    version = "0.0.2" #TODO will require a migration tool
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
     
     # Permissions/roles
     # Will allow for discord role permissions instead of what we have now.
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS user_roles (
-        role_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord role ID)
-        role_name TEXT DEFAULT NULL,                -- User display name
-        source TEXT NOT NULL,                       -- role source
-        datetime_created TEXT NOT NULL              -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-    );""")
+    if False:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_roles (
+            role_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord role ID)
+            role_name TEXT DEFAULT NULL,                -- User display name
+            source TEXT NOT NULL,                       -- role source
+            datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        );""")
     
     
     # Users table
@@ -63,7 +99,6 @@ def create(db_name:str):
     # - 'open' # Game has not yet started, can be joined
     # - 'active' # Game started, can be joined if join_late is enabled
     # - 'ended' # Game has ended, nothing can be done
-    #cursor.execute("CREATE INDEX IF NOT EXISTS idx_games ON games(game_name, game_id, game_status);")
 
 
     # Stocks table 
@@ -130,3 +165,5 @@ if __name__ == "__main__":
     
     DB_NAME = os.getenv('DB_NAME')
     create(DB_NAME)
+    
+    
