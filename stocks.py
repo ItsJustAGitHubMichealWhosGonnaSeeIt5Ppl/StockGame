@@ -2,7 +2,7 @@ import re
 import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
 import logging
 import os
-from datetime import datetime, date, timezone
+from datetime import datetime, timedelta
 import pytz
 from helpers.sqlhelper import SqlHelper, _iso8601
 from typing import Optional
@@ -79,7 +79,7 @@ class Backend:
     def _many_get(self, table:str, resp:Status)-> tuple:
         if resp['status'] == 'success':
             assert isinstance(resp['result'], tuple)
-            return self._reformat_sqlite(resp['result'], table='users') 
+            return self._reformat_sqlite(resp['result'], table=table) 
         else:
             raise Exception(f'Failed to get {table}.', resp)
         
@@ -99,9 +99,6 @@ class Backend:
             return False
         
         return True
-            
-    def _error_datatype_wrong(self, variable:str, correct_type:str):#TODO might use this 
-        pass 
     
     def _reformat_sqlite(self, data:tuple, table:str, custom_keys:Optional[dict]=None) -> tuple[dict[str, str | int | float | bool]]: # Reformat data from the database into more friendly 
         """Reformat the data from SQLite database to make it easier to work with
@@ -178,9 +175,8 @@ class Backend:
             user_id (int): UNIQUE ID to identify user.
             source (str): Source of user.  EG: Discord.
             display_name (str): Username/Displayname for user.
-            permissions (int, optional): User permissions (see). Defaults to 210.
+            permissions (int, optional): User permissions (see). - UNUSED in V1.0.0
         """
-        #TODO Add user permissions docstring
         items = {
             'user_id': user_id,
             'display_name':display_name,
@@ -221,16 +217,21 @@ class Backend:
             tuple: Matching users.
         """
         #TODO implement source and permission filtering
+        columns = []
         if ids_only:
-            columns = ['user_id']
-            
-        else:
-            columns = ['*']
+            columns = ['user_id']    
         
-        resp = self.sql.get(table='users', columns=columns)
+        filters = {
+            'display_name': display_name,
+            'source': source,
+            'permissions': permissions
+            }
+        
+        
+        resp = self.sql.get(table='users', columns=columns, filters=filters)
         users = self._many_get(table='users', resp=resp)
         if ids_only:
-            ids = tuple([user['user_id'] for user in users])
+            ids = tuple([user['id'] for user in users])
             return ids 
         else:
             return users
@@ -322,7 +323,7 @@ class Backend:
             'pick_date': pick_date,
             'private_game': private_game,
             'allow_selling': sell_during_game,
-            'update_frequency': update_frequency,
+            'update_frequency': update_frequency.lower() if update_frequency else None, # Make sure its lowercase
             'start_date': start_date,
             'end_date': "None" if end_date == None else end_date,  # is this needed?, no but I like it.
             'datetime_created': _iso8601()
@@ -427,7 +428,7 @@ class Backend:
             'private_game': private_game,
             'allow_selling': sell_during_game,
             'status': status,
-            'update_frequency': update_frequency,
+            'update_frequency': update_frequency.lower() if update_frequency else None,
             'start_date': start_date,
             'end_date': end_date,
             'aggregate_value': aggregate_value
@@ -447,7 +448,6 @@ class Backend:
             exchange (str): Exchange stock is listed on.
             company_name (str): Company name.
         """        
-        #TODO list of valid exchanges?
         items = {
             'ticker': ticker.upper(),
             'exchange': exchange,
@@ -455,8 +455,8 @@ class Backend:
             } # I guess not all stocks have a long name?
 
         resp = self.sql.insert(table='stocks', items=items)
-        if resp['status'] != 'success': #TODO errors
-            if False: #TODO what is returned when the stock ticker already exists
+        if resp['status'] != 'success': 
+            if resp['reason'] == 'SQLITE_CONSTRAINT_UNIQUE' and 'stocks.ticker' in str(resp['result']): 
                 raise ValueError(f'Stock with ticker {ticker} already exists.')
             else:
                 raise Exception(f'Failed to add stock.', resp)
@@ -470,11 +470,11 @@ class Backend:
         Returns:
             dict: Stock information.
         """
-        if isinstance(ticker_or_id, int): # ID
+        if isinstance(ticker_or_id, str): # ID
             filters={'ticker': str(ticker_or_id)}
         else: # Ticker
             filters = {'stock_id': int(ticker_or_id)}
-        resp = self.sql.get(table='stocks',filters=filters)
+        resp = self.sql.get(table='stocks', filters=filters)
         return self._single_get(table='stocks', resp=resp)
         
     def get_many_stocks(self, company_name:Optional[str]=None, exchange:Optional[str]=None, tickers_only:bool=False)-> tuple:
@@ -492,7 +492,7 @@ class Backend:
             'company_name': company_name,
             'exchange': exchange
             }
-        columns = [] #TODO does empty list cause no columns to be returned?
+        columns = []
         if tickers_only:
             columns = ['ticker']
 
@@ -528,11 +528,14 @@ class Backend:
             ticker_or_id (str | int): Stock ID (int) or ticker (str).
             price (float): Stock price.
             datetime (str, optional): Price datetime Format:`YYYY-MM-DD HH:MM:SS`.  If not provided, current datetime will be used.
+        
+        Raises:
+            LookupError: Invalid Stock ID/Ticker.
         """
         if datetime and not self._validate_date(datetime, '%Y-%m-%d %H:%M:%S'): #Try to validate date
             raise ValueError('Invalid `datetime` format.')
-        else:
-            datetime = _iso8601() # Current datetime as string
+        elif not datetime:
+            datetime = _iso8601() # Current datetime as string if date was not provided
             
         stock_id = self.get_stock(ticker_or_id)['id'] #If stock is invalid, an error will be thrown anyway.
         
@@ -558,7 +561,7 @@ class Backend:
         resp = self.sql.get(table='stock_prices', filters={'price_id': price_id})
         return self._single_get(table='stock_prices', resp=resp)
     
-    def get_many_stock_prices(self, stock_id:Optional[str]=None, datetime:Optional[str]=None): # List stock prices, allow some filtering 
+    def get_many_stock_prices(self, stock_id:Optional[int]=None, datetime:Optional[str]=None): # List stock prices, allow some filtering 
         """List stock prices.
 
         Args:
@@ -570,7 +573,7 @@ class Backend:
         """
         if not datetime:
             datetime = _iso8601('date')
-        order = {'datetime': "ASC"}  # Sort by price date
+        order = {'datetime': 'DESC'}  # Sort by price date (recent first)
         filters = {
             'stock_id': stock_id, 
             ('LIKE', 'datetime'): datetime + '%' # Match like objects
@@ -593,8 +596,8 @@ class Backend:
             raise ValueError("User is not active in game.")
         
         game = self.get_game(game_id=player['game_id']) 
-        if datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date(): # Check that pick date hasn't passed
-            raise ValueError('Unable to add pick, past `pick_date`') #TODO allow this through backend
+        if game['pick_date'] and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date(): # Check that pick date hasn't passed
+            raise ValueError('Unable to add pick, past `pick_date`')
         
         picks = self.get_many_stock_picks(participant_id=participant_id, status=['pending_buy', 'owned', 'pending_sell'])
         if len(picks) >= game['total_picks']: #
@@ -777,9 +780,10 @@ class Backend:
         resp = self.sql.delete(table="game_participants", filters={'participant_id': participant_id}) 
         if resp['status'] != 'success': #TODO errors
             raise Exception(f'Failed to remove participant {participant_id}.', resp) 
-    
+        
+  
 class GameLogic: # Might move some of the control/running actions here
-    def __init__(self, db_name:str):
+    def __init__(self, db_name:str, market_open_est:str='09:30', market_close_est:str='16:00'):
         """GameLogic class
         
         Handles game logic like updating stock prices, etc.
@@ -790,15 +794,48 @@ class GameLogic: # Might move some of the control/running actions here
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockGameLogic')
         self.be = Backend(db_name)
-        
-    def _market_time_offset(self): 
-        local_time = datetime.now()
-        nyc = pytz.timezone('America/New_York') # NYC timezone
-        market_time: datetime =datetime.now().astimezone(nyc)
-        diff = local_time - market_time
-        pass 
+        self.market_open_est = datetime.strptime(market_open_est,"%H:%M")
+        self.market_close_est = datetime.strptime(market_close_est,"%H:%M")
+        self.est_offset = self._market_time_offset()
     
-    def update_game_statuses(self): # Update existing games #TODO docstring
+    def _is_market_hours(self): # Only considers hours
+        """Check whether the time is inside our outside of market hours.  Does not consider weekends, etc.
+
+        Returns:
+            bool: True when within market hours.
+        """
+        the_time = datetime.strftime(datetime.now() + timedelta(hours=self.est_offset), "%H:%M")
+        if datetime.strptime(the_time,"%H:%M") > self.market_open_est and self.market_close_est > datetime.strptime(the_time,"%H:%M"):
+            return True
+        else:
+            return False
+
+    def _market_time_offset(self): # If your timezone is EST then none of this is needed and I'll feel real dumb #TODO this is so awful oh my god
+        """Get the market offset hours from current timezone.  Add or subtract this from times in DB
+
+        Returns:
+            float: Offset in hours.
+        """
+        local_time = datetime.now() # Naive time (except then it isnt fucking naive like 30 seconds later so why call it that)
+        local_utc_offset = datetime.now().astimezone().utcoffset() 
+        local_offset_hours = (local_utc_offset.days * 24) + (local_utc_offset.seconds / 3600) # This is the UTC offset in hours
+        if local_offset_hours > 0: # Ahead of UTC
+            local_offset = 'ahead'
+        else:
+             local_offset = 'behind'
+            
+        nyc = pytz.timezone('America/New_York') # NYC timezone
+        market_utc_offset = nyc.localize(local_time).utcoffset()
+        market_offset_hours = (market_utc_offset.days * 24) + (market_utc_offset.seconds / 3600) # So is this
+        if market_offset_hours > 0: # Ahead of UTC
+            market_offset = 'ahead' # Market offset should never be ahead of UTC, but idk maybe one day it will be :)
+        else:
+             market_offset = 'behind' 
+        
+        total_offset = (0 -local_offset_hours if local_offset == 'ahead'  else +local_offset_hours) + (0 -market_offset_hours if market_offset == 'ahead'  else +market_offset_hours)
+        return total_offset
+    
+    def update_game_statuses(self):
         """Update game statuses
         
         Sets games that have started to 'active' and games that have ended to 'ended'
@@ -821,7 +858,8 @@ class GameLogic: # Might move some of the control/running actions here
         Uses yfinance API.
         """
         #TODO Skip holidays
-        #TODO allow after hours data to be added here as long as its tagged
+        #TODO allow after hours data to be added here as long as its tagged?
+        #TODO don't run too often
         # Only get active stocks (stocks from games that are running)
         query = """ SELECT *
         FROM stocks
@@ -853,68 +891,91 @@ class GameLogic: # Might move some of the control/running actions here
         else:
             raise ValueError('Failed to update stock prices.', active_stocks)
     
-    
-    def update_stock_picks(self, game_id:Optional[int]=None) -> None: # Update picks
-        #TODO implement game_id filtering
-        #TODO instead of setting games to active, just use start and end date?
-        pending_query = """SELECT *
-        FROM stock_picks
-        WHERE status = "pending_buy"
-        AND participation_id IN (SELECT participation_id
-            FROM game_participants
-            status = "active"
-            AND game_id IN (SELECT game_id
-                FROM games
-                WHERE status IS "active"
+    def update_stock_picks(self, game_id:Optional[int]=None) -> None:
+        """Update all owned and pending stock picks with current prices
+        
+        - Validates game type of daily, but nothing else for now
+        - Adds pending_buy stock picks for users (depending on time)
+        - Update owned stock pick values
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all games will be checked/run
+
+        """        
+        if game_id:
+            games = [self.be.get_game(game_id=game_id)]
+        else:
+            games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+        
+        for game in games: 
+            if game['update_frequency'] == 'daily' and self._is_market_hours(): 
+                continue # daily game, currently in market hours, don't run
+            pending_and_owned_query = """SELECT *
+            FROM stock_picks
+            WHERE status IN ("pending_buy", "owned")
+            AND participation_id IN (SELECT participation_id
+                FROM game_participants
+                WHERE status = "active"
+                AND game_id = ?
                 )
-            )
-        """
-        pending_picks = self.be.get_many_stock_picks(status='pending_buy') #TODO handle pending_sell here too
-        for pick in pending_picks:
-            game_participant = self.be.get_participant(participant_id=pick['participant_id']) #This is also annoying
-            game = self.be.get_game(game_id=game_participant['game_id']) #This is annoying
-            if game['status'] != 'active': # Won't buy stocks for games that have not started
-                continue #TODO log skipped games
+            """ #TODO instead of setting games to active, just use start and end date?
+            pending_unformatted = self.be.sql.send_query(query=pending_and_owned_query, values=[game['id']])
+            if pending_unformatted['status'] != 'success':
+                raise Exception(pending_unformatted) # catch error
+            else:
+                assert isinstance(pending_unformatted['result'], tuple)
+                picks = self.be._reformat_sqlite(pending_unformatted['result'], table='stock_picks')
             
-            price = self.be.get_many_stock_prices(stock_id=pick['stock_id'],datetime=date)[0] #TODO handle no data #TODO Set to date or datetime depending on what the update frequency is. 
-            buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
-            shares = buying_power / price['price'] # Total shares owned
-            value = shares * price['price']
-            self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=value, current_value=value, status='owned')
+                for pick in picks:
+                    assert isinstance(pick['id'], int)
+                    assert isinstance(pick['stock_id'], int)
+                    if game['update_frequency'] == 'daily' and pick['status'] == 'owned' and datetime.strptime(str(pick['last_updated']), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                        continue # Skip picks with daily update frequency that have been updated in the last 12 hours
+                    price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
+                    #TODO check datetime here and decide if price should be used
+                    buying_power = None,
+                    shares = None
+                    start_value = None
+                    status = None
+                    
+                    if pick['status'] == 'pending_buy':
+                        buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
+                        shares = buying_power / price['price']# Total shares owned
+                        start_value = current_value = float(shares * price['price'])
+                        status = 'owned'
+                    else: # Stock is owned
+                        current_value = float(pick['shares'] * price['price'])
+                    self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status) # Update
+
+    def update_participants_and_games(self, game_id:Optional[int]=None):
+        """Update game participant and game information
         
-        all_picks = self.be.get_many_stock_picks(status='owned')
-        for pick in all_picks:
-            price = self.be.get_many_stock_prices(stock_id=pick['stock_id'],datetime=date)[0] #TODO handle no data
-            value = pick['shares'] * price['price']
-            self.be.update_stock_pick(pick_id=pick['id'], current_value=value)
-        #TODO return something
-    
-    def update_participants(self, game_id:int):
-        game = self.be.get_game(game_id=game_id) # Error thrown if game ID is invalid
-        if game['status'] != 'active':
-            return "Game not active"
-        members = self.be.get_many_participants(game_id=game['id'])
-        for member in members:
-            portfolio_value = 0.0
-            picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
-            for pick in picks:
-                portfolio_value += pick['current_value']
-            update = self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
-        
-    def update_games(self):
-            #TODO move this
-            games = self.be.get_many_games(include_private=True) # Get games again
+        - Participant portfolio value
+        - Game Aggregate value
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
+        """
+        if game_id:
+            games = [self.be.get_game(game_id=game_id)]
+        else:
+            games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+        for game in games:
             aggr_val = 0
-            for game in games:
-                assert isinstance(game['id'], int)
-                if game['status'] != 'active':
-                    continue # Skip games that arent active
-                members = self.be.get_many_participants(game['id'])
-                for member in members:
-                    aggr_val += member['current_value']
-            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val) # Update total combined value
+            if game['status'] != 'active':
+                return "Game not active"
+            members = self.be.get_many_participants(game_id=game['id'])
+            for member in members:
+                portfolio_value = 0.0
+                picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
+                for pick in picks:
+                    portfolio_value += pick['current_value']
+                self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
+                aggr_val += portfolio_value
+            
+            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val)
                
-    def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id
+    def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id #TODO allow force
         """Run all update commands/logic for games
 
         Args:
@@ -923,10 +984,8 @@ class GameLogic: # Might move some of the control/running actions here
         """
         self.update_game_statuses() # Update games statuses (start and stop)
         self.update_stock_prices() # Update stock prices
-        self.update_stock_picks() # Update stock picks 
-        self.update_participants() # Update participants (set their total value, etc.)
-        self.update_games() # Sets game info (aggregate stuff, etc.)
-        
+        self.update_stock_picks() # Handle pending stock picks 
+        self.update_participants_and_games() # Update participants (set their total value, etc.)
             
     def find_stock(self, ticker:str): 
         """Find and add a stock
@@ -938,25 +997,20 @@ class GameLogic: # Might move some of the control/running actions here
         #TODO should only USD stocks be allowed/limit exchanges?
         try: # Check if the stock exists
             self.be.get_stock(ticker_or_id=ticker)
-        except LookupError:
-            raise ValueError(f'Stock with ticker {ticker} already exists.')
+            
+        except LookupError: # Stock doesnt exist, add
+            stock = yf.Ticker(ticker)
+            try:
+                info = stock.info
+            except AttributeError: # If stock isn't valid, an attribute error should be raised
+                info = [] # Set list to 0 length so error is thrown
         
-        stock = yf.Ticker(ticker)
-        try:
-            info = stock.info
-        except AttributeError: # If stock isn't valid, an attribute error should be raised
-            info = [] # Set list to 0 length so error is thrown
-    
-        if len(info) == 1: # Try to verify ticker is real and get the relevant infos
-            self.be.add_stock(ticker=ticker.upper(),
-                exchange=info['fullExchangeName'],
-                company_name=info['displayName'] if 'displayName' in info else info['shortName'])
-        
-        elif len(info) > 1:
-            raise ValueError(f'Expected one stock, but got {len(info)}.', info)
-        else:
-            raise ValueError(f'Invalid `ticker` {ticker}.')
-
+            if len(info) > 0: # Try to verify ticker is real and get the relevant infos
+                self.be.add_stock(ticker=ticker.upper(),
+                    exchange=info['fullExchangeName'],
+                    company_name=info['displayName'] if 'displayName' in info else info['shortName'])
+            else:
+                raise ValueError(f'Failed to add `ticker` {ticker}.')
 
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
@@ -1164,7 +1218,6 @@ class Frontend: # This will be where a bot (like discord) interacts
 
         return games_info
     
-    
     # # STOCK RELATED
     def buy_stock(self, user_id:int, game_id:int, ticker:str):
         """Pick/buy a stock
@@ -1176,14 +1229,13 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         member = self._participant_id(user_id=user_id, game_id=game_id)
         try: # Try to add stock
-            self.gl.find_stock(ticker=str(ticker)) 
+            self.gl.find_stock(ticker=str(ticker))
         except ValueError as e: # Stock exists #TODO breakout specific errors
-            stock = self.be.get_stock(ticker_or_id=str(ticker))
-        
-        try:
-            self.be.add_stock_pick(participant_id=member['id'], stock_id=stock['id']) # Add the pick
-        except ValueError as e: # TODO breakout errors
             pass
+        stock = self.be.get_stock(ticker_or_id=str(ticker))
+
+        self.be.add_stock_pick(participant_id=member['id'], stock_id=stock['id']) # Add the pick
+
     
     def sell_stock(self, user_id:int, game_id:int, ticker:str): # Will also allow for cancelling an order #TODO add sell_stock
         pass
@@ -1320,23 +1372,26 @@ if __name__ == "__main__":
     many_games = game.be.get_many_games(include_private=True)
     game.be.update_game(game_id=1, name='TestGameUpd')
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
-    game.gl._market_time_offset()
-    game.gl.update_stock_prices()
-    for user in test_users: # Add some random users
-        print(game.register(user_id=user, username=str(user)))
-        game.join_game(user_id=user,game_id=1)
-        for stock in test_stocks2: # Buy some stocks
-            game.buy_stock(user, 1, stock)
+    game.gl.update_all()
+    #game.gl.update_stock_prices()
     print(game.be.get_many_users(ids_only=True)) # List users from the backend
     print(game.list_games()) # Print list of games
-    print(game.join_game(user_id=OWNER,game_id=1)) # Try to join a game
     print(game.my_games(user_id=OWNER)) # Try to list games you are joined to
+    for user in test_users: # Add some random users
+        print(game.register(user_id=user, username=str(user)))
+        try:
+            game.join_game(user_id=user,game_id=1)
+        except:
+            pass
+        for stock in test_stocks2: # Buy some stocks
+            game.buy_stock(user, 1, stock)
+    print(game.join_game(user_id=OWNER,game_id=1)) # Try to join a game
     
     for stock in test_stocks: # Buy stocks
         print(f'BUY {stock}! {game.buy_stock(OWNER, 1, stock)}') # Try to purchase stock
     
     print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
-    print(game.update(OWNER)) # Try to update
+    #print(game.update(OWNER)) # Try to update
     leaders = game.game_info(game_id=1)
     print([info for info in leaders])
     pass

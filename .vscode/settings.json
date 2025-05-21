@@ -3,5 +3,10 @@
     "python.analysis.inlayHints.variableTypes": true,
     "python.analysis.typeEvaluation.strictDictionaryInference": true,
     "python.analysis.typeEvaluation.strictListInference": true,
-    "python.analysis.typeEvaluation.strictSetInference": true
+    "python.analysis.typeEvaluation.strictSetInference": true,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }
