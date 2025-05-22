@@ -394,7 +394,7 @@ class Backend:
         resp = self.sql.send_query(query=query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values=values)
         return self._many_get(table='games', resp=resp)
         
-    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None):
+    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update an existing game
         
         Args:
@@ -411,7 +411,9 @@ class Backend:
             exclusive_picks (Optional[bool], optional): Whether multiple users can pick the same stock.  Cannot be changed once game has started.
             sell_during_game (Optional[bool], optional): Whether users can sell stocks during game.
             update_frequency (Optional[str], optional): Price update frequency ('daily', 'hourly', 'minute', 'realtime'. 
-            aggregate_value (Optional[float], optional): Total value of all game participants stocks.  Shouldn't be changed manually.
+            aggregate_value (float, optional): Total value of all game participants stocks.  Shouldn't be changed manually.
+            change_dollars (float, optional): aggregate_value - (starting_money * total participants).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
@@ -431,7 +433,10 @@ class Backend:
             'update_frequency': update_frequency.lower() if update_frequency else None,
             'start_date': start_date,
             'end_date': end_date,
-            'aggregate_value': aggregate_value
+            'aggregate_value': aggregate_value,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
+            'datetime_updated': _iso8601()
             }
         
         resp = self.sql.update(table='games', filters={'game_id': game_id}, items=items)
@@ -656,7 +661,7 @@ class Backend:
         resp = self.sql.get(table='stock_picks', filters=filters)
         return self._many_get(table='stock_picks', resp=resp)
 
-    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None): #Update a single stock pick
+    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None): #Update a single stock pick
         """Update a stock pick
 
         Args:
@@ -665,12 +670,16 @@ class Backend:
             shares (Optional[float], optional): Shares.
             start_value (Optional[float], optional): Starting value of pick.
             status (Optional[str], optional): Status ('pending_buy', 'owned', 'pending_sell', 'sold').
+            change_dollars (float, optional): current_value - (games.starting_money).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
         items = {
             'shares': shares,
             'start_value': start_value,
             'current_value': current_value,
             'status': status,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
             'datetime_updated': _iso8601()
             }
         
@@ -726,7 +735,7 @@ class Backend:
         return self._single_get(table='game_participants', resp=resp)
         
     def get_many_participants(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False):
-        """Get multiple
+        """Get multiple participants
 
         Args:
             game_id (Optional[int], optional): Filter by game ID. 
@@ -753,7 +762,7 @@ class Backend:
         resp = self.sql.get(table='game_participants', order=order, filters=filters, ) 
         return self._many_get(table='game_participants', resp=resp)
     
-    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None):
+    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update a game participant
 
         Args:
@@ -761,11 +770,17 @@ class Backend:
             name (Optional[str], optional): Team name.
             status (Optional[str], optional): Status ('pending', 'active', 'inactive').
             current_value (Optional[float], optional): Current portfolio value.
+            change_dollars (float, optional): current_value - (starting_money / total_picks).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
-        items = {'name': team_name,
-                 'status': status,
-                 'current_value': current_value,
-                 'datetime_updated': _iso8601()}
+        items = {
+            'name': team_name,
+            'status': status,
+            'current_value': current_value,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
+            'datetime_updated': _iso8601()
+            }
         
         resp = self.sql.update(table='game_participants', filters={'participation_id': participant_id}, items=items)
         if resp['status'] != 'success': #TODO errors
@@ -937,15 +952,20 @@ class GameLogic: # Might move some of the control/running actions here
                     shares = None
                     start_value = None
                     status = None
+
                     
                     if pick['status'] == 'pending_buy':
                         buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
                         shares = buying_power / price['price']# Total shares owned
-                        start_value = current_value = float(shares * price['price'])
+                        start_value = current_value = round(float(shares * price['price']), 2)
+                        dollar_change = 0
+                        percent_change = 0
                         status = 'owned'
                     else: # Stock is owned
                         current_value = float(pick['shares'] * price['price'])
-                    self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status) # Update
+                        dollar_change = current_value - pick['start_value']
+                        percent_change = (dollar_change / pick['start_value']) * 100
+                    self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
 
     def update_participants_and_games(self, game_id:Optional[int]=None):
         """Update game participant and game information
@@ -964,16 +984,20 @@ class GameLogic: # Might move some of the control/running actions here
             aggr_val = 0
             if game['status'] != 'active':
                 return "Game not active"
-            members = self.be.get_many_participants(game_id=game['id'])
+            members = self.be.get_many_participants(game_id=game['id'], status='active')
             for member in members:
                 portfolio_value = 0.0
                 picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
                 for pick in picks:
                     portfolio_value += pick['current_value']
-                self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
+                dollar_change = portfolio_value - game['starting_money']
+                percent_change = (dollar_change / game['starting_money']) * 100
+                self.be.update_participant(participant_id=member['id'], current_value=portfolio_value, change_dollars=dollar_change, change_percent=percent_change)
                 aggr_val += portfolio_value
             
-            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val)
+            game_dollar_change = aggr_val - (game['starting_money'] * len(members))
+            game_percent_change =  (game_dollar_change / (game['starting_money'] * len(members))) * 100 
+            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val, change_dollars=game_dollar_change, change_percent=game_percent_change)
                
     def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id #TODO allow force
         """Run all update commands/logic for games
@@ -1145,6 +1169,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         game = self.be.get_game(game_id) # Will raise an error for invalid games
         game_obj = dict(game) # Make a copy so it quits acting like a child
         game_obj['combined_value'] = "%.2f" % game['combined_value'] # Round to two decimal places
+        
         info = {
             'game': game,
         }
@@ -1370,12 +1395,14 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
     #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
     many_games = game.be.get_many_games(include_private=True)
-    game.be.update_game(game_id=1, name='TestGameUpd')
+    #game.be.update_game(game_id=1, name='TestGameUpd')
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
     game.gl.update_all()
     #game.gl.update_stock_prices()
+    
     print(game.be.get_many_users(ids_only=True)) # List users from the backend
     print(game.list_games()) # Print list of games
     print(game.my_games(user_id=OWNER)) # Try to list games you are joined to

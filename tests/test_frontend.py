@@ -1,5 +1,7 @@
 import pytest
 from stocks import Frontend # Your Backend class
+MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests
+
 
 class TestFrontend:
     """Test all (maybe we'll see) frontend methods"""
@@ -121,3 +123,43 @@ class TestFrontend:
     
     
     # # REGISTER # #
+    def test_register_id_only(self, fe: Frontend):
+        user_id = 11
+        source = 'testing' # Should be set by class
+        fe.register(
+            user_id=user_id,
+        )
+        
+        user = fe.be.get_user(user_id=11)
+        assert user['id'] == user_id
+        assert user['source'] == source
+        assert user['creation_date'] == MOCK_DATETIME_STR
+        
+    def test_register_full(self, fe: Frontend):
+        user_id = 11
+        source = 'manual' # Should be set by class
+        fe.register(
+            user_id=user_id,
+            source=source
+        )
+        
+        user = fe.be.get_user(user_id=11)
+        assert user['id'] == user_id
+        assert user['source'] == source
+        assert user['creation_date'] == MOCK_DATETIME_STR
+        
+    def test_register_duplicate(self, fe: Frontend):
+        user_id = 11
+        source = 'testing' # Should be set by class
+        fe.register(
+            user_id=user_id,
+            source=source
+        )
+        
+        a = fe.register(
+            user_id=user_id,
+            source='manual'
+        )
+        assert a == 'User already registered'
+
+    

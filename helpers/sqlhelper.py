@@ -306,3 +306,4 @@ class SqlHelper: # Simple helper for SQL
         VALUES(?,)"""
         values = [table]
         return self._run_query(query=query, values=values, mode='delete')
+    
