@@ -4,6 +4,7 @@
 # TODO set up some sort of draft system for stocks
 # TODO should i add a command to show game info to all with join button?
 # TODO add error handling via discord
+#TODO add help command
 
 # NEEDS FROM BACKEND:
 
@@ -21,9 +22,9 @@ from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 
-load_dotenv()
+#load_dotenv() #TODO uncomment!
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DB_NAME = os.getenv('DB_NAME')
@@ -37,6 +38,34 @@ intents.guilds = True
 intents.members = True
 # intents.dm_messages = True # for invite user command
 
+# Logger thing
+def setup_logging(level): 
+    global console, logger
+    frmt = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S') #Format that I like
+    logger = logging.getLogger('DiscordBot') # Logger name
+    console = logging.StreamHandler(stream=sys.stderr)
+    console.setLevel(logging.DEBUG) 
+    console.setFormatter(frmt)
+    logger.addHandler(console)
+    logger.setLevel(level)
+setup_logging(level=logging.DEBUG) # debug for now
+
+def has_permission(user:discord.member.Member):
+    """Check if a user has permission to create/manage games
+    
+    Currently only checks for admin
+
+    Args:
+        user (discord.member.Member): Member (user) object.
+        
+    Returns:
+        bool: True if allowed
+    """
+    if user.guild_permissions.administrator:
+        return True
+    else:
+        return False
+
 bot = commands.Bot(command_prefix="$", intents=intents)
 print(DB_NAME)
 fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
@@ -45,17 +74,15 @@ fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(Backend().get_game(1))
-    print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
-    print('------')
+    logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     try:
         # Sync commands globally
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        logger.info(f"Synced {len(synced)} command(s)")
         for command in synced:
-            print(f"   - {command.name}: {command.description}")
+            logger.info(f"   - {command.name}: {command.description}")
     except Exception as e:
-        print(f"Failed to sync commands: {e}")
+        logger.error(f"Failed to sync commands: {e}") #TODO should this be higher severity?
 
 
 # GAME RELATED
@@ -69,7 +96,6 @@ async def on_ready():
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
-    join_after_start="Whether players can join after game starts",
     private_game="Whether the game is private (requires owner approval for new users)"
     # sell_during_game="Whether players can sell stocks during game"
 )
@@ -81,40 +107,35 @@ async def create_game_advanced(
     starting_money: float = 10000.00,
     total_picks: int = 10,
     exclusive_picks: bool = False,
-    join_after_start: bool = False,
     private_game: bool = False
-    # sell_during_game: bool = False
 ):
-    # Create game using frontend and get the result
-    
-    result = fe.new_game(
-        user_id=interaction.user.id,
-        name=name,
-        start_date=start_date,
-        end_date=end_date,
-        starting_money=starting_money,
-        total_picks=total_picks,
-        exclusive_picks=exclusive_picks,
-        join_after_start=join_after_start,
-        sell_during_game=False,
-        private_game= False
-        # sell_during_game=sell_during_game
-    )
-    
-    # If result is None or empty, the game was created successfully
-    if not result:
+    # Create game using frontend and return
+    try:
+        fe.new_game(
+            user_id=interaction.user.id,
+            name=name,
+            start_date=start_date,
+            end_date=end_date,
+            starting_money=starting_money,
+            total_picks=total_picks,
+            exclusive_picks=exclusive_picks,
+            private_game= private_game
+            #sell_during_game=False, - NOT IMPLEMENTED
+        )
+        
+
         embed = discord.Embed(
             title="Game Created Successfully",
             description=f"Game '{name}' has been created!",
             color=discord.Color.green()
         )
-    else:
-        # If create game failed, show the error message
+    except Exception as e: #TODO find specific errors!
         embed = discord.Embed(
-            title="Game Creation Failed",
-            description=result,
-            color=discord.Color.red()
+        title="Game Creation Failed",
+        description=e,
+        color=discord.Color.red()
         )
+     
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -285,7 +306,7 @@ async def create_game(interaction: discord.Interaction):
                     exclusive_picks = False
                 
                 # Create a response embed for join after start
-                join_after_start_embed = discord.Embed(
+                join_after_start_embed = discord.Embed( #TODO replace this with the pick_date field
                     title="Do you want players to join after the game starts?",
                     description="If you select 'Yes', players can join after the game starts. If you select 'No', players cannot join after the game starts.",
                     color=discord.Color.blue()
@@ -354,30 +375,28 @@ async def create_game(interaction: discord.Interaction):
                     # Define what happens when the confirm button is clicked
                     async def confirm_callback(interaction: discord.Interaction):
                         # Create the game using the provided inputs
-                        result = fe.create_game(
-                            user_id=interaction.user.id,
-                            name=game_name,
-                            start_date=game_start_date,
-                            end_date=game_end_date,
-                            starting_money=game_starting_money,
-                            total_picks=game_total_picks,
-                            exclusive_picks=exclusive_picks,
-                            join_after_start=join_after_start,
-                            sell_during_game=False # Placeholder for sell_during_game
-                            # sell_during_game=sell_during_game
-                        )
-                        
-                        # Check the result and create the response embed
-                        if not result:
+                        try:
+                            fe.new_game(
+                                user_id=interaction.user.id,
+                                name=game_name,
+                                start_date=game_start_date,
+                                end_date=game_end_date,
+                                starting_money=game_starting_money,
+                                total_picks=game_total_picks,
+                                exclusive_picks=exclusive_picks,
+                                #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
+                                sell_during_game=False # Placeholder for sell_during_game
+                                # sell_during_game=sell_during_game
+                            )
                             creation_status_embed = discord.Embed(
                                 title="Game Created Successfully",
                                 description=f"Game '{name_input.value}' has been created!",
                                 color=discord.Color.green()
                             )
-                        else:
+                        except ValueError as e:
                             creation_status_embed = discord.Embed(
                                 title="Game Creation Failed",
-                                description=result,
+                                description=e,
                                 color=discord.Color.red()
                             )
                         
@@ -491,37 +510,51 @@ async def game_info(
     game_id: int,
     show_leaderboard: bool = True
 ):
-    game = fe.game_info(game_id)
-    leaderboard_info = fe.get_all_participants(game_id)
-    embed = discord.Embed(title=f"Info for {game["name"]}: [{game["id"]}]", description=f"""
-                    **Owned by:** <@{game["owner"]}>
-                    **Pick date:** {game["pick_date"] or "Not set"}
-                    **Starting Cash:** ${int(game["starting_money"])}
-                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
-                    There are currently **{len(leaderboard_info)}** members participating
-                    """)
-    embed.set_footer(text="Dates are formatted as (YYYY/MM/DD)")
+    game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
+    game = game_info['game']
+    leaderboard_info = list(game_info['leaderboard'])
+    description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game["owner"],
+        pick_info=f'\n> **Pick date:** {game["pick_date"]}' if game["pick_date"] else '',
+        start_cash=f'> **Starting Cash:** ${int(game["starting_money"])}',
+        date_range= '> ' + str('Started' if game['status'] != 'open' else 'Starting') + f' `{game["start_date"]}`' + str(str(', ends' if  game['status'] != 'ended' else ', ended') + f' `{game["end_date"]}`') if game["end_date"] else '',
+        participants=f'> **Participants:** `{len(leaderboard_info)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
+        )
+    embed = discord.Embed(title=f'{game["name"]} ({game["id"]})', 
+        description=description_str)
+    embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
 
     if not show_leaderboard:
         await interaction.response.send_message(embed=embed)
         return
     
-    leaderboard_info = leaderboard_info[:10]
-    composed_str = "```\n"
-    for i in range(len(leaderboard_info)):
-        if i == 0:
-            composed_str += "🥇: "
-        elif i == 1:
-            composed_str += "🥈: "
-        elif i == 2:
-            composed_str += "🥉: "
-        else:
-            composed_str += f"{i + 1}: "
-        info = leaderboard_info[i]
-        composed_str += f"{info["name"]} [{info["participant_id"]}] | Aggregate Value ${info["current_value"]} | Joined {parser.parse(info["joined"])}\n"
+    lb_limit = 10 # Amount of users to show '🏆'
+    leaderboard_info = leaderboard_info[:lb_limit] # Only include top 10
+    pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
     
-    composed_str += "```"
-    embed.add_field(name="Leaderboard", value=composed_str)
+    ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
+    leaderboard_block = '```\n{ldrbrd_linees}\n```'
+    row_template = '| {pos} | {user} | {value} | {date} |'
+    for rank, info in enumerate(leaderboard_info):
+        try: # Try to get username
+            member = await interaction.guild.fetch_member(info["user_id"]) # Set display name
+            if len(member.display_name) <= 16: # Server displayname
+                user= str(member.display_name)
+            elif len(member.global_name) <= 16: # Globbal display
+                user= str(member.global_name)
+            elif len(member.name) <= 16: # Username
+                user= str(member.global_name)
+            else:
+                user = str(member.global_name)[:15] + '~' # Name is just too long, give up
+            
+        except discord.errors.NotFound: # User doesn't exist
+            user = f'ID({info["user_id"]})'
+        ldrbrd_lines.append(row_template.format( # Create rows
+            pos=pos[rank],
+            user=user.center(16),
+            value= str('$'+ format(float(info["current_value"]), ',')).center(15),
+            date= f'{info["joined"][:10]}' # Manually centering I guess
+        ))
+    embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
     await interaction.response.send_message(embed=embed)
 
 # TODO get list of public games
@@ -531,7 +564,7 @@ async def game_info(
 # TODO add pagination if there are many games (10+)
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
-@bot.tree.command(name="game-list", description="View a list of all games")
+@bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
     page_length="The length of the list per page. Defaults to 10"
 )
@@ -579,7 +612,7 @@ async def my_games(
         embed.description = "No games found"
     else:
         # Add each game to the embed
-        for game in games:
+        for game in games['games']: #TODO provide more info here
             # Create status indicator
             status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
             

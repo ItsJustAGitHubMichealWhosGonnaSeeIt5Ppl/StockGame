@@ -1,11 +1,11 @@
 import pytest
-from stocks import Backend # Your Backend class
+from stocks import Backend 
 
 # This will be the fixed timestamp used by the mocked _iso8601
-MOCK_DATETIME_STR = "2025-05-21T10:00:00Z"
+MOCK_DATETIME_STR = "2025-05-21 10:00:00"
 
 class TestBackend:
-    """Tests all user functions, and then mostly add functions"""
+    """Tests all user methods, and then mostly add methods"""
 
     def test_add_user_success(self, be: Backend):
         """Test successfully adding a new user."""
@@ -194,6 +194,29 @@ class TestBackend:
         assert game['name'] == name # First game should get ID 1
         assert game['start_date'] == start_date # First game should get ID 1
         assert game['end_date'] == end_date # First game should get ID 1
+        assert game['starting_money'] == starting_money # First game should get ID 1
+        assert game['total_picks'] == total_picks # First game should get ID 1
+        
+    def test_add_game_infinite_success(self, be: Backend):
+        """Test successfully adding a new game with no end date."""
+        user_id = 101
+        name = 'testgame'
+        start_date = '2024-04-02'
+        starting_money = 1000
+        total_picks = 10
+        be.add_user(user_id=user_id, source='discord') # Must add a user or it gets mad
+
+        be.add_game(
+            user_id=int(user_id),
+            name=str(name), 
+            start_date=str(start_date), 
+            starting_money=float(starting_money), 
+            total_picks=int(total_picks), 
+        )
+        game = be.get_many_games(owner_id=user_id, name=name)[0]
+        assert game['id'] == 1 # First game should get ID 1
+        assert game['name'] == name # First game should get ID 1
+        assert game['start_date'] == start_date # First game should get ID 1
         assert game['starting_money'] == starting_money # First game should get ID 1
         assert game['total_picks'] == total_picks # First game should get ID 1
     
