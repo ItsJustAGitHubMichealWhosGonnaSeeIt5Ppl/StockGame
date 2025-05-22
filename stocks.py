@@ -576,7 +576,7 @@ class Backend:
         order = {'datetime': 'DESC'}  # Sort by price date (recent first)
         filters = {
             'stock_id': stock_id, 
-            ('LIKE', 'datetime'): datetime + '%' # Match like objects
+            ('LIKE', 'datetime'): datetime + '%' # Match like objects #TODO NOT 100% INJECTION SAFE
             } 
 
         resp = self.sql.get(table='stock_prices',filters=filters, order=order) 
@@ -648,7 +648,7 @@ class Backend:
                 statuses.append(f'"{st}"') # Add valid statues
         
             filters = { 
-            ('IN', 'status'): "" + ",".join(statuses),
+            ('IN', 'status'): "" + ",".join(statuses), #TODO NOT 100% INJECTION SAFE
             'participation_id': participant_id,
             'stock_id': stock_id
             }
@@ -817,7 +817,7 @@ class GameLogic: # Might move some of the control/running actions here
             float: Offset in hours.
         """
         local_time = datetime.now() # Naive time (except then it isnt fucking naive like 30 seconds later so why call it that)
-        local_utc_offset = datetime.now().astimezone().utcoffset() 
+        local_utc_offset = datetime.now().astimezone().utcoffset()
         local_offset_hours = (local_utc_offset.days * 24) + (local_utc_offset.seconds / 3600) # This is the UTC offset in hours
         if local_offset_hours > 0: # Ahead of UTC
             local_offset = 'ahead'

@@ -5,6 +5,7 @@ class TestFrontend:
     """Test all (maybe we'll see) frontend methods"""
     
     
+    # # NEW_GAME # #
     def test_new_game_minimal_success(self, fe: Frontend):
         user_id = 10 # Matches conftest
         game_name = 'TestGame'
@@ -57,7 +58,9 @@ class TestFrontend:
         assert game['exclusive_picks'] == draft_mode # First game should get ID 1
         assert game['sell_during_game'] == sell_during_game # First game should get ID 1
         assert game['update_frequency'] == update_frequency # First game should get ID 1
-        
+    
+    
+    # # LIST_GAMES # #    
     def test_list_public_games(self, fe: Frontend):
         user_id = 10 # Matches conftest
         start_date = '2025-10-10'
@@ -113,6 +116,8 @@ class TestFrontend:
         games = fe.list_games(include_private=False)
         assert len(games) == 0 # no games should be returned
 
-        
-        
     
+    # # GAME_INFO # #
+    
+    
+    # # REGISTER # #
