@@ -372,48 +372,48 @@ async def create_game(interaction: discord.Interaction):
                 confirmation_view.add_item(cancel_button)
                 await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
 
-                    # Define what happens when the confirm button is clicked
-                    async def confirm_callback(interaction: discord.Interaction):
-                        # Create the game using the provided inputs
-                        try:
-                            fe.new_game(
-                                user_id=interaction.user.id,
-                                name=game_name,
-                                start_date=game_start_date,
-                                end_date=game_end_date,
-                                starting_money=game_starting_money,
-                                total_picks=game_total_picks,
-                                exclusive_picks=exclusive_picks,
-                                #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
-                                sell_during_game=False # Placeholder for sell_during_game
-                                # sell_during_game=sell_during_game
-                            )
-                            creation_status_embed = discord.Embed(
-                                title="Game Created Successfully",
-                                description=f"Game '{name_input.value}' has been created!",
-                                color=discord.Color.green()
-                            )
-                        except ValueError as e:
-                            creation_status_embed = discord.Embed(
-                                title="Game Creation Failed",
-                                description=e,
-                                color=discord.Color.red()
-                            )
-                        
-                        await interaction.response.edit_message(embed=creation_status_embed, view=None)
-                    
-                    # Define what happens when the cancel button is clicked
-                    async def cancel_callback(interaction: discord.Interaction):
-                        cancel_embed = discord.Embed(
-                            title="Game Creation Cancelled",
-                            description="The game creation process has been cancelled.",
+                # Define what happens when the confirm button is clicked
+                async def confirm_callback(interaction: discord.Interaction):
+                    # Create the game using the provided inputs
+                    try:
+                        fe.new_game(
+                            user_id=interaction.user.id,
+                            name=game_name,
+                            start_date=game_start_date,
+                            end_date=game_end_date,
+                            starting_money=game_starting_money,
+                            total_picks=game_total_picks,
+                            exclusive_picks=exclusive_picks,
+                            #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
+                            sell_during_game=False # Placeholder for sell_during_game
+                            # sell_during_game=sell_during_game
+                        )
+                        creation_status_embed = discord.Embed(
+                            title="Game Created Successfully",
+                            description=f"Game '{name_input.value}' has been created!",
+                            color=discord.Color.green()
+                        )
+                    except ValueError as e:
+                        creation_status_embed = discord.Embed(
+                            title="Game Creation Failed",
+                            description=e,
                             color=discord.Color.red()
                         )
-                        await interaction.response.edit_message(embed=cancel_embed, view=None)                    
-        
-                    # Set the confirm button callbacks
-                    confirm_button.callback = confirm_callback
-                    cancel_button.callback = cancel_callback
+                    
+                    await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                
+                # Define what happens when the cancel button is clicked
+                async def cancel_callback(interaction: discord.Interaction):
+                    cancel_embed = discord.Embed(
+                        title="Game Creation Cancelled",
+                        description="The game creation process has been cancelled.",
+                        color=discord.Color.red()
+                    )
+                    await interaction.response.edit_message(embed=cancel_embed, view=None)                    
+    
+                # Set the confirm button callbacks
+                confirm_button.callback = confirm_callback
+                cancel_button.callback = cancel_callback
             
                 # # Set the join after button callback
                 # join_after_start_yes.callback = join_after_start_callback
@@ -541,7 +541,7 @@ async def manage_game(
             pick_date=pick_date,
             private_game=private_game,
             total_picks=total_picks,
-            draft_mode=draft_mode,
+            exclusive_picks=draft_mode,
             update_frequency=update_frequency,
             sell_during_game=sell_during_game
         )
