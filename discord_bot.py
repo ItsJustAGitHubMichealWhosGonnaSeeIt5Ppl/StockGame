@@ -122,6 +122,8 @@ async def create_game_advanced(
             private_game= private_game
             #sell_during_game=False, - NOT IMPLEMENTED
         )
+        
+
         embed = discord.Embed(
             title="Game Created Successfully",
             description=f"Game '{name}' has been created!",
