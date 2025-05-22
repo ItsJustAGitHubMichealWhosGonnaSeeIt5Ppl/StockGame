@@ -68,7 +68,7 @@ def has_permission(user:discord.member.Member):
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 print(DB_NAME)
-fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
+fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER, source='discord') # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
