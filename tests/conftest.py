@@ -4,7 +4,7 @@ import tempfile
 # PART GEMINI BUT IT DIDNT REALLY WORK 
 MODULE_NAME_FOR_PATCHING = "stocks"
 
-MOCK_DATETIME_STR = "2025-05-21T10:00:00Z" # Fixed timestamp for tests
+MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests
 MOCK_DATE_STR = "2025-05-21" # Fixed date for tests
 
 @pytest.fixture(scope="function", autouse=True)
@@ -34,3 +34,13 @@ def be(db_path):
     create(db_path) # Initialize the schema in the temporary database
     backend = Backend(db_name=db_path)
     return backend
+
+@pytest.fixture(scope="function")
+def fe(db_path):
+    """Provides a Frontend instance connected to a real, temporary SQLite DB."""
+    from sqlite_creator_real import create
+    from stocks import Frontend    
+
+    create(db_path) # Initialize the schema in the temporary database
+    frontend = Frontend(database_name=db_path, owner_user_id=10, source='testing')
+    return frontend

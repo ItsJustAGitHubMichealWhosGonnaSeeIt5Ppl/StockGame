@@ -269,7 +269,7 @@ class Backend:
     
     
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -283,7 +283,7 @@ class Backend:
             pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
+            exclusive_picks (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
             sell_during_game (bool, optional): Whether users can sell stocks during the game.  Defaults to False. - NOT IMPLEMENTED
             update_frequency (str, optional): How often prices will update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'. - NOT IMPLEMENTED
             
@@ -305,11 +305,11 @@ class Backend:
             raise ValueError('Invalid `pick_date` format.')
         #TODO should we check if pick_date is after end_date?  Doesn't cause an issue, just kinda silly
         
-        if draft_mode: # Draftmode checks
+        if exclusive_picks: # Draftmode checks
             if not pick_date:
-                raise TypeError('`pick_date` required when `draft_mode` is enabled.')
+                raise TypeError('`pick_date` required when `exclusive_picks` is enabled.')
             if datetime.strptime(start_date, "%Y-%m-%d").date() < datetime.strptime(pick_date, "%Y-%m-%d").date(): # Date format is already validated
-                raise ValueError('`start_date` must be after `pick_date` when `draft_mode` is enabled.')
+                raise ValueError('`start_date` must be after `pick_date` when `exclusive_picks` is enabled.')
     
         # Misc
         if starting_money < 1.0:
@@ -322,13 +322,13 @@ class Backend:
             'owner_user_id': user_id,
             'start_money': starting_money,
             'pick_count': total_picks,
-            'draft_mode': draft_mode,
+            'draft_mode': exclusive_picks,
             'pick_date': pick_date,
             'private_game': private_game,
             'allow_selling': sell_during_game,
             'update_frequency': update_frequency.lower() if update_frequency else None, # Make sure its lowercase
             'start_date': start_date,
-            'end_date': "None" if end_date == None else end_date,  # is this needed?, no but I like it.
+            'end_date': end_date,  # is this needed?, no but I like it.
             'datetime_created': _iso8601()
             }
 
@@ -397,7 +397,7 @@ class Backend:
         resp = self.sql.send_query(query=query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values=values)
         return self._many_get(table='games', resp=resp)
         
-    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, draft_mode:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None):
+    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update an existing game
         
         Args:
@@ -411,22 +411,24 @@ class Backend:
             pick_date (Optional[str], optional): Pick date.  Format: `YYYY-MM-DD`.  Cannot be changed once game has started.
             private_game (Optional[bool], optional): Game privacy. 
             total_picks (Optional[int], optional): Total picks.  Cannot be changed once game has started.
-            draft_mode (Optional[bool], optional): Whether multiple users can pick the same stock.  Cannot be changed once game has started.
+            exclusive_picks (Optional[bool], optional): Whether multiple users can pick the same stock.  Cannot be changed once game has started.
             sell_during_game (Optional[bool], optional): Whether users can sell stocks during game.
             update_frequency (Optional[str], optional): Price update frequency ('daily', 'hourly', 'minute', 'realtime'. 
-            aggregate_value (Optional[float], optional): Total value of all game participants stocks.  Shouldn't be changed manually.
+            aggregate_value (float, optional): Total value of all game participants stocks.  Shouldn't be changed manually.
+            change_dollars (float, optional): aggregate_value - (starting_money * total participants).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
         if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date():
-            if start_date or starting_money or pick_date or draft_mode:
-                raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `draft_mode` once game has started.')
+            if start_date or starting_money or pick_date or exclusive_picks:
+                raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
         
         items = {'name': name,
             'owner_user_id': owner,
             'start_money': starting_money,
             'pick_count': total_picks,
-            'draft_mode': draft_mode,
+            'draft_mode': exclusive_picks,
             'pick_date': pick_date,
             'private_game': private_game,
             'allow_selling': sell_during_game,
@@ -434,7 +436,10 @@ class Backend:
             'update_frequency': update_frequency.lower() if update_frequency else None,
             'start_date': start_date,
             'end_date': end_date,
-            'aggregate_value': aggregate_value
+            'aggregate_value': aggregate_value,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
+            'datetime_updated': _iso8601()
             }
         
         resp = self.sql.update(table='games', filters={'game_id': game_id}, items=items)
@@ -579,7 +584,7 @@ class Backend:
         order = {'datetime': 'DESC'}  # Sort by price date (recent first)
         filters = {
             'stock_id': stock_id, 
-            ('LIKE', 'datetime'): datetime + '%' # Match like objects
+            ('LIKE', 'datetime'): datetime + '%' # Match like objects #TODO NOT 100% INJECTION SAFE
             } 
 
         resp = self.sql.get(table='stock_prices',filters=filters, order=order) 
@@ -651,7 +656,7 @@ class Backend:
                 statuses.append(f'"{st}"') # Add valid statues
         
             filters = { 
-            ('IN', 'status'): "" + ",".join(statuses),
+            ('IN', 'status'): "" + ",".join(statuses), #TODO NOT 100% INJECTION SAFE
             'participation_id': participant_id,
             'stock_id': stock_id
             }
@@ -659,7 +664,7 @@ class Backend:
         resp = self.sql.get(table='stock_picks', filters=filters)
         return self._many_get(table='stock_picks', resp=resp)
 
-    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None): #Update a single stock pick
+    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None): #Update a single stock pick
         """Update a stock pick
 
         Args:
@@ -668,12 +673,16 @@ class Backend:
             shares (Optional[float], optional): Shares.
             start_value (Optional[float], optional): Starting value of pick.
             status (Optional[str], optional): Status ('pending_buy', 'owned', 'pending_sell', 'sold').
+            change_dollars (float, optional): current_value - (games.starting_money).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
         items = {
             'shares': shares,
             'start_value': start_value,
             'current_value': current_value,
             'status': status,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
             'datetime_updated': _iso8601()
             }
         
@@ -729,7 +738,7 @@ class Backend:
         return self._single_get(table='game_participants', resp=resp)
         
     def get_many_participants(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False):
-        """Get multiple
+        """Get multiple participants
 
         Args:
             game_id (Optional[int], optional): Filter by game ID. 
@@ -756,7 +765,7 @@ class Backend:
         resp = self.sql.get(table='game_participants', order=order, filters=filters, ) 
         return self._many_get(table='game_participants', resp=resp)
     
-    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None):
+    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update a game participant
 
         Args:
@@ -764,11 +773,17 @@ class Backend:
             name (Optional[str], optional): Team name.
             status (Optional[str], optional): Status ('pending', 'active', 'inactive').
             current_value (Optional[float], optional): Current portfolio value.
+            change_dollars (float, optional): current_value - (starting_money / total_picks).  Rounded to two decimal points.
+            change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
-        items = {'name': team_name,
-                 'status': status,
-                 'current_value': current_value,
-                 'datetime_updated': _iso8601()}
+        items = {
+            'name': team_name,
+            'status': status,
+            'current_value': current_value,
+            'change_dollars': round(change_dollars, 2),
+            'change_percent': round(change_percent, 2),
+            'datetime_updated': _iso8601()
+            }
         
         resp = self.sql.update(table='game_participants', filters={'participation_id': participant_id}, items=items)
         if resp['status'] != 'success': #TODO errors
@@ -820,7 +835,7 @@ class GameLogic: # Might move some of the control/running actions here
             float: Offset in hours.
         """
         local_time = datetime.now() # Naive time (except then it isnt fucking naive like 30 seconds later so why call it that)
-        local_utc_offset = datetime.now().astimezone().utcoffset() 
+        local_utc_offset = datetime.now().astimezone().utcoffset()
         local_offset_hours = (local_utc_offset.days * 24) + (local_utc_offset.seconds / 3600) # This is the UTC offset in hours
         if local_offset_hours > 0: # Ahead of UTC
             local_offset = 'ahead'
@@ -940,15 +955,20 @@ class GameLogic: # Might move some of the control/running actions here
                     shares = None
                     start_value = None
                     status = None
+
                     
                     if pick['status'] == 'pending_buy':
                         buying_power = float(game['starting_money'] / game['total_picks']) # Amount available to buy this stock (starting money divided by picks)
                         shares = buying_power / price['price']# Total shares owned
-                        start_value = current_value = float(shares * price['price'])
+                        start_value = current_value = round(float(shares * price['price']), 2)
+                        dollar_change = 0
+                        percent_change = 0
                         status = 'owned'
                     else: # Stock is owned
                         current_value = float(pick['shares'] * price['price'])
-                    self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status) # Update
+                        dollar_change = current_value - pick['start_value']
+                        percent_change = (dollar_change / pick['start_value']) * 100
+                    self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
 
     def update_participants_and_games(self, game_id:Optional[int]=None):
         """Update game participant and game information
@@ -967,16 +987,20 @@ class GameLogic: # Might move some of the control/running actions here
             aggr_val = 0
             if game['status'] != 'active':
                 return "Game not active"
-            members = self.be.get_many_participants(game_id=game['id'])
+            members = self.be.get_many_participants(game_id=game['id'], status='active')
             for member in members:
                 portfolio_value = 0.0
                 picks = self.be.get_many_stock_picks(participant_id=member['id'], status='owned')
                 for pick in picks:
                     portfolio_value += pick['current_value']
-                self.be.update_participant(participant_id=member['id'], current_value=portfolio_value)
+                dollar_change = portfolio_value - game['starting_money']
+                percent_change = (dollar_change / game['starting_money']) * 100
+                self.be.update_participant(participant_id=member['id'], current_value=portfolio_value, change_dollars=dollar_change, change_percent=percent_change)
                 aggr_val += portfolio_value
             
-            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val)
+            game_dollar_change = aggr_val - (game['starting_money'] * len(members))
+            game_percent_change =  (game_dollar_change / (game['starting_money'] * len(members))) * 100 
+            self.be.update_game(game_id=game['id'], aggregate_value=aggr_val, change_dollars=game_dollar_change, change_percent=game_percent_change)
                
     def update_all(self, game_id:Optional[int]=None, force:bool=False): #TODO allow game_id #TODO allow force
         """Run all update commands/logic for games
@@ -1070,7 +1094,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             raise ValueError(f'Expected one participant ID, but got {len(user)}.', user)
         
     # # GAME RELATED # #
-    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
@@ -1086,7 +1110,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            draft_mode (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
+            exclusive_picks (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
             sell_during_game (bool, optional): Whether users can sell stocks during the game.  Defaults to False. - NOT IMPLEMENTED
             update_frequency (str, optional): How often prices will update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'. - NOT IMPLEMENTED
         """
@@ -1094,24 +1118,25 @@ class Frontend: # This will be where a bot (like discord) interacts
         try: # Try create user
             user = self.register(user_id=user_id)  
         except ValueError: # User was already there, my bad
-            pass
+            pass #TODO log
     
         try:  # Create game
             self.be.add_game(
-                user_id=int(user_id),
-                name=str(name), 
-                start_date=str(start_date), 
-                end_date=str(end_date), 
-                starting_money=float(starting_money), 
-                total_picks=int(total_picks), 
-                pick_date=str(pick_date), 
-                draft_mode=bool(draft_mode),
-                private_game=bool(private_game),
-                sell_during_game=bool(sell_during_game), 
-                update_frequency=str(update_frequency)
+                user_id=user_id,
+                name=name,
+                start_date=start_date,
+                end_date=end_date,
+                starting_money=starting_money,
+                pick_date=pick_date,
+                total_picks=total_picks,
+                private_game=private_game,
+                exclusive_picks=exclusive_picks,
+                sell_during_game=sell_during_game,
+                update_frequency=update_frequency
                 )
-        except Exception as e: #TODO find errors
-            return e
+        except Exception as e: #TODO find errors?
+            raise e
+        
         game = self.be.get_many_games(name=name, owner_id=user_id)
         if len(game) == 1:
             self.be.add_participant(user_id=user_id, game_id=game[0]['id'])
@@ -1147,6 +1172,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         game = self.be.get_game(game_id) # Will raise an error for invalid games
         game_obj = dict(game) # Make a copy so it quits acting like a child
         game_obj['combined_value'] = "%.2f" % game['combined_value'] # Round to two decimal places
+        
         info = {
             'game': game,
         }
@@ -1155,16 +1181,17 @@ class Frontend: # This will be where a bot (like discord) interacts
             members = self.be.get_many_participants(game_id=game_id, sort_by_value=True)
             for member in members:
                 user = self.be.get_user(member['user_id'])
-                leaderboard.append({
-                    'username': member['team_name'] if member['team_name'] not in [None, 'None'] else user['username'],
-                    'current_value': "%.2f" % member['current_value'] # Round to two decimal places
+                leaderboard.append({ 
+                    'user_id': member['user_id'],
+                    'current_value': "%.2f" % member['current_value'], # Round to two decimal places
+                    'joined': member['joined']
                 }) # Should keep order
                 
             info['leaderboard'] = leaderboard  # type: ignore WAA I DONT FUCKING CARE I KNOW THIS WORKS
         return info
     
     # # USER RELATED
-    def register(self, user_id:int, source:Optional[str]=None, username:Optional[str]=None):
+    def register(self, user_id:int, source:Optional[str]=None, username:Optional[str]=None): #TODO should this be an internal function?
         """Register user to allow gameplay
 
         Args:
@@ -1201,14 +1228,14 @@ class Frontend: # This will be where a bot (like discord) interacts
         #TODO check permissions before running
         self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))
 
-    def my_games(self, user_id:int):
+    def my_games(self, user_id:int)->dict:
         """Get a list of your current games
 
         Args:
             user_id (int): User ID.
 
         Returns:
-            list: Your current games 
+            dict: User information along with current games
         """
         #TODO should this alow filtering for inactive games, etc.?
         games = self.be.get_many_participants(user_id=int(user_id))
@@ -1220,6 +1247,25 @@ class Frontend: # This will be where a bot (like discord) interacts
             games_info['games'].append(self.be.get_game(game['game_id']))
 
         return games_info
+    
+    def my_stocks(self, user_id:int, game_id:int, show_pending:bool=True, show_sold:bool=False):
+        """Get your stocks for a specific game.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            show_pending (bool, optional): Whether to show pending purchases. Defaults to False (no).
+            show_sold (bool, optional): Whether to sold stocks. Defaults to False (no).
+
+        Returns:
+            list: Stocks both owned and pending
+        """
+        part_id = self._participant_id(user_id=user_id, game_id=game_id) 
+        if 'status' in part_id:
+            part_id['reason'] = 'User not found'
+            return part_id
+        picks = self.be.get_many_stock_picks(participant_id=part_id['id'],status=['pending_buy, owned, pending_sell'])
+        return picks
     
     # # STOCK RELATED
     def buy_stock(self, user_id:int, game_id:int, ticker:str):
@@ -1262,25 +1308,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         else:
             raise ValueError(f'Expected one pick, but got {len(picks)}.', user)
     
-    def my_stocks(self, user_id:int, game_id:int, show_pending:bool=True, show_sold:bool=False):
-        """Get your stocks for a specific game.
-
-        Args:
-            user_id (int): User ID.
-            game_id (int): Game ID.
-            show_pending (bool, optional): Whether to show pending purchases. Defaults to False (no).
-            show_sold (bool, optional): Whether to sold stocks. Defaults to False (no).
-
-        Returns:
-            list: Stocks both owned and pending
-        """
-        part_id = self._participant_id(user_id=user_id, game_id=game_id) 
-        if 'status' in part_id:
-            part_id['reason'] = 'User not found'
-            return part_id
-        picks = self.be.get_many_stock_picks(participant_id=part_id['id'],status=['pending_buy, owned, pending_sell'])
-        return picks
-    
+    # # OTHER # #
     def start_draft(self, user_id:int, game_id:int): #TODO add
         pass
     
@@ -1296,11 +1324,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         self.gl.update_all(game_id=game_id, force=True) # 
         
-        
-    def manage_game(self, user_id:int, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, draft_mode:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None):
+    def manage_game(self, user_id:int, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None):
         """Update/Manage an existing game.
         
-        start_date, starting_money, pick_date, total_picks, draft_mode, sell_during_game cannot be changed once a game has started
+        start_date, starting_money, pick_date, total_picks, exclusive_picks, sell_during_game cannot be changed once a game has started
 
         Args:
             user_id (int): User ID.
@@ -1314,7 +1341,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             pick_date (str, optional): Date stocks must be picked by in ISO8601 (YYYY-MM-DD). Cannot be changed once game has started.
             private_game(bool, optional): Whether the game is private or not. 
             total_picks (int, optional): Amount of stocks each user picks. Cannot be changed once game has started.
-            draft_mode (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Cannot be changed once game has started.
+            exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Cannot be changed once game has started.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False. Cannot be changed once game has started.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime').
 
@@ -1324,7 +1351,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         if not self._user_owns_game(user_id=user_id, game_id=game_id):
             return "You do not have permission to update this game" #TODO this should be an error
             
-        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, draft_mode=draft_mode, sell_during_game=sell_during_game, update_frequency=update_frequency)
+        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
 
     
     def pending_game_users(self, user_id:int, game_id:int):
@@ -1371,12 +1398,14 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
     #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
     many_games = game.be.get_many_games(include_private=True)
-    game.be.update_game(game_id=1, name='TestGameUpd')
+    #game.be.update_game(game_id=1, name='TestGameUpd')
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
     game.gl.update_all()
     #game.gl.update_stock_prices()
+    
     print(game.be.get_many_users(ids_only=True)) # List users from the backend
     print(game.list_games()) # Print list of games
     print(game.my_games(user_id=OWNER)) # Try to list games you are joined to

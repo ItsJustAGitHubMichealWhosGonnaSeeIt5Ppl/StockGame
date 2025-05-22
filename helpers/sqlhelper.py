@@ -1,3 +1,5 @@
+# # DO NOT MAKE ANY CHANGES TO THIS VERSION PLEASE.  IT IS GOING TO BE MOVED INTO ITS OWN MODULE # #
+
 # Misc helpers
 import sqlite3
 from datetime import datetime
@@ -5,7 +7,6 @@ import functools
 import logging
 from stock_datatypes import Status, QueryModes, Statuses
 from typing import Optional
-
 
 
 
@@ -130,7 +131,7 @@ class SqlHelper: # Simple helper for SQL
             else: # Raise error if mode isn't alowed
                 raise ValueError(f'Invalid mode {mode}.')
             
-        except sqlite3.IntegrityError as e:
+        except sqlite3.IntegrityError as e: #TODO just return the errors
             if e.sqlite_errorcode == 2067: # Unique constraint failed # type: ignore is custom exception
                 return self._simple_status(status='error',
                                    reason='SQLITE_CONSTRAINT_UNIQUE',
@@ -172,25 +173,39 @@ class SqlHelper: # Simple helper for SQL
             
         return tuple(formatted_items)
     
-    def _sql_filters(self, filters:dict)-> tuple[str, list[str | int | float | bool]]:
+    def _sql_filters(self, filters:dict | str)-> tuple[str, list[str | int | float | bool]| None]:
+        """Handle different filtering formats and items for other internal methods
+
+        Args:
+            filters (dict | str): String (not injection safe) or dict (hopefully injection safe)
+
+        Returns:
+            tuple[str, list[str | int | float | bool]| None]:
+        """
         
-        filter_str = "" # Will contain filter string (if any)
-        filter_vars = list()
-        filter_items = list()
-        if filters: # Create filter string (if exists)
-            for var, item in filters.items():
-                if item != None: # Skip blank items
-                    if isinstance(var, tuple): # Support LIKE and NOT by sending a line like this var = ('LIKE', '<query>')
-                        filter_vars.append(f'{var[1]} {var[0].upper()} ' + str(f'({item})' if var[0].lower() == 'in' else '?'))
-                        if not var[0].lower() == 'in':
+        if isinstance(filters, str):
+            filter_str = filters  #TODO allow this to be typesafe by making custom queries tuples.  (str, [filter items])
+            filter_items = None
+        elif not isinstance(filters, dict): # something unexpected provided in filters field
+            raise TypeError(f'`filters` must be str or dict, not{type(filters)}.') 
+        else:
+            filter_str = "" # Will contain filter string (if any)
+            filter_vars = list()
+            filter_items = list()
+            if filters: # Create filter string (if exists)
+                for var, item in filters.items():
+                    if item != None: # Skip blank items
+                        if isinstance(var, tuple): # Support LIKE and NOT by sending a line like this var = ('LIKE', '<query>')
+                            filter_vars.append(f'{var[1]} {var[0].upper()} ' + str(f'({item})' if var[0].lower() == 'in' else '?'))
+                            if not var[0].lower() == 'in':
+                                filter_items.append(item)
+                        else:
+                            filter_vars.append(var + " = ?")
                             filter_items.append(item)
-                    else:
-                        filter_vars.append(var + " = ?")
-                        filter_items.append(item)
-    
-            if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
-                filter_str = "WHERE " + " AND ".join(filter_vars)
         
+                if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
+                    filter_str = "WHERE " + " AND ".join(filter_vars)
+            
         return filter_str, filter_items
     
     def _sql_items(self, items:dict, mode:str='insert'):
@@ -225,7 +240,7 @@ class SqlHelper: # Simple helper for SQL
         
         
     @open_and_close    
-    def get(self, table:str, columns:list=["*"], filters:Optional[dict]=None, order:Optional[dict]=None) -> Status: 
+    def get(self, table:str, columns:list=["*"], filters:dict | str={}, order:Optional[dict]=None) -> Status: 
         """Run SQL get queries
         
         THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
@@ -233,7 +248,7 @@ class SqlHelper: # Simple helper for SQL
         Args:
             table (str): Table name
             columns(list, optional): List of columns to be returned, Defaults to ['*'] (all columns)
-            filters (dict): Key should be the column name to filter by, values should be the variables
+            filters (dict | str, optional): Run simple filters by sending them as a dict {'column': 'val'}.  These will be added as `WHERE column = `val` using injection safe input.  Alternatively, a str can be used to send pre-formatted filters, eg: `WHERE column IS NOT 1`.  These AREN'T currently injection safe!
             order (dict): Key should be the column name to order by, values should be ASC or DESC
             
         Returns:
@@ -242,11 +257,9 @@ class SqlHelper: # Simple helper for SQL
         if len(columns) == 0:
             columns = ['*']        
         sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
-        filter_str = None
-        if filters:
-            filter_str, filter_items = self._sql_filters(filters)
-            
-            
+
+        filter_str, filter_items = self._sql_filters(filters)
+        
         order_str = "" # Will contain order string (if any)
         order_items = list()
         if order:
@@ -262,19 +275,20 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, values=filter_items, mode='get')  # type: ignore its a list or status, idk why it has a hard time understanding that but im sick of trying to fix it
     
     @open_and_close
-    def update(self, table:str, filters:dict, items:dict):
+    def update(self, table:str, items:dict, filters:dict | str={}):
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
+
         keys, value_items, questionmarks = self._sql_items(items, mode='set')
-            
-        all_items = value_items + filter_items
+        
+        all_items = value_items + (filter_items if isinstance(filter_items, list) else [])
             
         sql_query = sql_query.format(table=table, keys=",".join(keys), filters=filter_str)
         return self._run_query(sql_query, all_items, mode='update')
     
     @open_and_close
-    def delete(self, table:str, filters:dict={}):
+    def delete(self, table:str, filters:dict | str={}):
         sql_query = """DELETE FROM {table} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
@@ -292,3 +306,4 @@ class SqlHelper: # Simple helper for SQL
         VALUES(?,)"""
         values = [table]
         return self._run_query(query=query, values=values, mode='delete')
+    

@@ -26,17 +26,54 @@ def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version
     if send['status'] == 'error':
         print(send) # Sometimes gives error but does what its asked anyway...
     pass
+
+def v002_to_v003(db_name:str,):
+    """Migrate v0.0.2 DB to v0.0.3 (see changelog)
+    
+
+    Args:
+        db_name (str): Existing database name.
+    """
+    sql = SqlHelper(db_name)
+    # Create new column in user table
+    tables = ['games', 'game_participants', 'stock_picks']
+    default_queries = ["ALTER TABLE {table} ADD change_dollars TEXT DEFAULT NULL", "ALTER TABLE {table} ADD change_percent TEXT DEFAULT NULL"]
+    game_queries = ["ALTER TABLE {table} ADD datetime_updated TEXT DEFAULT NULL"] # Add this to games
+    for table in tables:
+        if table == 'games':
+            queries = default_queries.copy() + game_queries
+        else:
+            queries = default_queries
+        for query in queries:
+            send = sql.send_query(query.format(table=table),mode='insert')
+            if send['status'] == 'error':
+                print(send) # Sometimes gives error but does what its asked anyway...
+            pass
+
+
 def create(db_name:str):
     """Create database
     
-    Version: 0.0.2a
+    Version: 0.0.3
 
     Args:
         db_name (str): Database name
         
     # Changelog
     
-    ## [0.0.2b] - Unreleased
+    ## [0.0.3] - 2025-05-22
+    
+    ### Added
+    - `change_dollars` and `change_percent` to tables stock_picks, game_participants, and games
+    
+    ### Fixed
+
+    ### Changed
+
+    ### Removed
+    
+    
+    ## [0.0.2] - 2025-05-19
     
     ### Added
     - sources column to users table
@@ -47,7 +84,7 @@ def create(db_name:str):
 
     ### Removed
     """    
-    version = "0.0.2" #TODO will require a migration tool
+    version = "0.0.3" 
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
@@ -92,7 +129,11 @@ def create(db_name:str):
         end_date TEXT,                                        -- OPTIONAL Game end date ISO8601 (YYYY-MM-DD)
         status TEXT NOT NULL DEFAULT 'open',                  -- Game status ('open', 'active', 'ended')
         aggregate_value REAL,                                 -- Combined value of all users
+        change_dollars REAL DEFAULT NULL,
+        change_percent REAL DEFAULT NULL,
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
     );""")
@@ -134,6 +175,8 @@ def create(db_name:str):
         status TEXT DEFAULT 'active',           -- A participant (player) status.  Can be 'pending', 'active', 'inactive'.  Pending will be used if a player tries to join a private game
         datetime_joined TEXT NOT NULL,          -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         current_value REAL DEFAULT NULL,        -- Current portfolio value
+        change_dollars REAL DEFAULT NULL,
+        change_percent REAL DEFAULT NULL,
         datetime_updated TEXT DEFAULT NULL,     -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
@@ -150,6 +193,8 @@ def create(db_name:str):
         shares REAL DEFAULT NULL,                          -- Amount of shares held
         start_value REAL DEFAULT NULL,                     -- Start value of shares
         current_value REAL DEFAULT NULL,                   -- Current value of shares
+        change_dollars REAL DEFAULT NULL,
+        change_percent REAL DEFAULT NULL,
         status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
         datetime_updated TEXT NOT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
@@ -164,6 +209,7 @@ def create(db_name:str):
     
 if __name__ == "__main__":
     DB_NAME = str(os.getenv('DB_NAME'))
+    v002_to_v003(DB_NAME)
     create(DB_NAME)
     
     
