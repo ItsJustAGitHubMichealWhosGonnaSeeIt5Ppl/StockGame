@@ -17,12 +17,12 @@ import os
 import logging
 import discord
 import datetime
+from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -38,16 +38,16 @@ intents.members = True
 # intents.dm_messages = True # for invite user command
 
 bot = commands.Bot(command_prefix="$", intents=intents)
-
+print(DB_NAME)
 fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(Backend().get_game(1))
+    print(Backend(DB_NAME).get_game(1))
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    print(Backend().get_game(1))
+    print(Backend(DB_NAME).get_game(1))
     print(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     print('------')
     try:
@@ -86,6 +86,7 @@ async def create_game_advanced(
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
+    
     result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
@@ -119,6 +120,7 @@ async def create_game_advanced(
 
 # this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
 # THIS ITERATION IS WORKING IN THE CURRENT STATE
+# TODO edit for new parameters
 @bot.tree.command(name="create-game", description="Guided setup for stock game creation")
 async def create_game(interaction: discord.Interaction):
     # Create the initial embed
@@ -359,9 +361,8 @@ async def create_game(interaction: discord.Interaction):
                         end_date=game_end_date,
                         starting_money=game_starting_money,
                         total_picks=game_total_picks,
-                        exclusive_picks=exclusive_picks,
+                        draft_mode=exclusive_picks,
                         # join_after_start=join_after_start,
-                        join_after_start=False,
                         # sell_during_game=sell_during_game
                         sell_during_game=False
                     )
@@ -417,59 +418,75 @@ async def create_game(interaction: discord.Interaction):
     # Set the button callback
     game_creation_wizard_start.callback = game_creation_wizard_start_callback    
 
-# TODO frontend: Add name field in frontend?
+# TODO Handle more specific errors when implemented (private game, invalid game id, etc)
 @bot.tree.command(name="join-game", description="Join an existing stock game")
 @app_commands.describe(
-    game_id="ID of the game to join"
+    game_id="ID of the game to join",
+    name="Name to display for your picks (optional)"
 )
 async def join_game(
     interaction: discord.Interaction, 
     game_id: int,
-    name: str = None
+    name: str | None = None
 ):
-    game = fe.join_game(
-        user_id=interaction.user.id, 
-        game_id=game_id#, 
-        #name=name
-    ) # Right now I don't this will work if it fails
+    
+    if not name:
+        name = interaction.user.display_name
 
-    if game["name"]:
+    try:
+        fe.join_game(
+            user_id=interaction.user.id, 
+            game_id=game_id, 
+            name=name
+        ) 
+
         embed = discord.Embed(
             title="Game Joined Successfully",
-            description=f"You have joined game #{game_id}.",
+            description=f"You have joined game: {game_id}.",
             color=discord.Color.green()
         )
-    else:
+
+    except Exception as e:
         embed = discord.Embed(
             title="Game Join Failed",
-            description=f"Could not join game #{game_id}.",
+            description=f"Could not join game: {game_id}.\n{e}",
             color=discord.Color.red()
         )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # TODO frontend: Add update game command on frontend
-@bot.tree.command(name="update-game", description="Update an existing stock game")
+@bot.tree.command(name="manage-game", description="Manage an existing stock game")
 @app_commands.describe(
     game_id="ID of the game to update",
     name="New name of the game",
+    owner="Game owner user ID",
     start_date="New start date (YYYY-MM-DD)",
-    end_date="New end date (YYYY-MM-DD)",   
-    starting_money="New starting money amount",
-    total_picks="New number of stocks each player can pick",
-    exclusive_picks="New exclusive picks setting"
+    end_date="New end date (YYYY-MM-DD); Cannot be changed once game has started",
+    pick_date="Date stocks must be picked by (YYYY-MM-DD); Cannot be changed once game has started",
+    private_game="Whether the game is private or not",
+    starting_money="New starting money amount; Cannot be changed once game has started",
+    total_picks="New number of stocks each player can pick; Cannot be changed once game has started",
+    draft_mode="Whether multiple users can pick the same stock; Pick date must be on or before start date; Cannot be changed once game has started",
+    sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
+    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
 )
-async def update_game(
+async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
-    name: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    starting_money: float = None,
-    total_picks: int = None,
-    exclusive_picks: bool = None
+    name: str | None = None,
+    owner: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    starting_money: float | None = None,
+    pick_date: str | None = None,
+    private_game: bool | None = None,
+    total_picks: int | None = None,
+    draft_mode: bool | None = None,
+    sell_during_game: bool | None = None,
+    update_frequency: str | None = None
 ):
-    game = fe.game_info(game_id)
+    game = fe.game_info(game_id, False)
 
     if not game:
         embed = discord.Embed(
@@ -480,36 +497,45 @@ async def update_game(
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     
-    name = name if name else game["name"]
-    start_date = start_date if start_date else game["start_date"]
-    end_date = end_date if end_date else game["end_date"]
-    starting_money = starting_money if starting_money else game["starting_money"]
-    total_picks = total_picks if total_picks else game["total_picks"]
-    exclusive_picks = exclusive_picks if exclusive_picks else game["exclusive_picks"]
+    name = name if name else game['game']["name"]
+    owner = owner if owner else game['game']["owner"]
+    start_date = start_date if start_date else game['game']["start_date"]
+    end_date = end_date if end_date else game['game']["end_date"]
+    starting_money = int(starting_money) if starting_money else game['game']["starting_money"]
+    pick_date = pick_date if pick_date else game['game']["pick_date"]
+    private_game = private_game if private_game else game['game']["private_game"]
+    total_picks = total_picks if total_picks else game['game']["total_picks"]
+    draft_mode = draft_mode if draft_mode else game['game']["exclusive_picks"]
+    update_frequency = update_frequency if update_frequency else game['game']["update_frequency"]
+    sell_during_game = sell_during_game if sell_during_game else game['game']["sell_during_game"]
 
-    result = fe.update_game(
-        user_id=interaction.user.id,
-        game_id=game_id,
-        name=name,
-        start_date=start_date,
-        end_date=end_date,
-        starting_money=starting_money,
-        total_picks=total_picks,
-        exclusive_picks=exclusive_picks,
-        join_after_start=game["join_after_start"],
-        sell_during_game=game["sell_during_game"]
-    )
 
-    if not result["name"]:
+    try:
+        fe.manage_game(
+            user_id=interaction.user.id,
+            game_id=game_id,
+            name=name,
+            owner=owner,
+            start_date=start_date,
+            end_date=end_date,
+            starting_money=starting_money,
+            pick_date=pick_date,
+            private_game=private_game,
+            total_picks=total_picks,
+            draft_mode=draft_mode,
+            update_frequency=update_frequency,
+            sell_during_game=sell_during_game
+        )
+
         embed = discord.Embed(
             title="Game Updated Successfully",
             description=f"Game #{game_id} has been updated!",
             color=discord.Color.green()
         )
-    else:
+    except Exception as e:
         embed = discord.Embed(
             title="Game Update Failed",
-            description=result["name"],
+            description=e,
             color=discord.Color.red()
         )
 
@@ -552,21 +578,22 @@ async def invite_user(
 
     async def accept_invite_callback(interaction: discord.Interaction):
         # Add user to the game
-        result = fe.join_game(
-            user_id=user.id,
-            game_id=game_id
-        )
+        
+        try:
+            fe.join_game(
+                user_id=user.id,
+                game_id=game_id
+            )
 
-        if result:
             accept_embed = discord.Embed(
                 title="Game Joined",
                 description=f"You have joined game #{game_id}.",
                 color=discord.Color.green()
             )
-        else:
+        except Exception as e:
             accept_embed = discord.Embed(
                 title="Game Join Failed",
-                description=f"Could not join game #{game_id}.",
+                description=f"Could not join game #{game_id}.\n{e}",
                 color=discord.Color.red()
             )
 
@@ -612,9 +639,6 @@ async def invite_user(
 
 # STOCK RELATED
 
-# TODO add stock name to embed
-# TODO frontend: Add stock info to the db
-# TODO frontend: Add validation for stock pick limit
 @bot.tree.command(name="buy-stock", description="Buy a stock in a game")
 @app_commands.describe(
     game_id="ID of the game",
@@ -625,7 +649,7 @@ async def buy_stock(
     game_id: int, 
     ticker: str
 ):
-    game_picks = fe.get_game_picks(game_id)['pick_count']
+    game_picks = fe.game_info(game_id=game_id, show_leaderboard=False)['game']['total_picks']
     my_picks = len(fe.my_stocks(interaction.user.id, game_id))
 
     picks_left = game_picks - my_picks
@@ -639,24 +663,29 @@ async def buy_stock(
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     else:
-        fe.buy_stock(
-            user_id=interaction.user.id,
-            game_id=game_id,
-            ticker=ticker
-        )
+        try:
+            fe.buy_stock(
+                user_id=interaction.user.id,
+                game_id=game_id,
+                ticker=ticker
+            )
 
-        embed = discord.Embed(
-            title="Stock Purchase Successful",
-            description=f"You have successfully bought {ticker} in game #{game_id}.",
-            color=discord.Color.green()
-        )
+            embed = discord.Embed(
+                title="Stock Purchase Successful",
+                description=f"You have successfully bought {ticker} in game: {game_id}.",
+                color=discord.Color.green()
+            )
+
+        except Exception as e:
+            embed = discord.Embed(
+                title="Stock Purchase Failed",
+                description=f"Could not buy {ticker} in game: {game_id}.",
+                color=discord.Color.red()
+            )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# TODO frontend: need remove stock from frontend
 # TODO add autofill for user's stocks and games
-# TODO Add remove stock pick
-# TODO Return transaction embed
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
 @app_commands.describe(
     game_id="ID of the game",
@@ -667,7 +696,27 @@ async def remove_stock(
     game_id: int, 
     ticker: str
 ):
-    pass
+    try:
+        fe.remove_pick(
+            user_id=interaction.user.id,
+            game_id=game_id,
+            ticker=ticker
+        )
+
+        embed = discord.Embed(
+            title="Stock Removal Successful",
+            description=f"You have successfully removed {ticker} from your picks in game: {game_id}.",
+            color=discord.Color.green()
+        )
+        
+    except Exception as e:
+        embed = discord.Embed(
+            title="Stock Removal Failed",
+            description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}",
+            color=discord.Color.red()
+        )
+        
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # TODO Get user's stocks from frontend
 # TODO Add autofill for user's games
@@ -692,28 +741,46 @@ async def my_stocks(
 # TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
 @app_commands.describe(
-    game_id="ID of the game to view"
+    game_id="ID of the game to view",
+    show_leaderboard="Whether to display the leaderboard or not, will by default"
 )
 async def game_info(
     interaction: discord.Interaction, 
-    game_id: int
+    game_id: int,
+    show_leaderboard: bool = True
 ):
     game = fe.game_info(game_id)
+    leaderboard_info = fe.get_all_participants(game_id)
+    embed = discord.Embed(title=f"Info for {game["name"]}: [{game["id"]}]", description=f"""
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["game"]["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(leaderboard_info)}** members participating
+                    """)
+    embed.set_footer(text="Dates are formatted as (YYYY/MM/DD)")
 
-    if not game:
-        embed = discord.Embed(
-            title="Game Not Found",
-            description=f"Could not find a game with ID {game_id}.",
-            color=discord.Color.red()
-        )
-    else:
-        embed = discord.Embed(
-            title="Game #{game_id}",
-            description=f"Name: {game['name']}\nStart Date: {game['start_date']}\nEnd Date: {game['end_date']}\nStarting Money: ${game['starting_money']}\nTotal Picks: {game['total_picks']}\nExclusive Picks: {game['exclusive_picks']}\nJoin After Start: {game['join_after_start']}\nSell During Game: {game['sell_during_game']}\nStatus: {game['status']}",
-            color=discord.Color.blue()
-        )
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    if not show_leaderboard:
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    leaderboard_info = leaderboard_info[:10]
+    composed_str = "```\n"
+    for i in range(len(leaderboard_info)):
+        if i == 0:
+            composed_str += "🥇: "
+        elif i == 1:
+            composed_str += "🥈: "
+        elif i == 2:
+            composed_str += "🥉: "
+        else:
+            composed_str += f"{i + 1}: "
+        info = leaderboard_info[i]
+        composed_str += f'{info["name"]} [{info["participant_id"]}] | Aggregate Value ${info["current_value"]} | Joined {parser.parse(info["joined"])}\n'
+    
+    composed_str += "```"
+    embed.add_field(name="Leaderboard", value=composed_str)
+    await interaction.response.send_message(embed=embed)
 
 # TODO get list of public games
 #   - list the user count
@@ -724,55 +791,65 @@ async def game_info(
 # TODO add a joinable parameter?
 # TODO frontend: could frontend create 2d array for pagination?
 @bot.tree.command(name="game-list", description="View a list of all games")
+@app_commands.describe(
+    page_length="The length of the list per page. Defaults to 10"
+)
 async def game_list(
-    interaction: discord.Interaction
+    interaction: discord.Interaction,
+    page_length: int = 10
 ):
-    pass
+    original = fe.list_games()
+    games = list(filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original))
+    async def get_page(page: int):
+        embed = discord.Embed(title="Currently running games", description="")
+        offset = (page - 1) * page_length
+        for game in games:
+            game_members = fe.get_all_participants(game["id"])
+            embed.add_field(
+                name=f"{game["name"]}: [{game["id"]}]",
+                value=f"""
+                    **Owned by:** <@{game["owner"]}>
+                    **Pick date:** {game["pick_date"] or "Not set"}
+                    **Starting Cash:** ${int(game["starting_money"])}
+                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    There are currently **{len(game_members)}** members participating
+                    """
+                )
+        n = Pagination.compute_total_pages(len(games), page_length)
+        embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
+        return embed, n
+    await Pagination(interaction, get_page).navigate()
+    
 
-@bot.tree.command(name="my-games", description="View your games and their status")
+@bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
     interaction: discord.Interaction
 ):
-    # Get user's games from frontend
-    games = fe.my_games(interaction.user.id)
-    
-    # Create embed for the response
     embed = discord.Embed(
         title="Your Games",
         color=discord.Color.blue()
     )
     
-    if not games:
-        embed.description = "No games found"
-    else:
+    try:
+        games = fe.my_games(interaction.user.id)
+        game_description: str = ""
         # Add each game to the embed
-        for game in games:
+        for game in games['games']:
             # Create status indicator
-            status_emoji = "🟢" if game['status'] == 'open' else "🔴"
-            
+            status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
+                        
             # Add game field
-            embed.add_field(name=f"{status_emoji} Game #{game['id']}: {game['name']}")
-    
-    # Add footer with command usage
-    embed.set_footer(text=f"Use /game-info <game_id> for more details")
+            game_description= game_description + f"{status_emoji} {game['name']}   ID: {game['id']}\n"
+
+        embed.description = game_description
+        embed.set_footer(text=f"Use /game-info <game_id> for more details")
+
+    except Exception as e:
+        embed.description = "No games found"
+        embed.color = discord.Color.red()
     
     # Send the response
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# TODO Get leaderboard data from backend
-# TODO Create autofill for user's games
-# TODO Create paginated embed with leaderboard
-# TODO Add navigation buttons if multiple pages
-@bot.tree.command(name="leaderboard", description="View game leaderboard")
-@app_commands.describe(
-    game_id="ID of the game"
-)
-async def leaderboard(
-    interaction: discord.Interaction, 
-    game_id: int, 
-    user_id: discord.User = None
-):
-    pass
 
 # Run the bot using the token
 if TOKEN:

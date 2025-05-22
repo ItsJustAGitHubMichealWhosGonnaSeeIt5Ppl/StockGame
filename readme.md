@@ -15,5 +15,5 @@ VERY VERY EARLY STOCK PICK GAME CODE
 - Multiple games (leagues) allowed
 - If mid-game sells are allowed, use a ticker called "CASH" or something?
 
-# Team
-TBA
+# Contributors
+[nje331](https://github.com/nje331)

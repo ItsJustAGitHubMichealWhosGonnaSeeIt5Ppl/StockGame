@@ -1,0 +1,17 @@
+{   
+    "exclude": [
+      "**/node_modules",
+      "**/__pycache__",
+      "**/.*",
+    ],
+    
+    "venvPath": ".venv",
+    
+    "pythonVersion": "3.10",
+    "pythonPlatform": "Linux",
+
+    "useLibraryCodeForTypes": true,
+    "reportMissingTypeStubs":"none",
+    "typeCheckingMode": "basic",
+
+}
