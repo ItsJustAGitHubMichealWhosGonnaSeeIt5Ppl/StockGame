@@ -86,8 +86,7 @@ async def create_game_advanced(
     # sell_during_game: bool = False
 ):
     # Create game using frontend and get the result
-    result = fe.new_game(
-        owner=interaction.user.id,
+    
     result = fe.new_game(
         user_id=interaction.user.id,
         name=name,
