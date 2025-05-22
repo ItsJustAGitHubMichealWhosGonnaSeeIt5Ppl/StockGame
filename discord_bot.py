@@ -4,11 +4,8 @@
 # TODO set up some sort of draft system for stocks
 # TODO should i add a command to show game info to all with join button?
 # TODO add error handling via discord
-#TODO add help command
+# TODO add help command
 
-# NEEDS FROM BACKEND:
-
-# can you buy after start date?
 # should i rename the commands? my-games and my-stocks are a bit annoying to type
 # is my_games necessary?
 
@@ -22,9 +19,9 @@ from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-#load_dotenv() #TODO uncomment!
+load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DB_NAME = os.getenv('DB_NAME')
@@ -87,27 +84,31 @@ async def on_ready():
 # GAME INTERACTION RELATED
 
 # TODO can i make parameters required? if not, add (optional) to the description
-# TODO should i add autofill to anything? 
 @bot.tree.command(name="create-game-advanced", description="Create a new stock game without a wizard")
 @app_commands.describe(
     name="Name of the game",
     start_date="Start date (YYYY-MM-DD)",
     end_date="End date (YYYY-MM-DD)",
+    pick_date="Date stocks must be picked by (YYYY-MM-DD)",
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
-    private_game="Whether the game is private (requires owner approval for new users)"
+    private_game="Whether the game is private (requires owner approval for new users)",
+    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
     interaction: discord.Interaction,
     name: str,
     start_date: str,
-    end_date: str = None,
+    end_date: str | None = None,
     starting_money: float = 10000.00,
     total_picks: int = 10,
     exclusive_picks: bool = False,
-    private_game: bool = False
+    private_game: bool = False,
+    pick_date: str | None = None,
+    update_frequency: str = 'daily',
+    # sell_during_game: bool = False
 ):
     # Create game using frontend and return
     try:
@@ -119,7 +120,9 @@ async def create_game_advanced(
             starting_money=starting_money,
             total_picks=total_picks,
             exclusive_picks=exclusive_picks,
-            private_game= private_game
+            private_game= private_game,
+            pick_date=pick_date,
+            update_frequency=update_frequency
             #sell_during_game=False, - NOT IMPLEMENTED
         )
         
@@ -474,7 +477,6 @@ async def join_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# TODO frontend: Add update game command on frontend
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
 @app_commands.describe(
     game_id="ID of the game to update",
@@ -742,7 +744,7 @@ async def remove_stock(
 # TODO Display stocks in an embed with stock info
 # TODO Add buttons for buying/selling stocks?
 # TODO Add pagination if there are many stocks (10+)
-# TODO Add last updated date/time
+# TODO Add last updated date/time in footer
 @bot.tree.command(name="my-stocks", description="View your stocks in a game")
 @app_commands.describe(
     game_id="ID of the game"
