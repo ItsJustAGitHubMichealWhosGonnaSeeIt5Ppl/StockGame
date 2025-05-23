@@ -64,7 +64,7 @@ def has_permission(user:discord.member.Member):
         return False
 
 bot = commands.Bot(command_prefix="$", intents=intents)
-print(DB_NAME)
+logger.info(f'Connecting with DB: {DB_NAME}')
 fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER, source='discord') # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
@@ -890,11 +890,10 @@ if TOKEN:
     try:
         bot.run(TOKEN)
     except discord.errors.LoginFailure:
-        print("Login Failed: Improper token has been passed.")
+        logger.exception("Login Failed: Improper token has been passed.")
     except discord.errors.PrivilegedIntentsRequired:
-        print("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
+        logger.exception("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
     except Exception as e:
-        print(f"An error occurred while running the bot: {e}")
+        logger.exception(f"An error occurred while running the bot: {e}")
 else:
-    print("Error: DISCORD_TOKEN environment variable not found.")
-    print("Please set the DISCORD_TOKEN environment variable before running the bot.")
+    logger.error("DISCORD_TOKEN environment variable not found.  Set DISCORD_TOKEN environment variable before running.")
