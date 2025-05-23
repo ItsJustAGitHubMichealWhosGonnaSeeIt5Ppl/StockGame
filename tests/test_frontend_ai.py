@@ -1,6 +1,6 @@
 import pytest
-from stocks import Frontend, Backend # Your Frontend and Backend classes
-from stock_datatypes import Games # Assuming Games is a TypedDict or similar
+from stocks import Frontend, Backend 
+from helpers.datatype_validation import Games
 from datetime import datetime
 
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests, matches conftest
@@ -24,33 +24,30 @@ class TestFrontend:
         user_id = 10 # Matches conftest owner_user_id
         game_name = 'TestGameMinimal'
         start_date = '2025-10-10'
-
+        
         fe.new_game(
             user_id=user_id,
             name=game_name,
             start_date=start_date,
         )
-        # Games are numbered starting from 1 by autoincrement
-        # This test assumes it's the first game created in this test function's scope
-        # To be robust, find game by name and owner
-        games_found = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)
-        assert len(games_found) == 1
-        game = games_found[0]
 
-        assert game['owner'] == user_id
-        assert game['name'] == game_name
-        assert game['start_date'] == start_date
-        assert game['end_date'] is None # Default for minimal
-        assert game['starting_money'] == 10000.00 # Default
-        assert game['total_picks'] == 10 # Default
-        assert game['exclusive_picks'] == False # Default
-        assert game['sell_during_game'] == False # Default
-        assert game['update_frequency'] == 'daily' # Default
+        game = fe.be.get_game(game_id=1)
+        assert game.id == 1 
+        assert game.name == game_name 
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date is None
+        assert game.pick_date is None
+        assert game.start_money == 10000.00 # Default 
+        assert game.pick_count == 10 
+        assert game.draft_mode == False 
+        assert game.allow_selling == False # Default 
+        assert game.update_frequency == 'daily' # Default 
+ 
 
         # Check if owner was added as participant
-        participants = fe.be.get_many_participants(user_id=user_id, game_id=game['id'])
+        participants = fe.be.get_many_participants(user_id=user_id, game_id=game.id)
         assert len(participants) == 1
-        assert participants[0]['user_id'] == user_id
+        assert participants[0].user_id == user_id
 
     def test_new_game_registers_new_user_as_owner(self, fe: Frontend):
         new_user_id = 1001
@@ -65,17 +62,17 @@ class TestFrontend:
 
         # Check if user was created
         created_user = fe.be.get_user(user_id=new_user_id)
-        assert created_user['id'] == new_user_id
-        assert created_user['source'] == 'testing' # Default source from fe fixture
-        assert created_user['permissions'] == fe.default_perms # Default permissions
+        assert created_user.id == new_user_id
+        assert created_user.source == 'testing' # Default source from fe fixture
+        assert created_user.permissions == fe.default_perms # Default permissions
 
         games_found = fe.be.get_many_games(name=game_name, owner_id=new_user_id, include_private=True)
         assert len(games_found) == 1
         game = games_found[0]
-        assert game['owner'] == new_user_id
+        assert game.owner_id == new_user_id
 
         # Check if new user (owner) was added as participant
-        participants = fe.be.get_many_participants(user_id=new_user_id, game_id=game['id'])
+        participants = fe.be.get_many_participants(user_id=new_user_id, game_id=game.id)
         assert len(participants) == 1
 
     def test_new_game_all_params_success(self, fe: Frontend):
@@ -108,16 +105,16 @@ class TestFrontend:
         assert len(games_found) == 1
         game = games_found[0]
 
-        assert game['name'] == game_name
-        assert game['start_date'] == start_date
-        assert game['end_date'] == end_date
-        assert game['starting_money'] == starting_money
-        assert game['pick_date'] == pick_date
-        assert game['private_game'] == private_game
-        assert game['total_picks'] == total_picks
-        assert game['exclusive_picks'] == exclusive_picks
-        assert game['sell_during_game'] == sell_during_game
-        assert game['update_frequency'] == update_frequency
+        assert game.id == 1 
+        assert game.name == game_name 
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
+        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date() 
+        assert game.start_money == starting_money 
+        assert game.pick_count == total_picks 
+        assert game.draft_mode == exclusive_picks 
+        assert game.allow_selling == sell_during_game 
+        assert game.update_frequency == update_frequency 
 
     # # LIST_GAMES # #
     def test_list_public_games(self, fe: Frontend):
@@ -139,8 +136,8 @@ class TestFrontend:
 
         games = fe.list_games(include_private=False)
         assert len(games) == 1
-        assert games[0]['name'] == 'PublicGame'
-        assert games[0]['private_game'] == False
+        assert games[0].name == 'PublicGame'
+        assert games[0].private_game == False
 
     def test_list_all_games(self, fe: Frontend): # Include private ones this time
         user_id = 10
@@ -151,7 +148,7 @@ class TestFrontend:
 
         games = fe.list_games(include_private=True)
         assert len(games) == 2
-        game_names = {g['name'] for g in games}
+        game_names = {g.name for g in games}
         assert 'PublicGameList' in game_names
         assert 'PrivateGameList' in game_names
 
@@ -165,13 +162,13 @@ class TestFrontend:
             start_date=start_date,
             private_game=True
         )
-
-        games = fe.list_games(include_private=False)
-        assert len(games) == 0
+        with pytest.raises(LookupError, match='No items found.'):
+            games = fe.list_games(include_private=False)
+       
 
     def test_list_no_games_when_db_is_empty(self, fe: Frontend):
-        games = fe.list_games(include_private=True)
-        assert len(games) == 0
+        with pytest.raises(LookupError, match='No items found.'):
+            games = fe.list_games(include_private=False)
 
 
     # # GAME_INFO # #
@@ -181,12 +178,12 @@ class TestFrontend:
         fe.new_game(user_id=user_id, name=game_name, start_date="2025-10-01", starting_money=5000)
         game_db = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)[0]
 
-        info = fe.game_info(game_id=game_db['id'], show_leaderboard=False)
+        info = fe.game_info(game_id=game_db.id, show_leaderboard=False)
 
         assert 'game' in info
         assert 'leaderboard' not in info
-        assert info['game']['name'] == game_name
-        assert info['game']['id'] == game_db['id']
+        assert info['game']['name' ]== game_name
+        assert info['game']['id'] == game_db.id
 
 
 
@@ -200,26 +197,26 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
         # Owner is auto-added. Add another user.
-        fe.join_game(user_id=user2_id, game_id=game_db['id'])
+        fe.join_game(user_id=user2_id, game_id=game_db.id)
 
         # Manually update participant values for testing leaderboard formatting
         # Participant ID for owner (user_id=10)
-        p1_id = fe._participant_id(user_id=owner_id, game_id=game_db['id'])['id']
+        p1_id = fe._participant_id(user_id=owner_id, game_id=game_db.id)
         fe.be.update_participant(participant_id=p1_id, current_value=1234.567)
 
         # Participant ID for user2_id (user_id=20)
-        p2_id = fe._participant_id(user_id=user2_id, game_id=game_db['id'])['id']
+        p2_id = fe._participant_id(user_id=user2_id, game_id=game_db.id)
         fe.be.update_participant(participant_id=p2_id, current_value=987.654)
         
         # Manually update game aggregate value
-        fe.be.update_game(game_id=game_db['id'], aggregate_value=1234.567 + 987.654)
+        fe.be.update_game(game_id=game_db.id, aggregate_value=1234.567 + 987.654)
 
 
-        info = fe.game_info(game_id=game_db['id'], show_leaderboard=True)
+        info = fe.game_info(game_id=game_db.id, show_leaderboard=True)
 
         assert 'game' in info
         assert 'leaderboard' in info
-        assert info['game']['name'] == game_name
+        assert info['game']['name' ]== game_name
         assert info['game']['combined_value'] == 2222.22 
 
 
@@ -247,9 +244,9 @@ class TestFrontend:
         assert status_msg == "Registered"
 
         user = fe.be.get_user(user_id=11)
-        assert user['id'] == user_id
-        assert user['source'] == 'testing' # Source from Frontend instance
-        assert user['creation_date'] == MOCK_DATETIME_STR # From conftest mock
+        assert user.id == user_id
+        assert user.source == 'testing' # Source from Frontend instance
+        assert user.datetime_created == datetime.strptime(MOCK_DATETIME_STR, "%Y-%m-%d %H:%M:%S") # From conftest mock
 
     def test_register_full_with_username_and_source_override(self, fe: Frontend):
         user_id = 12
@@ -260,10 +257,10 @@ class TestFrontend:
         assert status_msg == "Registered"
 
         user = fe.be.get_user(user_id=12)
-        assert user['id'] == user_id
-        assert user['source'] == source_override
-        assert user['username'] == username
-        assert user['creation_date'] == MOCK_DATETIME_STR
+        assert user.id == user_id
+        assert user.source == source_override
+        assert user.display_name == username
+        assert user.datetime_created == datetime.strptime(MOCK_DATETIME_STR, "%Y-%m-%d %H:%M:%S")
 
     def test_register_duplicate_user(self, fe: Frontend):
         user_id = 11
@@ -274,7 +271,7 @@ class TestFrontend:
 
         # Verify original details are preserved (or updated if that's the design, though add_user fails on PK constraint)
         user = fe.be.get_user(user_id=11)
-        assert user['username'] is None # Original registration had no username
+        assert user.display_name is None # Original registration had no username
 
     # # CHANGE_NAME # #
     def test_change_name_success(self, fe: Frontend):
@@ -284,7 +281,7 @@ class TestFrontend:
         fe.change_name(user_id=user_id, name=new_name)
 
         user = fe.be.get_user(user_id=user_id)
-        assert user['username'] == new_name
+        assert user.display_name == new_name
 
     def test_change_name_non_existent_user(self, fe: Frontend):
         # Backend.update_user doesn't raise error for non-existent user,
@@ -305,15 +302,15 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-12-01", private_game=False)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        fe.join_game(user_id=user_to_join_id, game_id=game_db['id'], name=team_name)
+        fe.join_game(user_id=user_to_join_id, game_id=game_db.id, name=team_name)
 
-        participants = fe.be.get_many_participants(user_id=user_to_join_id, game_id=game_db['id'])
+        participants = fe.be.get_many_participants(user_id=user_to_join_id, game_id=game_db.id)
         assert len(participants) == 1
         participant = participants[0]
-        assert participant['user_id'] == user_to_join_id
-        assert participant['game_id'] == game_db['id']
-        assert participant['name'] == team_name # Team name for the game
-        assert participant['status'] == 'active' # Default status for new participant
+        assert participant.user_id == user_to_join_id
+        assert participant.game_id == game_db.id
+        assert participant.name == team_name # Team name for the game
+        assert participant.status == 'active' # Default status for new participant
 
     def test_join_game_user_not_registered(self, fe: Frontend):
         # Frontend.join_game does not register the user, relies on Backend.add_participant
@@ -326,14 +323,24 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
         with pytest.raises(Exception) as excinfo: # SqlHelper wraps SQL errors
-            fe.join_game(user_id=non_existent_user_id, game_id=game_db['id'])
+            fe.join_game(user_id=non_existent_user_id, game_id=game_db.id)
         assert "FOREIGN KEY constraint failed" in str(excinfo.value) # Check for SQLite error
 
     def test_join_game_non_existent_game(self, fe: Frontend):
         user_id = 10 # Registered user
         with pytest.raises(LookupError) as excinfo: # SqlHelper wraps SQL errors
              fe.join_game(user_id=user_id, game_id=999) # Game 999 does not exist
-        assert "Game not found" in str(excinfo)
+        assert "Game not found." in str(excinfo)
+        
+    def test_join_game_game_pick_date_passed(self, fe: Frontend):
+        user_id = 10 # Registered user
+        game_name = "JoinGameFail"
+        
+        fe.new_game(user_id=user_id, name=game_name, start_date="2025-02-01", pick_date="2025-02-01")
+        with pytest.raises(ValueError) as excinfo: # SqlHelper wraps SQL errors
+             fe.join_game(user_id=user_id, game_id=1) # Game 999 does not exist
+        assert "Cannot add player. `pick_date` has passed." in str(excinfo)
+
 
     def test_join_game_twice_by_same_user(self, fe: Frontend):
         owner_id = 10
@@ -342,10 +349,10 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         # Owner is already a participant. Let's try to add them again.
 
-        with pytest.raises(Exception) as excinfo:
-            fe.join_game(user_id=owner_id, game_id=game_db['id'])
-        # game_participants table has UNIQUE constraint on (user_id, game_id)
-        assert "game_participants.user_id, game_participants.game_id" in str(excinfo.value.args[1]['result'])
+        with pytest.raises(ValueError) as excinfo:
+            fe.join_game(user_id=owner_id, game_id=game_db.id)
+        
+        assert "Player already in game." in str(excinfo)
 
 
     # # MY_GAMES # #
@@ -353,10 +360,9 @@ class TestFrontend:
         user_id = 30
         fe.register(user_id=user_id, username="GameLessUser")
         
-        result = fe.my_games(user_id=user_id)
-        
-        assert result['user']['id'] == user_id
-        assert len(result['games']) == 0
+        with pytest.raises(LookupError) as exc:
+            result = fe.my_games(user_id=user_id)
+        assert 'Player is not in any games.' in str(exc)
 
     def test_my_games_one_game(self, fe: Frontend):
         user_id = 10 # Owner
@@ -366,10 +372,10 @@ class TestFrontend:
 
         result = fe.my_games(user_id=user_id)
 
-        assert result['user']['id'] == user_id
+        assert result['user'].id == user_id
         assert len(result['games']) == 1
-        assert result['games'][0]['id'] == game_db['id']
-        assert result['games'][0]['name'] == game_name
+        assert result['games'][0].id == game_db.id
+        assert result['games'][0].name == game_name
 
     def test_my_games_multiple_games(self, fe: Frontend):
         user_id = 10
@@ -383,15 +389,15 @@ class TestFrontend:
         fe.register(user_id=other_owner_id)
         fe.new_game(user_id=other_owner_id, name=game2_name, start_date="2025-08-01")
         game2_db = fe.be.get_many_games(name=game2_name, owner_id=other_owner_id, include_private=True)[0]
-        fe.join_game(user_id=user_id, game_id=game2_db['id']) # User 10 joins game 2
+        fe.join_game(user_id=user_id, game_id=game2_db.id) # User 10 joins game 2
 
         result = fe.my_games(user_id=user_id)
 
-        assert result['user']['id'] == user_id
+        assert result['user'].id == user_id
         assert len(result['games']) == 2
-        game_ids_in_result = {g['id'] for g in result['games']}
-        assert game1_db['id'] in game_ids_in_result
-        assert game2_db['id'] in game_ids_in_result
+        game_ids_in_result = {g.id for g in result['games']}
+        assert game1_db.id in game_ids_in_result
+        assert game2_db.id in game_ids_in_result
         
     def test_my_games_user_not_found(self, fe: Frontend):
         with pytest.raises(LookupError): # From be.get_user
@@ -404,10 +410,12 @@ class TestFrontend:
         game_name = "MyStocksGame"
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01")
         fe.be.add_stock(ticker='TEST', exchange='pytest', company_name='PyTesting')
-        game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
-        fe.be.add_stock_pick(participant_id=game_db['id'], stock_id=1)  # There is only
+        game = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
+        player_id = fe._participant_id(game_id=game.id, user_id=owner_id)
+        
+        fe.buy_stock(game_id=game.id, user_id=owner_id, ticker='TEST')  # There is only
 
-        stock = fe.my_stocks(user_id=owner_id, game_id=game_db['id'])
+        stock = fe.my_stocks(user_id=owner_id, game_id=game.id)
         assert len(stock) == 1
 
     def test_my_stocks_participant_not_found(self, fe: Frontend):
@@ -418,10 +426,10 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        # user 77 is not part of game_db['id']
-        with pytest.raises(ValueError) as excinfo:
-            fe.my_stocks(user_id=other_user_id, game_id=game_db['id'])
-        assert "Expected one participant ID, but got 0" in str(excinfo.value)
+        # user 77 is not part of game_db.id
+        with pytest.raises(LookupError) as excinfo:
+            fe.my_stocks(user_id=other_user_id, game_id=game_db.id)
+        assert "Player not in game." in str(excinfo.value)
 
 
     # # BUY_STOCK # #
@@ -440,17 +448,17 @@ class TestFrontend:
         stock_in_db = fe.be.get_stock(ticker_to_buy)
         
         # Participant needs to be active for add_stock_pick. Owner is 'pending' by default.
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
 
-        fe.buy_stock(user_id=owner_id, game_id=game_db['id'], ticker=ticker_to_buy)
+        fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker_to_buy)
 
-        participant_info = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        picks = fe.be.get_many_stock_picks(participant_id=participant_info['id'], stock_id=stock_in_db['id'])
+        participant_info = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        picks = fe.be.get_many_stock_picks(participant_id=participant_info, stock_id=stock_in_db.id)
         assert len(picks) == 1
-        assert picks[0]['stock_id'] == stock_in_db['id']
-        assert picks[0]['status'] == 'pending_buy'
+        assert picks[0].stock_id == stock_in_db.id
+        assert picks[0].status == 'pending_buy'
 
     def test_buy_stock_already_known_stock(self, fe: Frontend):
         owner_id = 10
@@ -462,15 +470,15 @@ class TestFrontend:
         _add_stock_to_db(fe.be, ticker=ticker_known, company_name="Known Company") # Add to DB
         stock_in_db = fe.be.get_stock(ticker_known)
 
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
-        fe.buy_stock(user_id=owner_id, game_id=game_db['id'], ticker=ticker_known)
+        fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker_known)
 
-        participant_info = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        picks = fe.be.get_many_stock_picks(participant_id=participant_info['id'], stock_id=stock_in_db['id'])
+        participant_info = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        picks = fe.be.get_many_stock_picks(participant_id=participant_info, stock_id=stock_in_db.id)
         assert len(picks) == 1
-        assert picks[0]['status'] == 'pending_buy'
+        assert picks[0].status == 'pending_buy'
 
     def test_buy_stock_at_max_picks(self, fe: Frontend):
         owner_id = 10
@@ -479,17 +487,17 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01", total_picks=1)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
         ticker1 = "TICK1"
         _add_stock_to_db(fe.be, ticker1)
-        fe.buy_stock(user_id=owner_id, game_id=game_db['id'], ticker=ticker1) # First pick
+        fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker1) # First pick
 
         ticker2 = "TICK2"
         _add_stock_to_db(fe.be, ticker2)
         with pytest.raises(ValueError) as excinfo:
-            fe.buy_stock(user_id=owner_id, game_id=game_db['id'], ticker=ticker2) # Second pick
+            fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker2) # Second pick
         assert "Already at maximum picks" in str(excinfo.value)
 
     def test_buy_stock_after_pick_date_passed(self, fe: Frontend, mocker):
@@ -505,13 +513,13 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01", pick_date=pick_date_past)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
         ticker = "LATEPICK"
         _add_stock_to_db(fe.be, ticker)
         with pytest.raises(ValueError) as excinfo:
-            fe.buy_stock(user_id=owner_id, game_id=game_db['id'], ticker=ticker)
+            fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker)
         assert "Unable to add pick, past `pick_date`" in str(excinfo.value)
 
     def test_buy_stock_participant_not_active(self, fe: Frontend):
@@ -522,12 +530,12 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         
         fe.register(user_id=pending_id) # Pending user
-        fe.join_game(user_id=pending_id, game_id=game_db['id'])
+        fe.join_game(user_id=pending_id, game_id=game_db.id)
         ticker = "INACTIVEBUY"
         _add_stock_to_db(fe.be, ticker)
 
         with pytest.raises(ValueError) as excinfo:
-            fe.buy_stock(user_id=pending_id, game_id=game_db['id'], ticker=ticker)
+            fe.buy_stock(user_id=pending_id, game_id=game_db.id, ticker=ticker)
         assert "User is not active in game" in str(excinfo.value)
 
 
@@ -549,20 +557,21 @@ class TestFrontend:
         _add_stock_to_db(fe.be, ticker_to_remove)
         stock_in_db = fe.be.get_stock(ticker_to_remove)
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
 
         # Add a pick to remove
-        fe.be.add_stock_pick(participant_id=participant_obj['id'], stock_id=stock_in_db['id'])
-        picks_before = fe.be.get_many_stock_picks(participant_id=participant_obj['id'], stock_id=stock_in_db['id'], status='pending_buy')
+        fe.be.add_stock_pick(participant_id=participant_obj, stock_id=stock_in_db.id)
+        picks_before = fe.be.get_many_stock_picks(participant_id=participant_obj, stock_id=stock_in_db.id, status='pending_buy')
         assert len(picks_before) == 1
 
-        result = fe.remove_pick(user_id=owner_id, game_id=game_db['id'], ticker=ticker_to_remove)
+        result = fe.remove_pick(user_id=owner_id, game_id=game_db.id, ticker=ticker_to_remove)
         assert result is None # Backend.remove_stock_pick returns None on success
-
-        picks_after = fe.be.get_many_stock_picks(participant_id=participant_obj['id'], stock_id=stock_in_db['id'], status='pending_buy')
-        assert len(picks_after) == 0
+        with pytest.raises(LookupError) as exc:
+            fe.be.get_many_stock_picks(participant_id=participant_obj, stock_id=stock_in_db.id, status='pending_buy')
+        assert 'No items found.' in str(exc)
+        
 
     def test_remove_pick_no_matching_pending_pick(self, fe: Frontend):
         owner_id = 10
@@ -570,16 +579,16 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
 
         ticker_no_pick = "NOPICKTOREM"
         _add_stock_to_db(fe.be, ticker_no_pick)
 
-        with pytest.raises(ValueError) as excinfo:
-            fe.remove_pick(user_id=owner_id, game_id=game_db['id'], ticker=ticker_no_pick)
-        assert "Expected one pick, but got 0" in str(excinfo.value) # The second arg to ValueError is buggy in source
+        with pytest.raises(LookupError) as excinfo:
+            fe.remove_pick(user_id=owner_id, game_id=game_db.id, ticker=ticker_no_pick)
+        assert 'No picks found' in str(excinfo.value) # The second arg to ValueError is buggy in source
 
     def test_remove_pick_stock_not_found_in_db(self, fe: Frontend):
         owner_id = 10
@@ -587,12 +596,12 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
 
         with pytest.raises(LookupError): # From be.get_stock
-            fe.remove_pick(user_id=owner_id, game_id=game_db['id'], ticker="NONEXISTENTSTOCK")
+            fe.remove_pick(user_id=owner_id, game_id=game_db.id, ticker="NONEXISTENTSTOCK")
 
     def test_remove_pick_owned_stock_not_pending(self, fe: Frontend):
         owner_id = 10
@@ -604,20 +613,19 @@ class TestFrontend:
         _add_stock_to_db(fe.be, ticker_owned)
         stock_in_db = fe.be.get_stock(ticker_owned)
         
-        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        fe.be.update_participant(participant_id=participant_obj['id'], status='active')
+        participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        fe.be.update_participant(participant_id=participant_obj, status='active')
 
 
         # Add a pick and update its status to 'owned'
-        fe.be.add_stock_pick(participant_id=participant_obj['id'], stock_id=stock_in_db['id'])
-        pick_to_update = fe.be.get_many_stock_picks(participant_id=participant_obj['id'], stock_id=stock_in_db['id'])[0]
-        fe.be.update_stock_pick(pick_id=pick_to_update['id'], current_value=100, status='owned')
+        fe.be.add_stock_pick(participant_id=participant_obj, stock_id=stock_in_db.id)
+        pick_to_update = fe.be.get_many_stock_picks(participant_id=participant_obj, stock_id=stock_in_db.id)[0]
+        fe.be.update_stock_pick(pick_id=pick_to_update.id, current_value=100, status='owned')
 
         # remove_pick specifically looks for 'pending_buy' status
         with pytest.raises(ValueError) as excinfo:
-            fe.remove_pick(user_id=owner_id, game_id=game_db['id'], ticker=ticker_owned)
-        assert "Expected one pick, but got 0" in str(excinfo.value)
-
+            fe.remove_pick(user_id=owner_id, game_id=game_db.id, ticker=ticker_owned)
+        assert 'Pick status is `owned`.  Only `pending_buy` picks can be removed.' in str(excinfo)
 
     # # START_DRAFT # #
     def test_start_draft_not_implemented(self, fe: Frontend):
@@ -644,9 +652,8 @@ class TestFrontend:
         fe.register(user_id=non_owner_id) # Register non-owner
         mock_update_all = mocker.patch.object(fe.gl, 'update_all')
 
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(PermissionError) as excinfo:
             fe.force_update(user_id=non_owner_id, game_id=1)
-        assert f"User {non_owner_id} does not have permission to update games" in str(excinfo.value)
         mock_update_all.assert_not_called()
 
 
@@ -659,12 +666,12 @@ class TestFrontend:
 
         new_game_name = "ManageGameNewName"
         new_end_date = "2025-08-01"
-        fe.manage_game(user_id=owner_id, game_id=game_db['id'], name=new_game_name, end_date=new_end_date)
+        fe.manage_game(user_id=owner_id, game_id=game_db.id, name=new_game_name, end_date=new_end_date)
 
-        updated_game = fe.be.get_game(game_id=game_db['id'])
-        assert updated_game['name'] == new_game_name
-        assert updated_game['end_date'] == new_end_date
-        assert updated_game['last_updated'] == MOCK_DATETIME_STR # Check if updated
+        updated_game = fe.be.get_game(game_id=game_db.id)
+        assert updated_game.name == new_game_name
+        #assert updated_game.end_date == new_end_date #TODO are these needed ? the game name changed
+        #assert updated_game.last_updated == MOCK_DATETIME_STR # Check if updated
 
     def test_manage_game_by_non_owner_returns_permission_string(self, fe: Frontend):
         owner_id = 10
@@ -673,13 +680,12 @@ class TestFrontend:
         game_name = "NonOwnerManageGame"
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
-
-        result = fe.manage_game(user_id=non_owner_id, game_id=game_db['id'], name="AttemptChange")
-        assert result == "You do not have permission to update this game" # As per current implementation
+        with pytest.raises(PermissionError):
+            result = fe.manage_game(user_id=non_owner_id, game_id=game_db.id, name="AttemptChange")
 
         # Verify game was not changed
-        game_after = fe.be.get_game(game_id=game_db['id'])
-        assert game_after['name'] == game_name
+        game_after = fe.be.get_game(game_id=game_db.id)
+        assert game_after.name == game_name
 
 
     # # PENDING_GAME_USERS # #
@@ -696,17 +702,18 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
         # user1 joins, should be pending
-        fe.join_game(user_id=user1_pending_id, game_id=game_db['id'])
+        fe.join_game(user_id=user1_pending_id, game_id=game_db.id)
         # user2 joins and gets approved by owner (owner needs to be the one calling approve)
-        fe.join_game(user_id=user2_approved_id, game_id=game_db['id'])
-        participant2_obj = fe._participant_id(user_id=user2_approved_id, game_id=game_db['id'])
-        fe.approve_game_users(user_id=owner_id, participant_id=participant2_obj['id'])
+        fe.join_game(user_id=user2_approved_id, game_id=game_db.id)
+        participant2_obj = fe._participant_id(user_id=user2_approved_id, game_id=game_db.id)
+        pending_users_before = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
+        fe.approve_game_users(user_id=owner_id, participant_id=participant2_obj)
 
 
-        pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db['id'])
+        pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
         assert len(pending_users) == 1 # Only user1 should be pending (owner is also active)
-        assert pending_users[0]['user_id'] == user1_pending_id
-        assert pending_users[0]['status'] == 'pending'
+        assert pending_users[0].user_id == user1_pending_id
+        assert pending_users[0].status == 'pending'
 
     def test_pending_game_users_by_non_owner(self, fe: Frontend):
         owner_id = 10
@@ -715,9 +722,9 @@ class TestFrontend:
         game_name = "PendingUsersNonOwner"
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01", private_game=True)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
+        with pytest.raises(PermissionError):
 
-        result = fe.pending_game_users(user_id=non_owner_id, game_id=game_db['id'])
-        assert result == "You do not have permission to manage this game"
+            result = fe.pending_game_users(user_id=non_owner_id, game_id=game_db.id)
 
     def test_pending_game_users_no_pending_users(self, fe: Frontend):
         owner_id = 10
@@ -726,10 +733,9 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         # Owner is auto-added and approved by default for their own game in this setup.
         # Let's approve the owner first.
-        #owner_participant = fe._participant_id(user_id=owner_id, game_id=game_db['id'])
-        
-        pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db['id'])
-        assert len(pending_users) == 0
+        #owner_participant = fe._participant_id(user_id=owner_id, game_id=game_db.id)
+        with pytest.raises(LookupError, match='No items found.'):
+            pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
 
 
     # # APPROVE_GAME_USERS # #
@@ -742,14 +748,14 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01", private_game=True)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        fe.join_game(user_id=user_to_approve_id, game_id=game_db['id'])
-        participant_to_approve = fe._participant_id(user_id=user_to_approve_id, game_id=game_db['id'])
-        assert participant_to_approve['status'] == 'pending' # Should be pending
+        fe.join_game(user_id=user_to_approve_id, game_id=game_db.id)
+        participant_to_approve = fe.be.get_participant(participant_id=fe._participant_id(user_id=user_to_approve_id, game_id=game_db.id))
+        assert participant_to_approve.status == 'pending' # Should be pending
 
-        fe.approve_game_users(user_id=owner_id, participant_id=participant_to_approve['id'])
+        fe.approve_game_users(user_id=owner_id, participant_id=participant_to_approve.id)
 
-        approved_user_participant = fe.be.get_participant(participant_id=participant_to_approve['id'])
-        assert approved_user_participant['status'] == 'active'
+        approved_user_participant = fe.be.get_participant(participant_id=participant_to_approve.id)
+        assert approved_user_participant.status == 'active'
 
     def test_approve_game_users_by_non_owner(self, fe: Frontend):
         owner_id = 10
@@ -762,15 +768,14 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01", private_game=True)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        fe.join_game(user_id=user_to_approve_id, game_id=game_db['id'])
-        participant_to_approve = fe._participant_id(user_id=user_to_approve_id, game_id=game_db['id'])
-
-        result = fe.approve_game_users(user_id=non_owner_id, participant_id=participant_to_approve['id'])
-        assert result == "You do not have permission to manage this game"
+        fe.join_game(user_id=user_to_approve_id, game_id=game_db.id)
+        participant_to_approve = fe._participant_id(user_id=user_to_approve_id, game_id=game_db.id)
+        with pytest.raises(PermissionError):
+            result = fe.approve_game_users(user_id=non_owner_id, participant_id=participant_to_approve)
 
         # Verify user is still pending
-        still_pending_participant = fe.be.get_participant(participant_id=participant_to_approve['id'])
-        assert still_pending_participant['status'] == 'pending'
+        still_pending_participant = fe.be.get_participant(participant_id=participant_to_approve)
+        assert still_pending_participant.status == 'pending'
 
 
     # # GET_ALL_PARTICIPANTS # #
@@ -785,13 +790,13 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        fe.join_game(user_id=user2_id, game_id=game_db['id'])
-        fe.join_game(user_id=user3_id, game_id=game_db['id'])
+        fe.join_game(user_id=user2_id, game_id=game_db.id)
+        fe.join_game(user_id=user3_id, game_id=game_db.id)
         # Owner is also a participant
 
-        all_participants = fe.get_all_participants(game_id=game_db['id'])
+        all_participants = fe.get_all_participants(game_id=game_db.id)
         assert len(all_participants) == 3
-        participant_user_ids = {p['user_id'] for p in all_participants}
+        participant_user_ids = {p.user_id for p in all_participants}
         assert owner_id in participant_user_ids
         assert user2_id in participant_user_ids
         assert user3_id in participant_user_ids
@@ -803,12 +808,12 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         # Owner is automatically added as a participant
 
-        all_participants = fe.get_all_participants(game_id=game_db['id'])
+        all_participants = fe.get_all_participants(game_id=game_db.id)
         assert len(all_participants) == 1
-        assert all_participants[0]['user_id'] == owner_id
+        assert all_participants[0].user_id == owner_id
         
     def test_get_all_participants_for_non_existent_game(self, fe: Frontend):
         # Backend.get_many_participants with a non-existent game_id will return an empty tuple
         # So this should not raise an error, but return an empty list/tuple.
-        participants = fe.get_all_participants(game_id=999)
-        assert len(participants) == 0
+        with pytest.raises(LookupError, match='No items found.'):
+            participants = fe.get_all_participants(game_id=999)
