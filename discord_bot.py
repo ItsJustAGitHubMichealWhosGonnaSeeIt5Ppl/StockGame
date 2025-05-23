@@ -469,11 +469,18 @@ async def join_game(
         )
 
     except Exception as e:
-        embed = discord.Embed(
-            title="Game Join Failed",
-            description=f"Could not join game: {game_id}.\n{e}",
-            color=discord.Color.red()
-        )
+        if e.args[1]["reason"] and e.args[1]["reason"] == 'SQLITE_CONSTRAINT_UNIQUE':
+            embed = discord.Embed(
+                title="Game Join Failed",
+                description=f"You are already in this game!",
+                color=discord.Color.red()
+            )
+        else:
+            embed = discord.Embed(
+                title="Game Join Failed",
+                description=f"Could not join game: {game_id}.\n{e}",
+                color=discord.Color.red()
+            )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -753,7 +760,25 @@ async def my_stocks(
     interaction: discord.Interaction,
     game_id: int
 ):
-    pass
+    user_id = interaction.user.id
+    try:
+        picks = fe.my_stocks(user_id, game_id)
+        print(picks)
+    except Exception as e:
+        if e.args[0] == "Expected one participant ID, but got 0.":
+            embed = discord.Embed(
+            title="Fetching Stocks Failed",
+            description=f"You are not currently participating in this game. You can join it using the join-game command.",
+            color=discord.Color.red()
+        )
+        else:
+            embed = discord.Embed(
+                title="Fetching Stocks Failed",
+                description=f"There was an error while fetching your stocks.\n{e}",
+                color=discord.Color.red()
+            )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # GAME INFO RELATED
 
@@ -863,9 +888,10 @@ async def my_games(
         title="Your Games",
         color=discord.Color.blue()
     )
-    
     try:
         games = fe.my_games(interaction.user.id)
+        if len(games["games"]) == 0:
+            raise LookupError("No games found")
         game_description: str = ""
         # Add each game to the embed
         for game in games['games']: #TODO provide more info here
