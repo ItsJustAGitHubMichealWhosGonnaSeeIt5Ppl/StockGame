@@ -49,6 +49,7 @@ class Backend:
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockBackend')
         self.sql = SqlHelper(db_name)
+        self.logger.info('Initiated new Backend instance.')
         
     # # INTERNAL # #
     def _single_get(self, table:str, resp:Status)-> dict: # Handle single gets
@@ -437,8 +438,8 @@ class Backend:
             'start_date': start_date,
             'end_date': end_date,
             'aggregate_value': aggregate_value,
-            'change_dollars': round(change_dollars, 2),
-            'change_percent': round(change_percent, 2),
+            'change_dollars': round(change_dollars, 2) if change_dollars else None,
+            'change_percent': round(change_percent, 2) if change_percent else None,
             'datetime_updated': _iso8601()
             }
         
@@ -646,20 +647,20 @@ class Backend:
             list: List of stock picks
         """
         valid_statuses = ['pending_buy', 'owned', 'pending_sell', 'sold']
-        statuses = []
+        
+        filters = { 
+            'participation_id': participant_id,
+            'stock_id': stock_id
+            }
         if status: # validate statuses
+            statuses = []
             if isinstance(status, str):
                 status = [status]
             for st in status: # Chec kthat 
                 if st not in valid_statuses:
                     raise ValueError(f'invalid `status` {st}.')
                 statuses.append(f'"{st}"') # Add valid statues
-        
-            filters = { 
-            ('IN', 'status'): "" + ",".join(statuses), #TODO NOT 100% INJECTION SAFE
-            'participation_id': participant_id,
-            'stock_id': stock_id
-            }
+            filters.update({('IN', 'status'): "" + ",".join(statuses)})
 
         resp = self.sql.get(table='stock_picks', filters=filters)
         return self._many_get(table='stock_picks', resp=resp)
@@ -681,8 +682,8 @@ class Backend:
             'start_value': start_value,
             'current_value': current_value,
             'status': status,
-            'change_dollars': round(change_dollars, 2),
-            'change_percent': round(change_percent, 2),
+            'change_dollars': round(change_dollars, 2) if change_dollars else None,
+            'change_percent': round(change_percent, 2) if change_percent else None,
             'datetime_updated': _iso8601()
             }
         
@@ -713,10 +714,19 @@ class Backend:
             game_id (int): Game ID.
             team_name (Optional[str], optional): Nickname for this specific game.
         """
+        game = self.get_game(game_id=game_id)
+        print(f'Trying to add user with ID ({user_id}) to game with ID ({game_id}). Pick date is set to: ({bool(game["pick_date"])}) Other game details: {game}') #TODO remove this
+        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date() and (bool(game['pick_date']) and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date()):
+            raise ValueError('Cannot add users once `pick_date` has passed.')
+        if game['private_game']:
+            status = 'pending'
+        else:
+            status = 'active'
         items = {
             'user_id':user_id, 
             'game_id':game_id,
             'name': team_name,
+            'status': status,
             'datetime_joined': _iso8601()
             }
     
@@ -780,8 +790,8 @@ class Backend:
             'name': team_name,
             'status': status,
             'current_value': current_value,
-            'change_dollars': round(change_dollars, 2),
-            'change_percent': round(change_percent, 2),
+            'change_dollars': round(change_dollars, 2) if change_dollars else None,
+            'change_percent': round(change_percent, 2) if change_percent else None,
             'datetime_updated': _iso8601()
             }
         
@@ -1171,10 +1181,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         game = self.be.get_game(game_id) # Will raise an error for invalid games
         game_obj = dict(game) # Make a copy so it quits acting like a child
-        game_obj['combined_value'] = "%.2f" % game['combined_value'] # Round to two decimal places
+        game_obj['combined_value'] = round(game['combined_value'], 2) if game['combined_value'] else 0# Round to two decimal places
         
         info = {
-            'game': game,
+            'game': game_obj,
         }
         if show_leaderboard:
             leaderboard = list()
@@ -1183,7 +1193,7 @@ class Frontend: # This will be where a bot (like discord) interacts
                 user = self.be.get_user(member['user_id'])
                 leaderboard.append({ 
                     'user_id': member['user_id'],
-                    'current_value': "%.2f" % member['current_value'], # Round to two decimal places
+                    'current_value': round(member['current_value'], 2) if member['current_value'] else 0, # Round to two decimal places
                     'joined': member['joined']
                 }) # Should keep order
                 
@@ -1225,7 +1235,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             game_id (int): Game ID.
             name (str, optional): Team name/nickname for game.
         """
-        #TODO check permissions before running
+            
         self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))
 
     def my_games(self, user_id:int)->dict:
@@ -1261,10 +1271,8 @@ class Frontend: # This will be where a bot (like discord) interacts
             list: Stocks both owned and pending
         """
         part_id = self._participant_id(user_id=user_id, game_id=game_id) 
-        if 'status' in part_id:
-            part_id['reason'] = 'User not found'
-            return part_id
-        picks = self.be.get_many_stock_picks(participant_id=part_id['id'],status=['pending_buy, owned, pending_sell'])
+        
+        picks = self.be.get_many_stock_picks(participant_id=part_id['id'],status=['pending_buy', 'owned', 'pending_sell'])
         return picks
     
     # # STOCK RELATED
@@ -1306,7 +1314,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         if len(picks) == 1:
             return self.be.remove_stock_pick(pick_id=picks[0]['id'])
         else:
-            raise ValueError(f'Expected one pick, but got {len(picks)}.', user)
+            raise ValueError(f'Expected one pick, but got {len(picks)}.', picks)
     
     # # OTHER # #
     def start_draft(self, user_id:int, game_id:int): #TODO add
@@ -1366,9 +1374,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         if not self._user_owns_game(user_id=user_id, game_id=game_id):
             return "You do not have permission to manage this game"
-        
-        users = self.be.get_many_participants(game_id=game_id, status='pending')
-        return users
+        try:
+            return self.be.get_many_participants(game_id=game_id, status='pending')
+        except ValueError: # no pending users, return empty list #TODO problem?
+            return ()
         
     def approve_game_users(self, user_id:int, participant_id:int):
         """Approve/add a user to private game
@@ -1402,9 +1411,13 @@ if __name__ == "__main__":
     #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
     many_games = game.be.get_many_games(include_private=True)
     #game.be.update_game(game_id=1, name='TestGameUpd')
+    game.register(user_id=1123)
+    game.join_game(user_id=1123, game_id=1)
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
     game.gl.update_all()
     #game.gl.update_stock_prices()
+    my_stock = game.my_stocks(user_id=OWNER, game_id=1)
+    print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
     
     print(game.be.get_many_users(ids_only=True)) # List users from the backend
     print(game.list_games()) # Print list of games
@@ -1422,7 +1435,6 @@ if __name__ == "__main__":
     for stock in test_stocks: # Buy stocks
         print(f'BUY {stock}! {game.buy_stock(OWNER, 1, stock)}') # Try to purchase stock
     
-    print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
     #print(game.update(OWNER)) # Try to update
     leaders = game.game_info(game_id=1)
     print([info for info in leaders])
