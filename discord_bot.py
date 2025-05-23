@@ -764,7 +764,9 @@ async def my_stocks(
     user_id = interaction.user.id
     try:
         picks = fe.my_stocks(user_id, game_id)
-        print(picks)
+        if len(picks) == 0:
+            raise Exception("No stocks are picked.")
+        embed = discord.Embed(title="blah blah", description="blah blah")
     except Exception as e:
         if e.args[0] == "Expected one participant ID, but got 0.":
             embed = discord.Embed(
