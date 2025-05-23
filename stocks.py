@@ -715,7 +715,8 @@ class Backend:
             team_name (Optional[str], optional): Nickname for this specific game.
         """
         game = self.get_game(game_id=game_id)
-        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date() and (bool(game['pick_date'])  and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date()):
+        print(f'Trying to add user with ID ({user_id}) to game with ID ({game_id}). Pick date is set to: ({bool(game["pick_date"])}) Other game details: {game}') #TODO remove this
+        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date() and (bool(game['pick_date']) and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date()):
             raise ValueError('Cannot add users once `pick_date` has passed.')
         if game['private_game']:
             status = 'pending'
@@ -1410,6 +1411,8 @@ if __name__ == "__main__":
     #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
     many_games = game.be.get_many_games(include_private=True)
     #game.be.update_game(game_id=1, name='TestGameUpd')
+    game.register(user_id=1123)
+    game.join_game(user_id=1123, game_id=1)
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
     game.gl.update_all()
     #game.gl.update_stock_prices()
