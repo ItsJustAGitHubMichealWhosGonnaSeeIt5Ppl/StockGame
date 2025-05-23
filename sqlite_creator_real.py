@@ -4,7 +4,9 @@ from helpers.sqlhelper import SqlHelper
 from dotenv import load_dotenv
 
 load_dotenv()
-
+#TODO change datetime_updated to last_updated, and use a unix timestamp
+#TODO change aggregate_value to total value for consistency
+#TODO check the add a guild field to verify that the server is the same 
 #NOTE ISO8601 applies to both (YYYY-MM-DD HH:MM:SS) and (YYYY-MM-DD)! keys should be named according to below
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
@@ -23,7 +25,7 @@ def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version
     query = """ALTER TABLE users
     ADD source TEXT"""
     send = sql.send_query(query)
-    if send['status'] == 'error':
+    if send.status == 'error':
         print(send) # Sometimes gives error but does what its asked anyway...
     pass
 
@@ -46,7 +48,7 @@ def v002_to_v003(db_name:str,):
             queries = default_queries
         for query in queries:
             send = sql.send_query(query.format(table=table),mode='insert')
-            if send['status'] == 'error':
+            if send.status == 'error':
                 print(send) # Sometimes gives error but does what its asked anyway...
             pass
 
@@ -100,6 +102,8 @@ def create(db_name:str):
             datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         );""")
     
+    # Meta table (store things like the database version)
+    #TODO create me!
     
     # Users table
     cursor.execute("""
@@ -109,11 +113,11 @@ def create(db_name:str):
         source TEXT NOT NULL,                       -- User source
         permissions INT NOT NULL DEFAULT 210,       -- Store users permissions
         datetime_created TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-    );""")
+        );""")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
 
-    # Games table #TODO write different game statuses and explainers
+    # Games table #TODO write different game statuses and explainers #TODO descriptions #TODO names don't need to be uni
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -136,7 +140,7 @@ def create(db_name:str):
 
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
-    );""")
+        );""")
     # GAME STATUS OPTIONS
     # - 'open' # Game has not yet started, can be joined
     # - 'active' # Game started, can be joined if join_late is enabled
@@ -147,11 +151,11 @@ def create(db_name:str):
     cursor.execute("""CREATE TABLE IF NOT EXISTS stocks (
         stock_id INTEGER PRIMARY KEY AUTOINCREMENT,
         ticker TEXT NOT NULL,           -- Stock ticker
-        exchange TEXT NOT NULL,         -- Stock exchange that it is listed on
+        exchange TEXT NOT NULL,         -- Stock exchange that it is listed on should alwaws be lowercase
         company_name TEXT,              -- Optional?
         
         UNIQUE (ticker, exchange)
-    );""")
+        );""")
 
     # Stock price (current and historical) table
     cursor.execute("""CREATE TABLE IF NOT EXISTS stock_prices (
@@ -160,13 +164,13 @@ def create(db_name:str):
         price REAL NOT NULL,           -- Closing price of stock
         datetime TEXT NOT NULL,      -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
-    FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE CASCADE,  -- When a ticker is deleted from the main table, all references to it will also be deleted?
+        FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE CASCADE,  -- When a ticker is deleted from the main table, all references to it will also be deleted?
         
-    UNIQUE (stock_id, datetime)                                           -- Ensure only one price per stock per day
-    );""")
-    #cursor.execute("CREATE INDEX IF NOT EXISTS idx_stock_prices ON stock_prices(stock_id, price, price_date);") # I think this will be more useful to have?
+        UNIQUE (stock_id, datetime)                                           -- Ensure only one price per stock per day
+        );""")
 
     # Game participants table (track who is in which leagues/games)
+    #TODO name should be nickname
     cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
         participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -182,8 +186,8 @@ def create(db_name:str):
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
         FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
         
-    UNIQUE (user_id, game_id) -- A user can only join a specific game once
-    );""")
+        UNIQUE (user_id, game_id) -- A user can only join a specific game once
+        );""")
 
     # Stock picks table.  Store a users stock picks for their game(s).  Buy date not needed since game_participants join date can be used
     cursor.execute("""CREATE TABLE IF NOT EXISTS stock_picks (
@@ -201,8 +205,8 @@ def create(db_name:str):
         FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
         FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
         
-    UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
-    );""")
+        UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
+        );""")
 
     conn.commit()
     conn.close()
