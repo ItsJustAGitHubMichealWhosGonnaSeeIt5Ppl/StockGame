@@ -261,7 +261,7 @@ async def create_game(interaction: discord.Interaction):
                 pick_date_modal = discord.ui.Modal(title="Pick Date", timeout=60)
 
                 pick_date_input = discord.ui.TextInput(
-                    label="Pick Date *leave blank for no pick date",
+                    label=f"Pick Date{' *leave blank for no pick date' if not game_exclusive_picks else ''}",
                     placeholder="YYYY-MM-DD",
                     required=game_exclusive_picks,
                     max_length=10,
