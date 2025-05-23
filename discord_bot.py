@@ -469,10 +469,11 @@ async def join_game(
         )
 
     except Exception as e:
-        if e.args[1]["reason"] and e.args[1]["reason"] == 'SQLITE_CONSTRAINT_UNIQUE':
+        print(e)
+        if e.args and len(e.args) > 1 and e.args[1]["reason"] and e.args[1]["reason"] == 'SQLITE_CONSTRAINT_UNIQUE':
             embed = discord.Embed(
                 title="Game Join Failed",
-                description=f"You are already in this game!",
+                description=f"Could not join game: {game_id}.\nYou are already in this game.",
                 color=discord.Color.red()
             )
         else:
