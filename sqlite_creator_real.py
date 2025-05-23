@@ -1,8 +1,9 @@
 import sqlite3
 import os 
 from helpers.sqlhelper import SqlHelper
+from dotenv import load_dotenv
 
-
+load_dotenv()
 
 #NOTE ISO8601 applies to both (YYYY-MM-DD HH:MM:SS) and (YYYY-MM-DD)! keys should be named according to below
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name

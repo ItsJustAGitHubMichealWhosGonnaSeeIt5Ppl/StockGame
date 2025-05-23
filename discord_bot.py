@@ -4,11 +4,8 @@
 # TODO set up some sort of draft system for stocks
 # TODO should i add a command to show game info to all with join button?
 # TODO add error handling via discord
-#TODO add help command
+# TODO add help command
 
-# NEEDS FROM BACKEND:
-
-# can you buy after start date?
 # should i rename the commands? my-games and my-stocks are a bit annoying to type
 # is my_games necessary?
 
@@ -22,9 +19,9 @@ from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-#load_dotenv() #TODO uncomment!
+load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 DB_NAME = os.getenv('DB_NAME')
@@ -84,30 +81,34 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}") #TODO should this be higher severity?
 
+# GAME INTERACTION RELATED
 
-# GAME RELATED
 # TODO can i make parameters required? if not, add (optional) to the description
-# TODO should i add autofill to anything? 
 @bot.tree.command(name="create-game-advanced", description="Create a new stock game without a wizard")
 @app_commands.describe(
     name="Name of the game",
     start_date="Start date (YYYY-MM-DD)",
     end_date="End date (YYYY-MM-DD)",
+    pick_date="Date stocks must be picked by (YYYY-MM-DD)",
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
-    private_game="Whether the game is private (requires owner approval for new users)"
+    private_game="Whether the game is private (requires owner approval for new users)",
+    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
     interaction: discord.Interaction,
     name: str,
     start_date: str,
-    end_date: str = None,
+    end_date: str | None = None,
     starting_money: float = 10000.00,
     total_picks: int = 10,
     exclusive_picks: bool = False,
-    private_game: bool = False
+    private_game: bool = False,
+    pick_date: str | None = None,
+    update_frequency: str = 'daily',
+    # sell_during_game: bool = False
 ):
     # Create game using frontend and return
     try:
@@ -119,7 +120,9 @@ async def create_game_advanced(
             starting_money=starting_money,
             total_picks=total_picks,
             exclusive_picks=exclusive_picks,
-            private_game= private_game
+            private_game= private_game,
+            pick_date=pick_date,
+            update_frequency=update_frequency
             #sell_during_game=False, - NOT IMPLEMENTED
         )
         
@@ -139,9 +142,9 @@ async def create_game_advanced(
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# TODO ask how start date works and remove "can users join after start" if not needed
 # this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
 # THIS ITERATION IS WORKING IN THE CURRENT STATE
+# TODO edit for new parameters
 @bot.tree.command(name="create-game", description="Guided setup for stock game creation")
 async def create_game(interaction: discord.Interaction):
     # Create the initial embed
@@ -305,119 +308,119 @@ async def create_game(interaction: discord.Interaction):
                 else:
                     exclusive_picks = False
                 
-                # Create a response embed for join after start
-                join_after_start_embed = discord.Embed( #TODO replace this with the pick_date field
-                    title="Do you want players to join after the game starts?",
-                    description="If you select 'Yes', players can join after the game starts. If you select 'No', players cannot join after the game starts.",
+                # # Create a response embed for join after start
+                # join_after_start_embed = discord.Embed(
+                #     title="Do you want players to join after the game starts?",
+                #     description="If you select 'Yes', players can join after the game starts. If you select 'No', players cannot join after the game starts.",
+                #     color=discord.Color.blue()
+                # )
+
+                # # Create buttons for join after start
+                # join_after_start_yes = discord.ui.Button(
+                #     label="Yes",
+                #     style=discord.ButtonStyle.success,
+                #     custom_id="join_after_start_yes"
+                # )
+
+                # join_after_start_no = discord.ui.Button(
+                #     label="No",
+                #     style=discord.ButtonStyle.danger,
+                #     custom_id="join_after_start_no"
+                # )
+
+                # join_after_start_view = discord.ui.View()
+                # join_after_start_view.add_item(join_after_start_yes)
+                # join_after_start_view.add_item(join_after_start_no)
+                
+                # # Send the response
+                # await interaction.response.edit_message(embed=join_after_start_embed, view=join_after_start_view)
+
+                # # Define what happens when the join after start button is clicked
+                # async def join_after_start_callback(interaction: discord.Interaction):                            
+                #     # Check which button was clicked
+                #     if interaction.data["custom_id"] == "join_after_start_yes":
+                #         join_after_start = True
+                #     else:
+                #         join_after_start = False
+
+                game_name=name_input.value
+                game_start_date=start_date_input.value
+                game_end_date=end_date_input.value if end_date_input.value else None
+                game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
+                game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
+                
+                # Confirm the game creation with the provided inputs
+                confirmation_embed = discord.Embed(
+                    title="Game Creation Confirmation",
+                    description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}\nJoin After Start: {join_after_start}",
                     color=discord.Color.blue()
                 )
+                confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
+            
+                confirmation_view = discord.ui.View()
 
-                # Create buttons for join after start
-                join_after_start_yes = discord.ui.Button(
-                    label="Yes",
+                confirm_button = discord.ui.Button(
+                    label="Confirm",
                     style=discord.ButtonStyle.success,
-                    custom_id="join_after_start_yes"
+                    custom_id="confirm_game_creation"
                 )
 
-                join_after_start_no = discord.ui.Button(
-                    label="No",
+                cancel_button = discord.ui.Button(
+                    label="Cancel",
                     style=discord.ButtonStyle.danger,
-                    custom_id="join_after_start_no"
+                    custom_id="cancel_game_creation"
                 )
 
-                join_after_start_view = discord.ui.View()
-                join_after_start_view.add_item(join_after_start_yes)
-                join_after_start_view.add_item(join_after_start_no)
-                
-                # Send the response
-                await interaction.response.edit_message(embed=join_after_start_embed, view=join_after_start_view)
+                confirmation_view.add_item(confirm_button)
+                confirmation_view.add_item(cancel_button)
+                await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
 
-                # Define what happens when the join after start button is clicked
-                async def join_after_start_callback(interaction: discord.Interaction):                            
-                    # Check which button was clicked
-                    if interaction.data["custom_id"] == "join_after_start_yes":
-                        join_after_start = True
-                    else:
-                        join_after_start = False
-
-                    game_name=name_input.value
-                    game_start_date=start_date_input.value
-                    game_end_date=end_date_input.value if end_date_input.value else None
-                    game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
-                    game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
-                    
-                    # Confirm the game creation with the provided inputs
-                    confirmation_embed = discord.Embed(
-                        title="Game Creation Confirmation",
-                        description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}\nJoin After Start: {join_after_start}",
-                        color=discord.Color.blue()
-                    )
-                    confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
-                
-                    confirmation_view = discord.ui.View()
-
-                    confirm_button = discord.ui.Button(
-                        label="Confirm",
-                        style=discord.ButtonStyle.success,
-                        custom_id="confirm_game_creation"
-                    )
-
-                    cancel_button = discord.ui.Button(
-                        label="Cancel",
-                        style=discord.ButtonStyle.danger,
-                        custom_id="cancel_game_creation"
-                    )
-
-                    confirmation_view.add_item(confirm_button)
-                    confirmation_view.add_item(cancel_button)
-                    await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
-
-                    # Define what happens when the confirm button is clicked
-                    async def confirm_callback(interaction: discord.Interaction):
-                        # Create the game using the provided inputs
-                        try:
-                            fe.new_game(
-                                user_id=interaction.user.id,
-                                name=game_name,
-                                start_date=game_start_date,
-                                end_date=game_end_date,
-                                starting_money=game_starting_money,
-                                total_picks=game_total_picks,
-                                exclusive_picks=exclusive_picks,
-                                #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
-                                sell_during_game=False # Placeholder for sell_during_game
-                                # sell_during_game=sell_during_game
-                            )
-                            creation_status_embed = discord.Embed(
-                                title="Game Created Successfully",
-                                description=f"Game '{name_input.value}' has been created!",
-                                color=discord.Color.green()
-                            )
-                        except ValueError as e:
-                            creation_status_embed = discord.Embed(
-                                title="Game Creation Failed",
-                                description=e,
-                                color=discord.Color.red()
-                            )
-                        
-                        await interaction.response.edit_message(embed=creation_status_embed, view=None)
-                    
-                    # Define what happens when the cancel button is clicked
-                    async def cancel_callback(interaction: discord.Interaction):
-                        cancel_embed = discord.Embed(
-                            title="Game Creation Cancelled",
-                            description="The game creation process has been cancelled.",
+                # Define what happens when the confirm button is clicked
+                async def confirm_callback(interaction: discord.Interaction):
+                    # Create the game using the provided inputs
+                    try:
+                        fe.new_game(
+                            user_id=interaction.user.id,
+                            name=game_name,
+                            start_date=game_start_date,
+                            end_date=game_end_date,
+                            starting_money=game_starting_money,
+                            total_picks=game_total_picks,
+                            exclusive_picks=exclusive_picks,
+                            #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
+                            sell_during_game=False # Placeholder for sell_during_game
+                            # sell_during_game=sell_during_game
+                        )
+                        creation_status_embed = discord.Embed(
+                            title="Game Created Successfully",
+                            description=f"Game '{name_input.value}' has been created!",
+                            color=discord.Color.green()
+                        )
+                    except ValueError as e:
+                        creation_status_embed = discord.Embed(
+                            title="Game Creation Failed",
+                            description=e,
                             color=discord.Color.red()
                         )
-                        await interaction.response.edit_message(embed=cancel_embed, view=None)                    
-        
-                    # Set the confirm button callbacks
-                    confirm_button.callback = confirm_callback
-                    cancel_button.callback = cancel_callback
+                    
+                    await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                
+                # Define what happens when the cancel button is clicked
+                async def cancel_callback(interaction: discord.Interaction):
+                    cancel_embed = discord.Embed(
+                        title="Game Creation Cancelled",
+                        description="The game creation process has been cancelled.",
+                        color=discord.Color.red()
+                    )
+                    await interaction.response.edit_message(embed=cancel_embed, view=None)                    
+    
+                # Set the confirm button callbacks
+                confirm_button.callback = confirm_callback
+                cancel_button.callback = cancel_callback
             
-                # Set the join after button callback
-                join_after_start_yes.callback = join_after_start_callback
-                join_after_start_no.callback = join_after_start_callback
+                # # Set the join after button callback
+                # join_after_start_yes.callback = join_after_start_callback
+                # join_after_start_no.callback = join_after_start_callback
 
             # Set the exclusive button callback
             exclusive_picks_yes.callback = exclusive_picks_callback
@@ -437,37 +440,273 @@ async def create_game(interaction: discord.Interaction):
     # Set the button callback
     game_creation_wizard_start.callback = game_creation_wizard_start_callback    
 
-# TODO Add user to game
-# TODO Return success/error embed
+# TODO Handle more specific errors when implemented (private game, invalid game id, etc)
 @bot.tree.command(name="join-game", description="Join an existing stock game")
 @app_commands.describe(
-    game_id="ID of the game to join"
+    game_id="ID of the game to join",
+    name="Name to display for your picks (optional)"
 )
 async def join_game(
     interaction: discord.Interaction, 
     game_id: int,
-    name: str = None
+    name: str | None = None
 ):
-    pass
+    
+    if not name:
+        name = interaction.user.display_name
 
-# TODO Process purchase
-# TODO Return transaction embed
+    try:
+        fe.join_game(
+            user_id=interaction.user.id, 
+            game_id=game_id, 
+            name=name
+        ) 
+
+        embed = discord.Embed(
+            title="Game Joined Successfully",
+            description=f"You have joined game: {game_id}.",
+            color=discord.Color.green()
+        )
+
+    except Exception as e:
+        embed = discord.Embed(
+            title="Game Join Failed",
+            description=f"Could not join game: {game_id}.\n{e}",
+            color=discord.Color.red()
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="manage-game", description="Manage an existing stock game")
+@app_commands.describe(
+    game_id="ID of the game to update",
+    name="New name of the game",
+    owner="Game owner user ID",
+    start_date="New start date (YYYY-MM-DD)",
+    end_date="New end date (YYYY-MM-DD); Cannot be changed once game has started",
+    pick_date="Date stocks must be picked by (YYYY-MM-DD); Cannot be changed once game has started",
+    private_game="Whether the game is private or not",
+    starting_money="New starting money amount; Cannot be changed once game has started",
+    total_picks="New number of stocks each player can pick; Cannot be changed once game has started",
+    draft_mode="Whether multiple users can pick the same stock; Pick date must be on or before start date; Cannot be changed once game has started",
+    sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
+    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
+)
+async def manage_game(
+    interaction: discord.Interaction, 
+    game_id: int,
+    name: str | None = None,
+    owner: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    starting_money: float | None = None,
+    pick_date: str | None = None,
+    private_game: bool | None = None,
+    total_picks: int | None = None,
+    draft_mode: bool | None = None,
+    sell_during_game: bool | None = None,
+    update_frequency: str | None = None
+):
+    game = fe.game_info(game_id, False)
+
+    if not game:
+        embed = discord.Embed(
+            title="Game Not Found",
+            description=f"Could not find a game with ID {game_id}.",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    name = name if name else game['game']["name"]
+    owner = owner if owner else game['game']["owner"]
+    start_date = start_date if start_date else game['game']["start_date"]
+    end_date = end_date if end_date else game['game']["end_date"]
+    starting_money = int(starting_money) if starting_money else game['game']["starting_money"]
+    pick_date = pick_date if pick_date else game['game']["pick_date"]
+    private_game = private_game if private_game else game['game']["private_game"]
+    total_picks = total_picks if total_picks else game['game']["total_picks"]
+    draft_mode = draft_mode if draft_mode else game['game']["exclusive_picks"]
+    update_frequency = update_frequency if update_frequency else game['game']["update_frequency"]
+    sell_during_game = sell_during_game if sell_during_game else game['game']["sell_during_game"]
+
+
+    try:
+        fe.manage_game(
+            user_id=interaction.user.id,
+            game_id=game_id,
+            name=name,
+            owner=owner,
+            start_date=start_date,
+            end_date=end_date,
+            starting_money=starting_money,
+            pick_date=pick_date,
+            private_game=private_game,
+            total_picks=total_picks,
+            exclusive_picks=draft_mode,
+            update_frequency=update_frequency,
+            sell_during_game=sell_during_game
+        )
+
+        embed = discord.Embed(
+            title="Game Updated Successfully",
+            description=f"Game #{game_id} has been updated!",
+            color=discord.Color.green()
+        )
+    except Exception as e:
+        embed = discord.Embed(
+            title="Game Update Failed",
+            description=e,
+            color=discord.Color.red()
+        )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# TODO fix response to command
+@bot.tree.command(name="invite", description="Invite a user to a game")
+@app_commands.describe(
+    game_id="ID of the game to invite them to",
+    user="User to invite"
+)
+async def invite_user(
+    interaction: discord.Interaction, 
+    game_id: int,
+    user: discord.User
+):
+    invite_embed = discord.Embed(
+        title="Game Invite",
+        description=f"You have been invited to game #{game_id} by {interaction.user.display_name}.",
+        color=discord.Color.green()
+    )
+
+    accept_button = discord.ui.Button(
+        label="Accept Invite",
+        style=discord.ButtonStyle.success,
+        custom_id="accept_invite",
+        emoji="✅"
+    )
+
+    decline_button = discord.ui.Button(
+        label="Decline Invite",
+        style=discord.ButtonStyle.danger,
+        custom_id="decline_invite",
+        emoji="❌"
+    )
+
+    view = discord.ui.View()
+    view.add_item(accept_button)    
+    view.add_item(decline_button)
+
+    async def accept_invite_callback(interaction: discord.Interaction):
+        # Add user to the game
+        
+        try:
+            fe.join_game(
+                user_id=user.id,
+                game_id=game_id
+            )
+
+            accept_embed = discord.Embed(
+                title="Game Joined",
+                description=f"You have joined game #{game_id}.",
+                color=discord.Color.green()
+            )
+        except Exception as e:
+            accept_embed = discord.Embed(
+                title="Game Join Failed",
+                description=f"Could not join game #{game_id}.\n{e}",
+                color=discord.Color.red()
+            )
+
+        await interaction.response.edit_message(embed=accept_embed, view=None)
+
+    async def decline_invite_callback(interaction: discord.Interaction):
+        decline_embed = discord.Embed(
+            title="Invite Declined",
+            description=f"You have declined the invite to game #{game_id}.",
+            color=discord.Color.red()
+        )
+        await interaction.response.edit_message(embed=decline_embed, view=None)
+
+    accept_button.callback = accept_invite_callback
+    decline_button.callback = decline_invite_callback
+
+    try:
+        invite_response_embed = discord.Embed(
+            title="Invite Sent",
+            description=f"Invite sent to {user.mention}.",
+            color=discord.Color.blue()
+        )
+    
+        await interaction.response.send_message(
+            content=f"Invite sent to {user.mention}.",
+            embed=invite_response_embed,
+            ephemeral=True
+        )
+
+        await user.send(embed=invite_embed, view=view)
+    except discord.Forbidden:
+        # If the user has DMs disabled, send a message in the channel instead
+        invite_response_embed = discord.Embed(
+            title="Invite Not Sent",
+            description=f"Could not send invite to {user.mention}. They have DMs disabled.",
+            color=discord.Color.blue()
+        )
+        
+        await interaction.response.send_message(
+            embed=invite_response_embed,
+            ephemeral=True
+        )
+
+# STOCK RELATED
+
 @bot.tree.command(name="buy-stock", description="Buy a stock in a game")
 @app_commands.describe(
     game_id="ID of the game",
-    ticker="Stock ticker symbol",
-    shares="Number of shares to buy"
+    ticker="Stock ticker symbol"
 )
 async def buy_stock(
     interaction: discord.Interaction, 
     game_id: int, 
-    ticker: str, 
-    shares: int
+    ticker: str
 ):
-    pass
+    game_picks = fe.game_info(game_id=game_id, show_leaderboard=False)['game']['total_picks']
+    my_picks = len(fe.my_stocks(interaction.user.id, game_id))
 
-# TODO Add remove stock pick
-# TODO Return transaction embed
+    picks_left = game_picks - my_picks
+
+    if picks_left <= 0:
+        embed = discord.Embed(
+            title="Game Pick Limit Reached",
+            description=f"You have reached the maximum number of picks ({game_picks}) for this game.\nYou need to remove a stock before you can buy another one.",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    else:
+        try:
+            fe.buy_stock(
+                user_id=interaction.user.id,
+                game_id=game_id,
+                ticker=ticker
+            )
+
+            embed = discord.Embed(
+                title="Stock Purchase Successful",
+                description=f"You have successfully bought {ticker} in game: {game_id}.",
+                color=discord.Color.green()
+            )
+
+        except Exception as e:
+            embed = discord.Embed(
+                title="Stock Purchase Failed",
+                description=f"Could not buy {ticker} in game: {game_id}.",
+                color=discord.Color.red()
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# TODO add autofill for user's stocks and games
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
 @app_commands.describe(
     game_id="ID of the game",
@@ -478,14 +717,34 @@ async def remove_stock(
     game_id: int, 
     ticker: str
 ):
-    pass
+    try:
+        fe.remove_pick(
+            user_id=interaction.user.id,
+            game_id=game_id,
+            ticker=ticker
+        )
+
+        embed = discord.Embed(
+            title="Stock Removal Successful",
+            description=f"You have successfully removed {ticker} from your picks in game: {game_id}.",
+            color=discord.Color.green()
+        )
+        
+    except Exception as e:
+        embed = discord.Embed(
+            title="Stock Removal Failed",
+            description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}",
+            color=discord.Color.red()
+        )
+        
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # TODO Get user's stocks from frontend
 # TODO Add autofill for user's games
 # TODO Display stocks in an embed with stock info
 # TODO Add buttons for buying/selling stocks?
 # TODO Add pagination if there are many stocks (10+)
-# TODO Add last updated date/time
+# TODO Add last updated date/time in footer
 @bot.tree.command(name="my-stocks", description="View your stocks in a game")
 @app_commands.describe(
     game_id="ID of the game"
@@ -496,9 +755,10 @@ async def my_stocks(
 ):
     pass
 
+# GAME INFO RELATED
+
 # TODO Add join game button to game info embed
-# TODO change to show only public games
-# TODO add buttons for joining games?
+# TODO frontend: change to show only public games
 # TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
 @app_commands.describe(
@@ -599,28 +859,28 @@ async def game_list(
 async def my_games(
     interaction: discord.Interaction
 ):
-    # Get user's games from frontend
-    games = fe.my_games(interaction.user.id)
-    
-    # Create embed for the response
     embed = discord.Embed(
         title="Your Games",
         color=discord.Color.blue()
     )
     
-    if not games:
-        embed.description = "No games found"
-    else:
+    try:
+        games = fe.my_games(interaction.user.id)
+        game_description: str = ""
         # Add each game to the embed
         for game in games['games']: #TODO provide more info here
             # Create status indicator
             status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
-            
+                        
             # Add game field
-            embed.add_field(name=f"{status_emoji} {game['name']}", value=f"ID:{game['id']}")
-    
-    # Add footer with command usage
-    embed.set_footer(text=f"Use /game-info <game_id> for more details")
+            game_description= game_description + f"{status_emoji} {game['name']}   ID: {game['id']}\n"
+
+        embed.description = game_description
+        embed.set_footer(text=f"Use /game-info <game_id> for more details")
+
+    except Exception as e:
+        embed.description = "No games found"
+        embed.color = discord.Color.red()
     
     # Send the response
     await interaction.response.send_message(embed=embed, ephemeral=True)

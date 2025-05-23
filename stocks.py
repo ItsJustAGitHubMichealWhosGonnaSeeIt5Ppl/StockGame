@@ -7,6 +7,9 @@ import pytz
 from helpers.sqlhelper import SqlHelper, _iso8601
 from typing import Optional
 from stock_datatypes import Status, Games
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ### Methods (in order)
 ## add (create)
