@@ -715,7 +715,7 @@ class Backend:
             team_name (Optional[str], optional): Nickname for this specific game.
         """
         game = self.get_game(game_id=game_id)
-        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date() and (game['pick_date'] and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date()):
+        if datetime.strptime(game['start_date'], "%Y-%m-%d").date() < datetime.today().date() and (bool(game['pick_date'])  and datetime.strptime(game['pick_date'], "%Y-%m-%d").date() < datetime.today().date()):
             raise ValueError('Cannot add users once `pick_date` has passed.')
         if game['private_game']:
             status = 'pending'
