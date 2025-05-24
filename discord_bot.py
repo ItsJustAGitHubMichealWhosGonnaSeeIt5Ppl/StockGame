@@ -23,9 +23,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv('DISCORD_TOKEN')
-DB_NAME = os.getenv('DB_NAME')
-OWNER = os.getenv("OWNER") # Set owner ID from env
+try:
+    TOKEN = os.getenv('DISCORD_TOKEN')
+    assert isinstance(TOKEN, str)
+    DB_NAME = os.getenv('DB_NAME')
+    assert isinstance(DB_NAME, str)
+    OWNER = os.getenv("OWNER") # Set owner ID from env
+    assert isinstance(OWNER, str)
+except AssertionError as e:
+    raise AssertionError('Missing one or more enviroment variables.')
+    
 
 # Set up intents with all necessary permissions
 intents = discord.Intents.default()
@@ -65,7 +72,7 @@ def has_permission(user:discord.member.Member):
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 logger.info(f'Connecting with DB: {DB_NAME}')
-fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER, source='discord') # Frontend
+fe = Frontend(database_name=DB_NAME, owner_user_id=int(OWNER), source='discord') # Frontend
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
@@ -343,7 +350,7 @@ async def create_game(interaction: discord.Interaction):
                 #     else:
                 #         join_after_start = False
 
-                game_name=name_input.value
+                game_name= name_input.value
                 game_start_date=start_date_input.value
                 game_end_date=end_date_input.value if end_date_input.value else None
                 game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
@@ -454,35 +461,41 @@ async def join_game(
     
     if not name:
         name = interaction.user.display_name
-
+    
+    joined = False
     try:
         fe.join_game(
             user_id=interaction.user.id, 
             game_id=game_id, 
             name=name
         ) 
-
         embed = discord.Embed(
             title="Game Joined Successfully",
             description=f"You have joined game: {game_id}.",
             color=discord.Color.green()
         )
-
+        joined = True
+    except LookupError as e:
+        failed_desc = f'No game with the ID {game_id}.'
+        
+    except ValueError as e:
+        if 'already in game.' in str(e):
+            failed_desc = f'You are already in this game ID {game_id}.'
+            
+        elif '`pick_date` has passed.' in str(e):
+            failed_desc = f'The pick date for this game has passed.'
+            
     except Exception as e:
-        print(e)
-        if e.args and len(e.args) > 1 and e.args[1]["reason"] and e.args[1]["reason"] == 'SQLITE_CONSTRAINT_UNIQUE':
-            embed = discord.Embed(
-                title="Game Join Failed",
-                description=f"Could not join game: {game_id}.\nYou are already in this game.",
-                color=discord.Color.red()
-            )
-        else:
-            embed = discord.Embed(
-                title="Game Join Failed",
-                description=f"Could not join game: {game_id}.\n{e}",
-                color=discord.Color.red()
-            )
+        logger.exception(f'User: {interaction.user.id} failed to join game {game_id}.  Error: {e}')
+        failed_desc = f'An unexpected error ocurred. Please report this! {game_id}.\n{e}'
 
+    if not joined:
+        embed = discord.Embed(
+            title="Game Join Failed",
+            description=failed_desc,
+            color=discord.Color.red()
+        )
+    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
@@ -515,9 +528,9 @@ async def manage_game(
     sell_during_game: bool | None = None,
     update_frequency: str | None = None
 ):
-    game = fe.game_info(game_id, False)
+    game_info = fe.game_info(game_id, False)
 
-    if not game:
+    if not game_info:
         embed = discord.Embed(
             title="Game Not Found",
             description=f"Could not find a game with ID {game_id}.",
@@ -525,19 +538,6 @@ async def manage_game(
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
-    
-    name = name if name else game['game']["name"]
-    owner = owner if owner else game['game']["owner"]
-    start_date = start_date if start_date else game['game']["start_date"]
-    end_date = end_date if end_date else game['game']["end_date"]
-    starting_money = int(starting_money) if starting_money else game['game']["starting_money"]
-    pick_date = pick_date if pick_date else game['game']["pick_date"]
-    private_game = private_game if private_game else game['game']["private_game"]
-    total_picks = total_picks if total_picks else game['game']["total_picks"]
-    draft_mode = draft_mode if draft_mode else game['game']["exclusive_picks"]
-    update_frequency = update_frequency if update_frequency else game['game']["update_frequency"]
-    sell_during_game = sell_during_game if sell_during_game else game['game']["sell_during_game"]
-
 
     try:
         fe.manage_game(
@@ -801,13 +801,13 @@ async def game_info(
     game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
     game = game_info['game']
     leaderboard_info = list(game_info['leaderboard'])
-    description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game["owner"],
-        pick_info=f'\n> **Pick date:** {game["pick_date"]}' if game["pick_date"] else '',
-        start_cash=f'> **Starting Cash:** ${int(game["starting_money"])}',
-        date_range= '> ' + str('Started' if game['status'] != 'open' else 'Starting') + f' `{game["start_date"]}`' + str(str(', ends' if  game['status'] != 'ended' else ', ended') + f' `{game["end_date"]}`') if game["end_date"] else '',
+    description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game.owner_id,
+        pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+        start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+        date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game["end_date"]}`') if game["end_date"] else '',
         participants=f'> **Participants:** `{len(leaderboard_info)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
         )
-    embed = discord.Embed(title=f'{game["name"]} ({game["id"]})', 
+    embed = discord.Embed(title=f'{game.name} ({game.id})', 
         description=description_str)
     embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
 
@@ -860,20 +860,20 @@ async def game_list(
     interaction: discord.Interaction,
     page_length: int = 10
 ):
-    original = fe.list_games()
-    games = list(filter(lambda x: (x["pick_date"] == 'None' or parser.parse(x["pick_date"]) > datetime.datetime.now()) and x["status"] == "active", original))
+    games = fe.list_games(include_open=False, include_active=True) # Only get currently running games
+    
     async def get_page(page: int):
         embed = discord.Embed(title="Currently running games", description="")
         offset = (page - 1) * page_length
         for game in games:
-            game_members = fe.get_all_participants(game["id"])
+            game_members = fe.get_all_participants(game.id)
             embed.add_field(
-                name=f"{game["name"]}: [{game["id"]}]",
+                name=f"{game.name}: [{game.id}]", #TODO switch this to use the simpler formatting
                 value=f"""
-                    **Owned by:** <@{game["owner"]}>
-                    **Pick date:** {game["pick_date"] or "Not set"}
-                    **Starting Cash:** ${int(game["starting_money"])}
-                    Starting on `{game["start_date"]}` and ending on `{game["end_date"]}`
+                    **Owned by:** <@{game.owner_id}>
+                    **Pick date:** {game.pick_date or "Not set"}
+                    **Starting Cash:** ${int(game.start_money)}
+                    Starting on `{game.start_date}` and ending on `{game["end_date"]}`
                     There are currently **{len(game_members)}** members participating
                     """
                 )

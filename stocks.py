@@ -643,16 +643,20 @@ class Backend:
     def add_participant(self, user_id:int, game_id:int, team_name:Optional[str]=None):
         """Add a game participant
         
-        No checks are done here, any game can be joined.  Frontend will handle validation for this
-
+        Cannot add participant to a game that has already started.
+                
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
             team_name (Optional[str], optional): Nickname for this specific game.
+        
+        Raises:
+            ValueError('`pick_date` has passed.'): The pick date for the game has already passed, so the player cannot be added.
+            ValueError('Already in game.'): The participant ID is already in the game.
         """
         game = self.get_game(game_id=game_id)
         if game.start_date < datetime.today().date() and (game.pick_date and game.pick_date < datetime.today().date()):
-            raise ValueError('Cannot add player. `pick_date` has passed.')
+            raise ValueError('`pick_date` has passed.')
         if game.private_game and game.owner_id != user_id: # Otherwise the owner is pending lol
             status = 'pending'
         else:
@@ -668,9 +672,9 @@ class Backend:
         resp = self.sql.insert(table='game_participants', items=items)
         if resp.status != 'success': #TODO errors
             if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and 'game_participants.user_id, game_participants.game_id' in str(resp.result):
-                raise ValueError('Player already in game.')
+                raise ValueError('Already in game.')
             
-            raise Exception(f'Failed to add player.', resp)
+            raise Exception(f'Unexpected error while adding player.', resp)
         
     def get_participant(self, participant_id:int)-> dtv.GameParticipant: # Get game player info
         """Get a game participant's information
@@ -1091,16 +1095,19 @@ class Frontend: # This will be where a bot (like discord) interacts
         
        
     
-    def list_games(self, include_private:bool=False): 
-        """List games.
+    def list_games(self, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False): 
+        """List games
         
         Args:
-            include_private (bool, optional): Whether to include private games. Defaults to False.
-        
+            include_public (bool, optional): Include public games in results. Defaults to True.
+            include_private (bool, optional): Include private games in results. Defaults to False.
+            include_open (bool, optional): Include open games in results. Defaults to True.
+            include_active (bool, optional): Include active games in results. Defaults to True.
+            include_ended (bool, optional): Include ended games in results. Defaults to False.
         Returns:
             list: List of games
         """
-        games = self.be.get_many_games(include_private=include_private)
+        games = self.be.get_many_games(include_private=include_private, include_public=include_public, include_active=include_active, include_open=include_open, include_ended=include_ended)
         return games
     
     def game_info(self, game_id:int, show_leaderboard:bool=True): 
@@ -1118,11 +1125,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         # Return Tuples
         
         game = self.be.get_game(game_id) # Will raise an error for invalid games
-        game_obj = dict(game) # Make a copy so it quits acting like a child
-        game_obj['combined_value'] = round(game.current_value, 2) if game.current_value else 0# Round to two decimal places
+        game.current_value = round(game.current_value, 2) if game.current_value else 0# Round to two decimal places
         
         info = {
-            'game': game_obj,
+            'game': game,
         }
         if show_leaderboard:
             leaderboard = list()
@@ -1172,6 +1178,9 @@ class Frontend: # This will be where a bot (like discord) interacts
             user_id (int): User ID.
             game_id (int): Game ID.
             name (str, optional): Team name/nickname for game.
+        
+        Raises:
+            LookupError('Game not found.'): If no game with the provided ID is found
         """
         try:
             self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))
@@ -1311,15 +1320,16 @@ class Frontend: # This will be where a bot (like discord) interacts
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False. Cannot be changed once game has started.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime').
 
-        Returns:
+        Raises:
             dict: Status/result
         """
         if not self._user_owns_game(user_id=user_id, game_id=game_id):
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
 
-            
-        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
-
+        try:            
+            self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
+        except Exception as e: #TODO ERRORS
+            raise e
     
     def pending_game_users(self, user_id:int, game_id:int):
         """Get a list of pending users for private games
