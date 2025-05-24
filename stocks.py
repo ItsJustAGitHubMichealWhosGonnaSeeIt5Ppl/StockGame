@@ -457,6 +457,7 @@ class Backend:
             filters={'ticker': str(ticker_or_id)}
         else: # Ticker
             filters = {'stock_id': int(ticker_or_id)}
+            
         resp = self.sql.get(table='stocks', filters=filters)
         return self._single_get(model=dtv.Stock, resp=resp)
         
@@ -560,32 +561,38 @@ class Backend:
     
     
     # # STOCK PICK ACTIONS # #
-    def add_stock_pick(self, participant_id:int, stock_id:int,): # This is essentially putting in a buy order. End users should not be interacting with this directly 
-        """Create stock pick.
+    def add_stock_pick(self, participant_id:int, stock_id:int,): # This is essentially putting in a buy order. End users should not be interacting with this directly    
+        """Add a stock pick
 
         Args:
-            participant_id (int): Participant ID. Use get_participant_id() with user ID and game ID if you don't have it
+            participant_id (int): Participant ID.
             stock_id (int): Stock ID.
+        
+        Raises:
+            bexc.NotAllowedError: reason=Not active.  Player status isn't active, so cannot pick stocks
+            get_participant > bexc.DoesntExistError: Player not in game
+            bexc.NotAllowedError: reason=Past pick_date.  (only possible if a pick date is set).
+            bexc.NotAllowedError: reason=Maximum picks reached.  Player already has the maximum amount of stock picks.
+            Exception: Some other issues ocurred
         """
+        
         player = self.get_participant(participant_id)
         if player.status != 'active':
-            raise ValueError("User is not active in game.")
+            raise bexc.NotAllowedError(action='add_stock_pick', reason='Not active', message=f'Player status is {player.status}.  Must be active to pick stocks')
+
         
         game = self.get_game(game_id=player.game_id) 
         if game.pick_date and game.pick_date < datetime.today().date(): # Check that pick date hasn't passed
-            raise ValueError('Unable to add pick, past `pick_date`')
+            raise bexc.NotAllowedError(action='add_stock_pick', reason='Past pick_date', message='Cannot pick stock once pick date has passed')
         
         try:
             picks = self.get_many_stock_picks(participant_id=participant_id, status=['pending_buy', 'owned', 'pending_sell'])
-            if len(picks) >= game.pick_count: #
-                raise ValueError("Already at maximum picks.")
-        except LookupError as e:
-            if 'No items found' in str(e.args): # No stocks, so allow pick
-                pass
-            else:
-                raise LookupError(e.args)
+            if len(picks) >= game.pick_count: 
+                raise bexc.NotAllowedError(action='add_stock_pick', reason='Maximum picks reached', message='Player already has maximum amount of picks')
             
-        
+        except LookupError as e: # Should only be raised if no stocks are present
+            pass
+            
         items = {
             'participation_id':participant_id,
             'stock_id':stock_id,
@@ -726,9 +733,12 @@ class Backend:
             dict: Participant information.
         """
 
-        resp = self.sql.get(table='game_participants', filters={'participation_id': participant_id}) 
-        return self._single_get(model=dtv.GameParticipant, resp=resp)
-        
+        resp = self.sql.get(table='game_participants', filters={'participation_id': participant_id})
+        try:
+            return self._single_get(model=dtv.GameParticipant, resp=resp)
+        except LookupError:
+            raise bexc.DoesntExistError(table='game_participants', item=participant_id, message='Player not in game')
+
     def get_many_participants(self, game_id:Optional[int]=None, user_id:Optional[int]=None, status:Optional[str]=None, sort_by_value:bool=False)-> tuple[dtv.GameParticipant]:
         """Get multiple participants
 
@@ -927,6 +937,7 @@ class GameLogic: # Might move some of the control/running actions here
                 AND game_id = ?
                 )
             """ #TODO instead of setting games to active, just use start and end date?
+            
             resp = self.be.sql.get(table='stock_picks', filters=(pending_and_owned_query, game.id))
             picks = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
             for pick in picks:
@@ -1073,6 +1084,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
            int: Participant ID
         """
+        
         players = self.be.get_many_participants(user_id=user_id, game_id=game_id)
         if len(players) == 1:
             return players[0].id
@@ -1278,22 +1290,28 @@ class Frontend: # This will be where a bot (like discord) interacts
     # # STOCK RELATED
     def buy_stock(self, user_id:int, game_id:int, ticker:str):
         """Pick/buy a stock
+        
+        Prevents users from picking too many stocks, or picking stocks if the game has already started and the pick date has passed.
 
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
             ticker (str): Ticker.
-        """
-        player_id = self._participant_id(user_id=user_id, game_id=game_id)
-        try: # Try to add stock
-            self.gl.find_stock(ticker=str(ticker))
-        except ValueError as e: # Stock exists #TODO breakout specific errors
-            pass
-        stock = self.be.get_stock(ticker_or_id=str(ticker))
-
+            
+        Raises:
+            _participant_id > bexc.DoesntExistError: Player not in game
+            find_stock > ValueError: Failed to add stock (usually means the stock doesn't exist)
+            add_stock_pick > bexc.NotAllowedError: reason='Not active'.  Player status isn't active, so cannot pick stocks
+            add_stock_pick > bexc.NotAllowedError: reason='Past pick_date'.  (only possible if a pick date is set).
+            add_stock_pick > bexc.NotAllowedError: reason='Maximum picks reached'.  Player already has the maximum amount of stock picks.
+            add_stock_pick > Exception: Some other issues ocurred
+        """ #TODO should this return picks remaining? Could also add that as another function
+        
+        player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
+        self.gl.find_stock(ticker=str(ticker))  # This will add the stock
+        stock = self.be.get_stock(ticker_or_id=str(ticker)) # This should only run if the stock was added successfully
         self.be.add_stock_pick(participant_id=player_id, stock_id=stock.id) # Add the pick
 
-    
     def sell_stock(self, user_id:int, game_id:int, ticker:str): # Will also allow for cancelling an order #TODO add sell_stock
         pass
     

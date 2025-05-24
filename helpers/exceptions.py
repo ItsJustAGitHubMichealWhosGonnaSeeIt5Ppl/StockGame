@@ -9,7 +9,7 @@ class AlreadyExistsError(Exception):
         self.message = message
         super().__init__(self.message)
 
-class DoesntExistsError(Exception):
+class DoesntExistError(Exception):
     def __init__(self, table, item, message:str=''):
         self.table = table # Table that item was attempted to add to.
         self.item = item # Item that doesn't exist
@@ -64,12 +64,20 @@ class UserExistsError(Exception): # User alreadty exists
         self.user_id = user_id
         self.message = message
         super().__init__(self.message)
-        
-# # GAME # #
 
+
+# # GAME # #
 class InvalidDateFormatError(Exception):
     def __init__(self, date_field, message:str=''):
         self.date_field = date_field
         self.message = message
         super().__init__(self.message)
         
+        
+# # STOCK PICKS # #
+class NotAllowedError(Exception): 
+    def __init__(self, action:str, reason:str, message:str=''):
+        self.action = action
+        self.reason = reason
+        self.message = message
+        super().__init__(self.message)

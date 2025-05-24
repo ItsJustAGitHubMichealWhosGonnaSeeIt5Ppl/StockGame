@@ -2,6 +2,7 @@ import pytest
 from stocks import Frontend, Backend 
 from helpers.datatype_validation import GameInfo, GameLeaderboard
 from datetime import datetime
+import helpers.exceptions as bexc
 
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests, matches conftest
 MOCK_DATE_STR = "2025-05-21" # Fixed date for tests, matches conftest
@@ -497,9 +498,9 @@ class TestFrontend:
 
         ticker2 = "TICK2"
         _add_stock_to_db(fe.be, ticker2)
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(bexc.NotAllowedError) as excinfo:
             fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker2) # Second pick
-        assert "Already at maximum picks" in str(excinfo.value)
+        assert "Maximum picks reached" in str(excinfo.value.reason)
 
     def test_buy_stock_after_pick_date_passed(self, fe: Frontend, mocker):
         owner_id = 10
@@ -519,9 +520,9 @@ class TestFrontend:
 
         ticker = "LATEPICK"
         _add_stock_to_db(fe.be, ticker)
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(bexc.NotAllowedError) as excinfo:
             fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker)
-        assert "Unable to add pick, past `pick_date`" in str(excinfo.value)
+        assert "Past pick_date" in str(excinfo.value.reason)
 
     def test_buy_stock_participant_not_active(self, fe: Frontend):
         owner_id = 10
@@ -535,9 +536,9 @@ class TestFrontend:
         ticker = "INACTIVEBUY"
         _add_stock_to_db(fe.be, ticker)
 
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(bexc.NotAllowedError) as excinfo:
             fe.buy_stock(user_id=pending_id, game_id=game_db.id, ticker=ticker)
-        assert "User is not active in game" in str(excinfo.value)
+        assert "Not active" in str(excinfo.value.reason)
 
 
     # # SELL_STOCK # #

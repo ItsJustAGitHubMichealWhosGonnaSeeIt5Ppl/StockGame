@@ -20,6 +20,8 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
 from dotenv import load_dotenv
+from helpers.exceptions import NotAllowedError, DoesntExistError
+from typing import Optional
 
 load_dotenv()
 
@@ -41,6 +43,7 @@ intents.messages = True
 intents.guilds = True
 intents.members = True
 # intents.dm_messages = True # for invite user command
+
 
 # Logger thing
 def setup_logging(level): 
@@ -67,6 +70,25 @@ def has_permission(user:discord.member.Member):
     """
     return user.guild_permissions.administrator
 
+def simple_embed(status:str, title:str, desc:Optional[str]=None):
+    """Create a simple discord embed object
+    
+    Objects with a status of 'failed' will be set to red
+
+    Args:
+        status (str): Status/result of action ('success', 'failed')
+        title (str): Title.
+        desc (Optional[str], optional): Description. Defaults to None.
+
+    Returns:
+        discord.Embed: Embed object
+    """
+        
+    return discord.Embed(
+        title = title,
+        description = desc,
+        color= discord.Color.green() if status == 'success' else discord.Color.red()
+    )
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 logger.info(f'Connecting with DB: {DB_NAME}')
@@ -709,41 +731,46 @@ async def buy_stock(
     game_id: int, 
     ticker: str
 ):
-    game_picks = fe.game_info(game_id=game_id, show_leaderboard=False).game.pick_count
-    my_picks = len(fe.my_stocks(interaction.user.id, game_id))
-
-    picks_left = game_picks - my_picks
-
-    if picks_left <= 0:
-        embed = discord.Embed(
-            title="Game Pick Limit Reached",
-            description=f"You have reached the maximum number of picks ({game_picks}) for this game.\nYou need to remove a stock before you can buy another one.",
-            color=discord.Color.red()
+    
+    status = 'failed' # Start with failed status
+    title = 'Stock Purchase Failed'
+    try:
+        fe.buy_stock(
+            user_id=interaction.user.id,
+            game_id=game_id,
+            ticker=ticker
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-    else:
-        try:
-            fe.buy_stock(
-                user_id=interaction.user.id,
-                game_id=game_id,
-                ticker=ticker
-            )
-
-            embed = discord.Embed(
-                title="Stock Purchase Successful",
-                description=f"You have successfully bought {ticker} in game: {game_id}.",
-                color=discord.Color.green()
-            )
-
-        except Exception as e:
-            embed = discord.Embed(
-                title="Stock Purchase Failed",
-                description=f"Could not buy {ticker} in game: {game_id}.",
-                color=discord.Color.red()
-            )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        title = 'Stock Purchased'
+        description = f'You have successfully bought {ticker} in game: {game_id}.'
+        status = 'success'
+        
+    except NotAllowedError as exc: # REASONS ARE NOW IN THE DOCSTRING OF buy_stock!!
+        if exc.reason == 'Not active': # Player isn't an active member of the game - IDK HOW YOU WANT TO TELL THE USER THIS.  This could happen if they got banned, or if the game is private and they haven't been approved
+            description = f'You are not allowed to buy stocks in the game: {game_id}.'
+        
+        elif exc.reason == 'Maximum picks reached':
+            title="Game Pick Limit Reached"
+            description = f'You have reached the maximum number of picks for this game.\nTo add another stock, you need to remove one of your current picks.'
+        
+        elif exc.reason == 'Past pick_date':
+            description = f'The pick date for this game has passed, so you can no longer pick stocks.'
+            
+    except DoesntExistError as exc: # Player isnt in the game at all
+        if exc.table == 'game_participants':
+            description = f'You are not in the game: {game_id}.'
+            
+    except Exception as e: # Other unexpeted errors
+        logger.exception(f'User: {interaction.user.id} tried to buy the stock: {ticker} in game: {game_id}. Error: {e}')
+        description=f'An unexpected error ocurred while trying to buy a stock\nReport this! Ticker: {ticker}, Game: {game_id}'
+            
+    await interaction.response.send_message(
+        embed=simple_embed( # This just creates the status message
+            status = status,
+            title = title,
+            desc = description
+            ), 
+        ephemeral=True
+        )
 
 # TODO add autofill for user's stocks and games
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
@@ -756,27 +783,25 @@ async def remove_stock(
     game_id: int, 
     ticker: str
 ):
+   
+    status = 'failed'
     try:
         fe.remove_pick(
             user_id=interaction.user.id,
             game_id=game_id,
             ticker=ticker
         )
+        status = 'success'
+        title="Stock Removal Successful"
+        description=f"You have successfully removed {ticker} from your picks in game: {game_id}."
 
-        embed = discord.Embed(
-            title="Stock Removal Successful",
-            description=f"You have successfully removed {ticker} from your picks in game: {game_id}.",
-            color=discord.Color.green()
-        )
         
     except Exception as e:
-        embed = discord.Embed(
-            title="Stock Removal Failed",
-            description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}",
-            color=discord.Color.red()
-        )
-        
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        status = 'failed'
+        title="Stock Removal Failed"
+        description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}"
+
+    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=True)
 
 # TODO Get user's stocks from frontend
 # TODO Add autofill for user's games
