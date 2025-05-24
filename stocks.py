@@ -39,10 +39,10 @@ class Backend:
     # Raise Exceptions if bad data is passed in
     # Most of these expect that the data being sent has been checked or otherwise verified.  End users should not interact directly with this
     def __init__(self, db_name:str):
-        """Backend class
+        """Methods for interacting directly with the database
         
-        The backend only performs basic validation to confirm that invalid information is not being sent to the database.  Things like prevening a user from joining a game that has already started, etc. are handled in `Frontend()`
-        
+        Methods in this class will only perform basic validation of what is sent to prevent the database from being damaged.  These methods should never be directly interacted with by users.  The `Frontend()` class should be used instead.
+                
         Updating stock prices, picks, etc. are handled in `GameLogic()`
         
         Args:
@@ -1064,7 +1064,8 @@ class Frontend: # This will be where a bot (like discord) interacts
     
         try: # Try create user
             user = self.register(user_id=user_id)  
-        except ValueError: # User was already there, my bad
+        except bexc.UserExistsError: # User was already there, my bad
+            self.logger.info(f'User with ID {user_id} already exists.')
             pass #TODO log
     
         try:  # Create game
@@ -1159,7 +1160,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         try:
             self.be.add_user(user_id=user_id, source=source if source else self.source, display_name=username, permissions=self.default_perms)
             return "Registered"
-        except ValueError: # user already exists
+        except bexc.UserExistsError: # user already exists
             return "User already registered"
 
     def change_name(self, user_id:int, name:str):

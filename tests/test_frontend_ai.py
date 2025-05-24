@@ -1,6 +1,6 @@
 import pytest
 from stocks import Frontend, Backend 
-from helpers.datatype_validation import Games
+from helpers.datatype_validation import GameInfo, GameLeaderboard
 from datetime import datetime
 
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests, matches conftest
@@ -180,10 +180,10 @@ class TestFrontend:
 
         info = fe.game_info(game_id=game_db.id, show_leaderboard=False)
 
-        assert 'game' in info
-        assert 'leaderboard' not in info
-        assert info['game']['name' ]== game_name
-        assert info['game']['id'] == game_db.id
+        assert isinstance(info, GameInfo)
+        assert info.leaderboard == None
+        assert info.game.name== game_name
+        assert info.game.id== game_db.id
 
 
 
@@ -214,22 +214,23 @@ class TestFrontend:
 
         info = fe.game_info(game_id=game_db.id, show_leaderboard=True)
 
-        assert 'game' in info
-        assert 'leaderboard' in info
-        assert info['game']['name' ]== game_name
-        assert info['game']['combined_value'] == 2222.22 
+        assert isinstance(info, GameInfo)
+        assert isinstance(info.leaderboard, list)
+        assert info.game.name== game_name
+        assert info.game.id== game_db.id
+        assert info.game.current_value == 2222.22 
 
 
-        assert len(info['leaderboard']) == 2
-        leaderboard_user_ids = {item['user_id'] for item in info['leaderboard']}
+        assert len(info.leaderboard) == 2
+        leaderboard_user_ids = {item.user_id for item in info.leaderboard}
         assert owner_id in leaderboard_user_ids
         assert user2_id in leaderboard_user_ids
 
-        for item in info['leaderboard']:
-            if item['user_id'] == owner_id:
-                assert item['current_value'] == 1234.57
-            elif item['user_id'] == user2_id:
-                assert item['current_value'] == 987.65
+        for item in info.leaderboard:
+            if item.user_id == owner_id:
+                assert item.current_value == 1234.57
+            elif item.user_id == user2_id:
+                assert item.current_value == 987.65
 
 
     def test_game_info_non_existent_game(self, fe: Frontend):
@@ -339,7 +340,7 @@ class TestFrontend:
         fe.new_game(user_id=user_id, name=game_name, start_date="2025-02-01", pick_date="2025-02-01")
         with pytest.raises(ValueError) as excinfo: # SqlHelper wraps SQL errors
              fe.join_game(user_id=user_id, game_id=1) # Game 999 does not exist
-        assert "Cannot add player. `pick_date` has passed." in str(excinfo)
+        assert "`pick_date` has passed." in str(excinfo)
 
 
     def test_join_game_twice_by_same_user(self, fe: Frontend):
@@ -352,7 +353,7 @@ class TestFrontend:
         with pytest.raises(ValueError) as excinfo:
             fe.join_game(user_id=owner_id, game_id=game_db.id)
         
-        assert "Player already in game." in str(excinfo)
+        assert "Already in game." in str(excinfo)
 
 
     # # MY_GAMES # #
@@ -372,10 +373,10 @@ class TestFrontend:
 
         result = fe.my_games(user_id=user_id)
 
-        assert result['user'].id == user_id
-        assert len(result['games']) == 1
-        assert result['games'][0].id == game_db.id
-        assert result['games'][0].name == game_name
+        assert result.user.id == user_id
+        assert len(result.games) == 1
+        assert result.games[0].id == game_db.id
+        assert result.games[0].name == game_name
 
     def test_my_games_multiple_games(self, fe: Frontend):
         user_id = 10
@@ -393,9 +394,9 @@ class TestFrontend:
 
         result = fe.my_games(user_id=user_id)
 
-        assert result['user'].id == user_id
-        assert len(result['games']) == 2
-        game_ids_in_result = {g.id for g in result['games']}
+        assert result.user.id == user_id
+        assert len(result.games) == 2
+        game_ids_in_result = {g.id for g in result.games}
         assert game1_db.id in game_ids_in_result
         assert game2_db.id in game_ids_in_result
         
