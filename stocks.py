@@ -55,8 +55,20 @@ class Backend:
 
     # # INTERNAL # #
     def _single_get(self, model:Type[dtv.PydanticModelType], resp:Status)-> dtv.PydanticModelType: # Handle single gets
-        #TODO add Literal for table
+        """Check, validate, and format single get requests
 
+        Args:
+            model (Type[dtv.PydanticModelType]): Model to validate item against.
+            resp (Status): Status object from sqlhelper.
+
+        Raises:
+            LookupError(Item not found.):  Raised if no items are found.
+            LookupError('Expected one item, but got x): Raised if more than one item is found.
+            Exception(Failed to get item.(more info)): Raised if another issue is encountered.
+
+        Returns:
+            dtv.PydanticModelType: Will return the validated and formatted object for item.
+        """
         
         if resp.status == 'success':
             assert isinstance(resp.result, tuple)
@@ -70,6 +82,19 @@ class Backend:
             raise Exception('Failed to get item.', resp)
         
     def _many_get(self, typeadapter:TypeAdapter, resp:Status)-> tuple:
+        """Check, validate, and format multi get requests
+
+        Args:
+            typeadapter (TypeAdapter): Wrapper for multiple objects that need to be validated
+            resp (Status): Status object from sqlhelper.
+
+        Raises:
+            LookupError(Item not found.):  Raised if no items are found.
+            Exception(Failed to get items.(more info)): Raised if another issue is encountered.
+
+        Returns:
+            tuple: Tuple of formatted objects.
+        """
         assert isinstance(resp.result, tuple) # Real and true
         if resp.status == 'success' and len(resp.result) > 0:
             assert isinstance(resp.result, tuple)
@@ -79,7 +104,7 @@ class Backend:
         else:
             raise Exception(f'Failed to get items.', resp)
         
-    def _validate_date(self, date:str, format:str='%Y-%m-%d')-> bool: # Will return a datetime object
+    def _validate_date(self, date:str, format:str='%Y-%m-%d')-> bool: # #TODO is this really needed anymore?
         """Attempt to validate a string formatted date
 
         Args:
@@ -87,18 +112,22 @@ class Backend:
             format (str, optional): datetime formatting string. Defaults to '%Y-%m-%d'.
 
         Returns:
-            bool:  True if valid.
+            bool: True if valid.
         """
         try:
             validated: datetime = datetime.strptime(date, format)
+            return True
         except ValueError:
             return False
         
-        return True
+    def _update_single(self, table:str, item_id:int, **update_columns):
+        pass
     
     # # USER ACTIONS # #
     def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
+        
+        Add a single user to the database
 
         Args:
             user_id (int): UNIQUE ID to identify user.
@@ -116,9 +145,11 @@ class Backend:
         
         resp = self.sql.insert(table='users', items=items)
         if resp.status != 'success': #TODO errors
-            if resp.reason == 'SQLITE_CONSTRAINT_PRIMARYKEY':
+            if resp.reason == 'SQLITE_CONSTRAINT_PRIMARYKEY': # User already in the database
                 raise bexc.UserExistsError(user_id=user_id)
-            else:
+            elif resp.reason == 'SQLITE_MISMATCH': # Invalid data in one of the fields
+                raise bexc.WrongTypeError(table='users')
+            else: # Can't think of any other issues you could have with this honestly
                 raise Exception(f'Failed to add user.', resp)
         
     def get_user(self, user_id:int) -> dtv.User:
@@ -161,18 +192,29 @@ class Backend:
         else:
             return users
          
-    def update_user(self, user_id: int, display_name:Optional[str]=None, permissions:Optional[int]=None):
+    def update_user(self, user_id: int, source:Optional[str]=None, display_name:Optional[str]=None, permissions:Optional[int]=None):
         """Update an existing user
+        
+        Must provide atleast one arg to update in addition to the user_id
 
         Args:
             user_id (int): User ID.
             display_name (Optional[str], optional): Display name.
             permissions (Optional[str], optional): Permissions.
+            
+        Raises:
+            ValueError(Atleast one arg must be changed.): Raised if no args besides user_id are passed.
         """
+        
+        if not display_name and not permissions and not source: # Must have atleast once of these changed
+            raise ValueError('Atleast one arg must be changed.')
+            
         items = {
             'display_name': display_name,
-            'permissions': permissions
-            }
+            'permissions': permissions,
+            'source': source
+            }# TODO tag that an update ocurred
+        
         
         resp = self.sql.update(table="users", filters={'user_id': user_id}, items=items) 
         if resp.status != 'success': #TODO errors
@@ -1378,10 +1420,9 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.be._update_single('1', 2, two=3)
     game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
-    #create = game.new_game(user_id=OWNER, name="TestGame", start_date="2025-05-06", end_date="2025-05-30") # Try to create game
     many_games = game.be.get_many_games(include_private=True)
-    #game.be.update_game(game_id=1, name='TestGameUpd')
     game.register(user_id=1123)
     game.join_game(user_id=1123, game_id=1)
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
@@ -1390,9 +1431,7 @@ if __name__ == "__main__":
     my_stock = game.my_stocks(user_id=OWNER, game_id=1)
     print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
     
-    print(game.be.get_many_users(ids_only=True)) # List users from the backend
-    print(game.list_games()) # Print list of games
-    print(game.my_games(user_id=OWNER)) # Try to list games you are joined to
+
     for user in test_users: # Add some random users
         print(game.register(user_id=user, username=str(user)))
         try:

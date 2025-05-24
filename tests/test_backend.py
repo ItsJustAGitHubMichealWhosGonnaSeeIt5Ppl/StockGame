@@ -39,6 +39,12 @@ class TestBackend:
         with pytest.raises(bexc.UserExistsError) as exc:
             be.add_user(user_id=user_id, source='discord', display_name='DuplicateUser')
         assert exc.value.user_id == user_id
+        
+    def test_add_user_str_id(self, be: Backend):
+        """Test adding a user with an ID that already exists."""
+        user_id = '1oh2'
+        with pytest.raises(bexc.WrongTypeError) as exc:
+            be.add_user(user_id=user_id, source='discord', display_name='OriginalUser')
 
     def test_get_user_not_found(self, be: Backend):
         """Test getting a user that does not exist."""
