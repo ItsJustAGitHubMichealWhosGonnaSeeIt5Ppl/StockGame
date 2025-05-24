@@ -226,56 +226,6 @@ async def create_game(interaction: discord.Interaction):
         
         # Define what happens when the modal is submitted
         async def initial_wizard_callback(interaction: discord.Interaction):
-            # # Ask if wanted end date - couldn't get the no button to work
-            # # Create an end date embed
-            # end_date_embed = discord.Embed(
-            #     title="End Date",
-            #     description="Do you want to set an end date for the game?",
-            #     color=discord.Color.blue()
-            # )
-
-            # end_date_yes = discord.ui.Button(
-            #     label="Yes",
-            #     style=discord.ButtonStyle.success,
-            #     custom_id="end_date_yes"
-            # )
-
-            # end_date_no = discord.ui.Button(
-            #     label="No",
-            #     style=discord.ButtonStyle.danger,
-            #     custom_id="end_date_no"
-            # )
-
-            # end_date_view = discord.ui.View()
-
-            # end_date_view.add_item(end_date_yes)
-            # end_date_view.add_item(end_date_no)
-
-            # await interaction.response.edit_message(embed=end_date_embed, view=end_date_view)
-            
-            # # Define what happens when the end date button is clicked
-            # async def end_date_callback(interaction: discord.Interaction):                
-            #     # Check which button was clicked
-            #     if interaction.data["custom_id"] == "end_date_yes":
-            #         end_date_input = discord.ui.TextInput(
-            #             label="End Date (YYYY-MM-DD)",
-            #             placeholder="YYYY-MM-DD",
-            #             required=True,
-            #             max_length=10,
-            #             min_length=10,
-            #             style=discord.TextStyle.short
-            #         )
-                    
-            #         end_date_modal = discord.ui.Modal(title="Create Game Wizard", timeout=60)
-
-            #         end_date_modal.add_item(end_date_input)
-
-            #         await interaction.response.send_modal(end_date_modal)
-                
-            #     else:
-            #         end_date_input = None
-                
-            #     async def end_date_modal_callback(interaction: discord.Interaction):
             # Create a exclusive picks embed
             exclusive_picks_embed = discord.Embed(
                 title="Do you want exclusive picks?",
@@ -307,123 +257,208 @@ async def create_game(interaction: discord.Interaction):
             async def exclusive_picks_callback(interaction: discord.Interaction):
                 # Check which button was clicked
                 if interaction.data["custom_id"] == "exclusive_picks_yes":
-                    exclusive_picks = True
+                    game_exclusive_picks = True
                 else:
-                    exclusive_picks = False
-                
-                # # Create a response embed for join after start
-                # join_after_start_embed = discord.Embed(
-                #     title="Do you want players to join after the game starts?",
-                #     description="If you select 'Yes', players can join after the game starts. If you select 'No', players cannot join after the game starts.",
-                #     color=discord.Color.blue()
-                # )
+                    game_exclusive_picks = False
 
-                # # Create buttons for join after start
-                # join_after_start_yes = discord.ui.Button(
-                #     label="Yes",
-                #     style=discord.ButtonStyle.success,
-                #     custom_id="join_after_start_yes"
-                # )
+                pick_date_modal = discord.ui.Modal(title="Pick Date", timeout=60)
 
-                # join_after_start_no = discord.ui.Button(
-                #     label="No",
-                #     style=discord.ButtonStyle.danger,
-                #     custom_id="join_after_start_no"
-                # )
-
-                # join_after_start_view = discord.ui.View()
-                # join_after_start_view.add_item(join_after_start_yes)
-                # join_after_start_view.add_item(join_after_start_no)
-                
-                # # Send the response
-                # await interaction.response.edit_message(embed=join_after_start_embed, view=join_after_start_view)
-
-                # # Define what happens when the join after start button is clicked
-                # async def join_after_start_callback(interaction: discord.Interaction):                            
-                #     # Check which button was clicked
-                #     if interaction.data["custom_id"] == "join_after_start_yes":
-                #         join_after_start = True
-                #     else:
-                #         join_after_start = False
-
-                game_name= name_input.value
-                game_start_date=start_date_input.value
-                game_end_date=end_date_input.value if end_date_input.value else None
-                game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
-                game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
-                
-                # Confirm the game creation with the provided inputs
-                confirmation_embed = discord.Embed(
-                    title="Game Creation Confirmation",
-                    description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}",
-                    color=discord.Color.blue()
-                )
-                confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
-            
-                confirmation_view = discord.ui.View()
-
-                confirm_button = discord.ui.Button(
-                    label="Confirm",
-                    style=discord.ButtonStyle.success,
-                    custom_id="confirm_game_creation"
+                pick_date_input = discord.ui.TextInput(
+                    label=f"Pick Date{' *leave blank for no pick date' if not game_exclusive_picks else ''}",
+                    placeholder="YYYY-MM-DD",
+                    required=game_exclusive_picks,
+                    max_length=10,
+                    min_length=10,
+                    style=discord.TextStyle.short
                 )
 
-                cancel_button = discord.ui.Button(
-                    label="Cancel",
-                    style=discord.ButtonStyle.danger,
-                    custom_id="cancel_game_creation"
-                )
-
-                confirmation_view.add_item(confirm_button)
-                confirmation_view.add_item(cancel_button)
-                await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
-
-                # Define what happens when the confirm button is clicked
-                async def confirm_callback(interaction: discord.Interaction):
-                    # Create the game using the provided inputs
-                    try:
-                        fe.new_game(
-                            user_id=interaction.user.id,
-                            name=game_name,
-                            start_date=game_start_date,
-                            end_date=game_end_date,
-                            starting_money=game_starting_money,
-                            total_picks=game_total_picks,
-                            exclusive_picks=exclusive_picks,
-                            #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
-                            sell_during_game=False # Placeholder for sell_during_game
-                            # sell_during_game=sell_during_game
-                        )
-                        creation_status_embed = discord.Embed(
-                            title="Game Created Successfully",
-                            description=f"Game '{name_input.value}' has been created!",
-                            color=discord.Color.green()
-                        )
-                    except ValueError as e:
-                        creation_status_embed = discord.Embed(
-                            title="Game Creation Failed",
-                            description=e,
-                            color=discord.Color.red()
-                        )
-                    
-                    await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                pick_date_modal.add_item(pick_date_input)
                 
-                # Define what happens when the cancel button is clicked
-                async def cancel_callback(interaction: discord.Interaction):
-                    cancel_embed = discord.Embed(
-                        title="Game Creation Cancelled",
-                        description="The game creation process has been cancelled.",
-                        color=discord.Color.red()
+                await interaction.response.send_modal(pick_date_modal)
+                
+                async def pick_date_callback(interaction: discord.Interaction):
+
+                    # Create a response embed for join after start
+                    private_embed = discord.Embed(
+                        title="Do you want your game to be private?",
+                        description="If you select 'Yes', the game ID will be hidden in the game-list command. If you select 'No', it will be visible.",
+                        color=discord.Color.blue()
                     )
-                    await interaction.response.edit_message(embed=cancel_embed, view=None)                    
-    
-                # Set the confirm button callbacks
-                confirm_button.callback = confirm_callback
-                cancel_button.callback = cancel_callback
-            
-                # # Set the join after button callback
-                # join_after_start_yes.callback = join_after_start_callback
-                # join_after_start_no.callback = join_after_start_callback
+
+                    # Create buttons for join after start
+                    private_yes = discord.ui.Button(
+                        label="Yes",
+                        style=discord.ButtonStyle.success,
+                        custom_id="private_yes"
+                    )
+
+                    private_no = discord.ui.Button(
+                        label="No",
+                        style=discord.ButtonStyle.danger,
+                        custom_id="private_no"
+                    )
+
+                    private_game_view = discord.ui.View()
+                    private_game_view.add_item(private_yes)
+                    private_game_view.add_item(private_no)
+                    
+                    # Send the response
+                    await interaction.response.edit_message(embed=private_embed, view=private_game_view)
+
+                    # Define what happens when the join after start button is clicked
+                    async def private_game_callback(interaction: discord.Interaction):                            
+                        # Check which button was clicked
+                        if interaction.data["custom_id"] == "private_yes":
+                            private_game = True
+                        else:
+                            private_game = False
+
+                        # Create a response embed for update frequency
+                        update_frequency_embed = discord.Embed(
+                            title="Update Frequency",
+                            description="How often should the stock prices update?\nDefaults to daily.",
+                            color=discord.Color.blue()
+                        )
+
+                        # Create buttons for update frequency
+                        update_frequency_daily = discord.ui.Button(
+                            label="Daily",
+                            style=discord.ButtonStyle.success,
+                            custom_id="update_frequency_daily"
+                        )
+
+                        update_frequency_hourly = discord.ui.Button(
+                            label="Hourly",
+                            style=discord.ButtonStyle.success,
+                            custom_id="update_frequency_hourly"
+                        )
+
+                        update_frequency_minute = discord.ui.Button(
+                            label="Minute",
+                            style=discord.ButtonStyle.success,
+                            custom_id="update_frequency_minute"
+                        )
+
+                        update_frequency_realtime = discord.ui.Button(
+                            label="Realtime",
+                            style=discord.ButtonStyle.success,
+                            custom_id="update_frequency_realtime"
+                        )
+
+                        update_frequency_view = discord.ui.View()
+                        update_frequency_view.add_item(update_frequency_daily)
+                        update_frequency_view.add_item(update_frequency_hourly)
+                        update_frequency_view.add_item(update_frequency_minute)
+                        update_frequency_view.add_item(update_frequency_realtime)
+
+                        await interaction.response.edit_message(embed=update_frequency_embed, view=update_frequency_view)
+
+                        async def update_frequency_callback(interaction: discord.Interaction):
+                            # Check which button was clicked
+                            if interaction.data["custom_id"] == "update_frequency_daily":
+                                game_update_frequency = "daily"
+                            elif interaction.data["custom_id"] == "update_frequency_hourly":
+                                game_update_frequency = "hourly"
+                            elif interaction.data["custom_id"] == "update_frequency_minute":
+                                game_update_frequency = "minute"
+                            else:
+                                game_update_frequency = "realtime"
+
+                            
+
+                            game_name=name_input.value
+                            game_start_date=start_date_input.value
+                            game_end_date=end_date_input.value if end_date_input.value else None
+                            game_pick_date=pick_date_input.value if pick_date_input.value else None
+                            game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
+                            game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
+                            
+                            # Confirm the game creation with the provided inputs
+                            confirmation_embed = discord.Embed(
+                                title="Game Creation Confirmation",
+                                description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {game_exclusive_picks}\nPrivate Game: {private_game}\nUpdate Frequency: {game_update_frequency}",
+                                color=discord.Color.blue()
+                            )
+                            confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
+                        
+                            confirmation_view = discord.ui.View()
+
+                            confirm_button = discord.ui.Button(
+                                label="Confirm",
+                                style=discord.ButtonStyle.success,
+                                custom_id="confirm_game_creation"
+                            )
+
+                            cancel_button = discord.ui.Button(
+                                label="Cancel",
+                                style=discord.ButtonStyle.danger,
+                                custom_id="cancel_game_creation"
+                            )
+
+                            confirmation_view.add_item(confirm_button)
+                            confirmation_view.add_item(cancel_button)
+                            await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
+
+                            # Define what happens when the confirm button is clicked
+                            async def confirm_callback(interaction: discord.Interaction):
+                                # Create the game using the provided inputs
+                                try:
+                                    fe.new_game(
+                                        user_id=interaction.user.id,
+                                        name=game_name,
+                                        start_date=game_start_date,
+                                        end_date=game_end_date,
+                                        pick_date=game_pick_date,
+                                        starting_money=game_starting_money,
+                                        total_picks=game_total_picks,
+                                        exclusive_picks=game_exclusive_picks,
+                                        private_game=private_game,
+                                        update_frequency=game_update_frequency,
+                                        #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
+                                        sell_during_game=False # Placeholder for sell_during_game
+                                        # sell_during_game=sell_during_game
+                                    )
+
+                                    creation_status_embed = discord.Embed(
+                                        title="Game Created Successfully",
+                                        description=f"Game '{name_input.value}' has been created!",
+                                        color=discord.Color.green()
+                                    )
+
+                                except ValueError as e:
+                                    creation_status_embed = discord.Embed(
+                                        title="Game Creation Failed",
+                                        description=e,
+                                        color=discord.Color.red()
+                                    )
+                                
+                                await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                            
+                            # Define what happens when the cancel button is clicked
+                            async def cancel_callback(interaction: discord.Interaction):
+                                cancel_embed = discord.Embed(
+                                    title="Game Creation Cancelled",
+                                    description="The game creation process has been cancelled.",
+                                    color=discord.Color.red()
+                                )
+                                await interaction.response.edit_message(embed=cancel_embed, view=None)                    
+                
+                            # Set the confirm button callbacks
+                            confirm_button.callback = confirm_callback
+                            cancel_button.callback = cancel_callback
+
+                        # Set the update frequency button callbacks
+                        update_frequency_daily.callback = update_frequency_callback
+                        update_frequency_hourly.callback = update_frequency_callback
+                        update_frequency_minute.callback = update_frequency_callback
+                        update_frequency_realtime.callback = update_frequency_callback
+                
+                    # Set the join after button callback
+                    private_yes.callback = private_game_callback
+                    private_no.callback = private_game_callback
+
+                # Set the pick date modal callback
+                pick_date_modal.on_submit = pick_date_callback
 
             # Set the exclusive button callback
             exclusive_picks_yes.callback = exclusive_picks_callback
