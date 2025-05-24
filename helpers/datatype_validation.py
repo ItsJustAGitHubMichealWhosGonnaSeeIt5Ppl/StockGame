@@ -25,7 +25,7 @@ class Status(BaseModel): # Status item
 class User(BaseModel):
     id: int = Field(validation_alias=AliasChoices('user_id'))
     display_name: Optional[str] = None
-    source: str
+    source: Optional[str] = None
     permissions: int = 210
     datetime_created: datetime
 
