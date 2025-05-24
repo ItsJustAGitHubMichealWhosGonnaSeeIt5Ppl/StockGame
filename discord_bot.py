@@ -65,10 +65,8 @@ def has_permission(user:discord.member.Member):
     Returns:
         bool: True if allowed
     """
-    if user.guild_permissions.administrator:
-        return True
-    else:
-        return False
+    return user.guild_permissions.administrator
+
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 logger.info(f'Connecting with DB: {DB_NAME}')
@@ -133,7 +131,6 @@ async def create_game_advanced(
             #sell_during_game=False, - NOT IMPLEMENTED
         )
         
-
         embed = discord.Embed(
             title="Game Created Successfully",
             description=f"Game '{name}' has been created!",
@@ -146,7 +143,6 @@ async def create_game_advanced(
         color=discord.Color.red()
         )
      
-    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
