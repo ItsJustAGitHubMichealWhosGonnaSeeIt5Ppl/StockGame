@@ -1,5 +1,6 @@
 import pytest
 from stocks import Frontend # Your Backend class
+from datetime import datetime
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests
 
 
@@ -19,11 +20,11 @@ class TestFrontend:
             start_date=start_date,
         )
         game = fe.be.get_game(game_id=1)
-        assert game['id'] == 1 # First game should be one
-        assert game['owner'] == user_id # First game should be one
-        assert game['name'] == game_name 
-        assert game['start_date'] == start_date 
-        assert game['end_date'] == None 
+        assert game.id == 1 # First game should be one
+        assert game.owner_id == user_id # First game should be one
+        assert game.name == game_name 
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date == None 
     
     def test_new_game_success(self, fe: Frontend):
         user_id = 10 # Matches conftest
@@ -50,16 +51,16 @@ class TestFrontend:
             update_frequency=update_frequency
         )
         game = fe.be.get_game(game_id=1)
-        assert game['id'] == 1 # First game should get ID 1
-        assert game['name'] == game_name # First game should get ID 1
-        assert game['start_date'] == start_date # First game should get ID 1
-        assert game['end_date'] == end_date # First game should get ID 1
-        assert game['starting_money'] == starting_money # First game should get ID 1
-        assert game['pick_date'] == pick_date # First game should get ID 1
-        assert game['total_picks'] == total_picks # First game should get ID 1
-        assert game['exclusive_picks'] == draft_mode # First game should get ID 1
-        assert game['sell_during_game'] == sell_during_game # First game should get ID 1
-        assert game['update_frequency'] == update_frequency # First game should get ID 1
+        assert game.id == 1 
+        assert game.name == game_name 
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
+        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date() 
+        assert game.start_money == starting_money 
+        assert game.pick_count == total_picks 
+        assert game.draft_mode == draft_mode 
+        assert game.allow_selling == sell_during_game 
+        assert game.update_frequency == update_frequency 
     
     
     # # LIST_GAMES # #    
@@ -81,7 +82,7 @@ class TestFrontend:
         
         games = fe.list_games(include_private=False)
         assert len(games) == 1 # Only 1 game should be returned
-        assert games[0]['name'] == 'PublicGame'
+        assert games[0].name == 'PublicGame'
         
     def test_list_all_games(self, fe: Frontend): # Include private ones this time
         user_id = 10 # Matches conftest
@@ -101,22 +102,16 @@ class TestFrontend:
         
         games = fe.list_games(include_private=True)
         assert len(games) == 2 # 2 games should be returned
-        assert games[1]['name'] == 'PrivateGame'
-        assert games[0]['name'] == 'PublicGame'
+        assert games[1].name == 'PrivateGame'
+        assert games[0].name == 'PublicGame'
         
     def test_list_no_games(self, fe: Frontend): # Include private ones this time
         user_id = 10 # Matches conftest
         start_date = '2025-10-10'
         
-        fe.new_game( # Create a private game
-            user_id=user_id,
-            name='PrivateGame',
-            start_date=start_date,
-            private_game=True
-        )
-        
-        games = fe.list_games(include_private=False)
-        assert len(games) == 0 # no games should be returned
+
+        with pytest.raises(LookupError):
+            games = fe.list_games(include_private=False)
 
     
     # # GAME_INFO # #
@@ -131,9 +126,9 @@ class TestFrontend:
         )
         
         user = fe.be.get_user(user_id=11)
-        assert user['id'] == user_id
-        assert user['source'] == source
-        assert user['creation_date'] == MOCK_DATETIME_STR
+        assert user.id == user_id
+        assert user.source == source
+        assert user.datetime_created == datetime.strptime(MOCK_DATETIME_STR, "%Y-%m-%d %H:%M:%S"), "Creation date should match the mocked timestamp."    
         
     def test_register_full(self, fe: Frontend):
         user_id = 11
@@ -144,9 +139,9 @@ class TestFrontend:
         )
         
         user = fe.be.get_user(user_id=11)
-        assert user['id'] == user_id
-        assert user['source'] == source
-        assert user['creation_date'] == MOCK_DATETIME_STR
+        assert user.id == user_id
+        assert user.source == source
+        assert user.datetime_created == datetime.strptime(MOCK_DATETIME_STR, "%Y-%m-%d %H:%M:%S"), "Creation date should match the mocked timestamp."   
         
     def test_register_duplicate(self, fe: Frontend):
         user_id = 11

@@ -1,5 +1,7 @@
 import pytest
 from stocks import Backend 
+from datetime import datetime
+import helpers.exceptions as bexc
 
 # This will be the fixed timestamp used by the mocked _iso8601
 MOCK_DATETIME_STR = "2025-05-21 10:00:00"
@@ -20,33 +22,37 @@ class TestBackend:
             display_name=display_name,
             permissions=permissions
         )
+        user_raw = be.sql.get(table='users')
         user = be.get_user(user_id=user_id)
         assert user is not None, "User should be found in the database."
-        assert user['id'] == user_id
-        assert user['username'] == display_name, "Display name should match."
-        assert user['source'] == source
-        assert user['permissions'] == permissions
-        assert user['creation_date'] == MOCK_DATETIME_STR, "Creation date should match the mocked timestamp."
+        assert user.id == user_id
+        assert user.display_name == display_name, "Display name should match."
+        assert user.source == source
+        assert user.permissions == permissions
+        assert user.datetime_created == datetime.strptime(MOCK_DATETIME_STR, "%Y-%m-%d %H:%M:%S"), "Creation date should match the mocked timestamp."
 
     def test_add_user_duplicate_id(self, be: Backend):
         """Test adding a user with an ID that already exists."""
         user_id = 102
         be.add_user(user_id=user_id, source='discord', display_name='OriginalUser')
 
-        with pytest.raises(ValueError, match=f'User with ID {user_id} already exists.'):
+        with pytest.raises(bexc.UserExistsError) as exc:
             be.add_user(user_id=user_id, source='discord', display_name='DuplicateUser')
+        assert exc.value.user_id == user_id
 
     def test_get_user_not_found(self, be: Backend):
         """Test getting a user that does not exist."""
         non_existent_user_id = 999
-        with pytest.raises(LookupError, match='User not found.'):
+        with pytest.raises(LookupError, match='Item not found.'):
             be.get_user(user_id=non_existent_user_id)
 
     def test_get_many_users_empty(self, be: Backend):
         """Test getting users when the users table is empty."""
-        users = be.get_many_users()
-        assert isinstance(users, tuple), "Should return a tuple."
-        assert len(users) == 0, "Should return an empty tuple if no users exist."
+        
+        with pytest.raises(LookupError, match='No items found.'):
+            users = be.get_many_users()
+
+
 
     def test_get_many_users_with_data(self, be: Backend):
         """Test getting multiple users. 👥"""
@@ -61,12 +67,12 @@ class TestBackend:
         users = be.get_many_users()
         assert len(users) == len(user_data), "Should return all added users."
 
-        retrieved_ids = {user['id'] for user in users}
+        retrieved_ids = {user.id for user in users}
         expected_ids = {data['user_id'] for data in user_data}
         assert retrieved_ids == expected_ids, "All user IDs should be present."
 
         # Check if display names are correctly retrieved (and reformatted to 'username')
-        retrieved_usernames = {user['username'] for user in users}
+        retrieved_usernames = {user.display_name for user in users}
         expected_usernames = {data['display_name'] for data in user_data}
         assert retrieved_usernames == expected_usernames
 
@@ -99,9 +105,9 @@ class TestBackend:
         )
 
         user = be.get_user(user_id=user_id)
-        assert user['username'] == new_display_name, "Display name should be updated."
-        assert user['permissions'] == new_permissions, "Permissions should be updated."
-        assert user['source'] == 'initial_source', "Source should remain unchanged if not specified in update."
+        assert user.display_name == new_display_name, "Display name should be updated."
+        assert user.permissions == new_permissions, "Permissions should be updated."
+        assert user.source == 'initial_source', "Source should remain unchanged if not specified in update."
 
     def test_update_user_partial_update(self, be: Backend):
         """Test updating only specific fields of a user."""
@@ -118,8 +124,8 @@ class TestBackend:
         be.update_user(user_id=user_id, display_name=new_display_name)
 
         user = be.get_user(user_id=user_id)
-        assert user['username'] == new_display_name
-        assert user['permissions'] == initial_permissions, "Permissions should not change if not specified."
+        assert user.display_name == new_display_name
+        assert user.permissions == initial_permissions, "Permissions should not change if not specified."
 
     def test_update_user_non_existent(self, be: Backend):
         """Test updating a user that does not exist.
@@ -151,7 +157,7 @@ class TestBackend:
 
         be.remove_user(user_id=user_id)
 
-        with pytest.raises(LookupError, match='User not found.'):
+        with pytest.raises(LookupError, match='Item not found.'):
             be.get_user(user_id=user_id)
 
     def test_remove_user_non_existent(self, be: Backend):
@@ -190,12 +196,12 @@ class TestBackend:
             total_picks=int(total_picks), 
         )
         game = be.get_many_games(owner_id=user_id, name=name)[0]
-        assert game['id'] == 1 # First game should get ID 1
-        assert game['name'] == name # First game should get ID 1
-        assert game['start_date'] == start_date # First game should get ID 1
-        assert game['end_date'] == end_date # First game should get ID 1
-        assert game['starting_money'] == starting_money # First game should get ID 1
-        assert game['total_picks'] == total_picks # First game should get ID 1
+        assert game.id == 1 # First game should get ID 1
+        assert game.name == name # First game should get ID 1
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
+        assert game.start_money == starting_money 
+        assert game.pick_count == total_picks
         
     def test_add_game_infinite_success(self, be: Backend):
         """Test successfully adding a new game with no end date."""
@@ -214,11 +220,11 @@ class TestBackend:
             total_picks=int(total_picks), 
         )
         game = be.get_many_games(owner_id=user_id, name=name)[0]
-        assert game['id'] == 1 # First game should get ID 1
-        assert game['name'] == name # First game should get ID 1
-        assert game['start_date'] == start_date # First game should get ID 1
-        assert game['starting_money'] == starting_money # First game should get ID 1
-        assert game['total_picks'] == total_picks # First game should get ID 1
+        assert game.id == 1 # First game should get ID 1
+        assert game.name == name # First game should get ID 1
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.start_money == starting_money # First game should get ID 1
+        assert game.pick_count == total_picks # First game should get ID 1
     
     def test_add_game_duplicate_name(self, be: Backend):
         """Test successfully adding a new game."""
@@ -239,14 +245,14 @@ class TestBackend:
             total_picks=int(total_picks), 
         ) 
         game = be.get_many_games(owner_id=user_id, name=name)[0] # Confirm first game works
-        assert game['id'] == 1 # First game should get ID 1
-        assert game['name'] == name # First game should get ID 1
-        assert game['start_date'] == start_date # First game should get ID 1
-        assert game['end_date'] == end_date # First game should get ID 1
-        assert game['starting_money'] == starting_money # First game should get ID 1
-        assert game['total_picks'] == total_picks # First game should get ID 1
+        assert game.id == 1 # First game should get ID 1
+        assert game.name == name # First game should get ID 1
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
+        assert game.start_money == starting_money # First game should get ID 1
+        assert game.pick_count == total_picks # First game should get ID 1
         
-        with pytest.raises(Exception, match='Failed to add game.'):
+        with pytest.raises(bexc.AlreadyExistsError):
             be.add_game(
                 user_id=int(user_id),
                 name=str(name), 
@@ -260,7 +266,7 @@ class TestBackend:
     def test_add_stock_success(self, be: Backend):
         # Add a stock
         ticker = 'MSFT'
-        exchange = 'REAL'
+        exchange = 'real'
         company_name = 'MichaelSoft Bindows'
         
         be.add_stock(
@@ -269,9 +275,9 @@ class TestBackend:
             company_name=company_name
         )
         stock = be.get_stock(ticker_or_id=ticker)
-        assert stock['ticker'] == ticker
-        assert stock['exchange'] == exchange
-        assert stock['name'] == company_name
+        assert stock.ticker == ticker
+        assert stock.exchange == exchange
+        assert stock.company == company_name
         
     def test_add_stock_duplicate(self, be: Backend):
         # Try to add the same stock twice
@@ -308,9 +314,9 @@ class TestBackend:
             datetime=d_datetime
         )
         price = be.get_stock_price(price_id=1) # Only 1 item.
-        assert price['stock_id'] == 1
-        assert price['price'] == s_price
-        assert price['datetime'] == d_datetime
+        assert price.stock_id == 1
+        assert price.price == s_price
+        assert price.datetime == datetime.strptime(d_datetime, "%Y-%m-%d %H:%M:%S")
     
     def test_add_stock_price_id_success(self, be: Backend): # Add by ID
         ticker = 'MSFT'
@@ -328,19 +334,19 @@ class TestBackend:
             datetime=d_datetime
         )
         price = be.get_stock_price(price_id=1) # Only 1 item.
-        assert price['stock_id'] == 1
-        assert price['price'] == s_price
-        assert price['datetime'] == d_datetime
+        assert price.stock_id == 1
+        assert price.price == s_price
+        assert price.datetime == datetime.strptime(d_datetime, "%Y-%m-%d %H:%M:%S")
     
     def test_add_stock_price_invalid_stock(self, be: Backend): # Stock ID isn't real
         s_price = 1203.2333
         d_datetime='2025-05-21 10:00:00'
         
-        with pytest.raises(LookupError, match='Stock not found.'):
+        with pytest.raises(LookupError, match='Item not found.'):
             be.add_stock_price( # There should only be 1 stock
                 ticker_or_id=1, 
                 price=s_price,
-                datetime=d_datetime
+                datetime=d_datetime 
             )
 
         

@@ -5,10 +5,18 @@ import sqlite3
 from datetime import datetime
 import functools
 import logging
-from stock_datatypes import Status, QueryModes, Statuses
-from typing import Optional
+from typing import Optional, Literal
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict
 
+MainStatus = Literal['success', 'error']
 
+class Status(BaseModel): # Status item
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    status: str
+    reason: str
+    result: Optional[str | int | dict | tuple | Exception] = None
+    more_info: Optional[str | int | dict | tuple | Exception] = None
 
 def _unix_timestamp(): # Get a unix timestamp
     """Creates a unix timestamp from the current time
@@ -95,7 +103,7 @@ class SqlHelper: # Simple helper for SQL
     def _close_connection(self): # Stop/close connection
             self.conn.close()
     
-    def _simple_status(self, status:Statuses='success', reason:str='NA', result: str | int | dict | tuple | Exception | None=None, more_info:str | int | dict | tuple | Exception | None='NA')-> Status:
+    def _simple_status(self, status:MainStatus='success', reason:str='NA', result: str | int | dict | tuple | Exception | None=None, more_info:str | int | dict | tuple | Exception | None='NA')-> Status:
 
         """Simple status and results object
 
@@ -108,12 +116,9 @@ class SqlHelper: # Simple helper for SQL
         Returns:
             Status: Status/result
         """
-        return {'status':status,
-            'reason':reason,
-            'result': result,
-            'more_info':more_info}
+        return Status(status=status, reason=reason, result=result, more_info=more_info)
         
-    def _run_query(self, query:str, values:Optional[list]=None, mode: QueryModes ='get')-> Status:
+    def _run_query(self, query:str, values:Optional[list]=None, mode: str ='get')-> Status:
         try:
             if values:
                 resp = self.cur.execute(query, values)
@@ -173,7 +178,7 @@ class SqlHelper: # Simple helper for SQL
             
         return tuple(formatted_items)
     
-    def _sql_filters(self, filters:dict | str)-> tuple[str, list[str | int | float | bool]| None]:
+    def _sql_filters(self, filters:dict | str | tuple)-> tuple[str, list[str | int | float | bool]| None]:
         """Handle different filtering formats and items for other internal methods
 
         Args:
@@ -184,8 +189,11 @@ class SqlHelper: # Simple helper for SQL
         """
         
         if isinstance(filters, str):
-            filter_str = filters  #TODO allow this to be typesafe by making custom queries tuples.  (str, [filter items])
+            filter_str = filters
             filter_items = None
+        elif isinstance(filters, tuple):
+            filter_str = filters[0] 
+            filter_items = filters[1]
         elif not isinstance(filters, dict): # something unexpected provided in filters field
             raise TypeError(f'`filters` must be str or dict, not{type(filters)}.') 
         else:
@@ -240,7 +248,7 @@ class SqlHelper: # Simple helper for SQL
         
         
     @open_and_close    
-    def get(self, table:str, columns:list=["*"], filters:dict | str={}, order:Optional[dict]=None) -> Status: 
+    def get(self, table:str, columns:list=["*"], filters:dict | str | tuple={}, order:Optional[dict]=None) -> Status: 
         """Run SQL get queries
         
         THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
@@ -275,7 +283,7 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, values=filter_items, mode='get')  # type: ignore its a list or status, idk why it has a hard time understanding that but im sick of trying to fix it
     
     @open_and_close
-    def update(self, table:str, items:dict, filters:dict | str={}):
+    def update(self, table:str, items:dict, filters:dict | str | tuple={}):
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
@@ -288,7 +296,7 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, all_items, mode='update')
     
     @open_and_close
-    def delete(self, table:str, filters:dict | str={}):
+    def delete(self, table:str, filters:dict | str | tuple={}):
         sql_query = """DELETE FROM {table} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
@@ -297,7 +305,7 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, filter_items, mode='delete')
     
     @open_and_close
-    def send_query(self, query, values: Optional[list]=None , mode:QueryModes='get'): # Send an SQL query directly
+    def send_query(self, query, values: Optional[list]=None , mode:str='get'): # Send an SQL query directly
         return self._run_query(query=query, values=values, mode=mode)
     
     @open_and_close
