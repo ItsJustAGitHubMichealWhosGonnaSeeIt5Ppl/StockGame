@@ -355,7 +355,7 @@ async def create_game(interaction: discord.Interaction):
                 # Confirm the game creation with the provided inputs
                 confirmation_embed = discord.Embed(
                     title="Game Creation Confirmation",
-                    description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}\nJoin After Start: {join_after_start}",
+                    description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {exclusive_picks}",
                     color=discord.Color.blue()
                 )
                 confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
