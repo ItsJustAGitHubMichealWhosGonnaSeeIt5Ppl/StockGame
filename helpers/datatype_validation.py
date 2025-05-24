@@ -128,3 +128,19 @@ class StockPick(BaseModel):
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
 
 StockPicks = TypeAdapter(list[StockPick])
+
+
+class MyGames(BaseModel):
+    user: User
+    games: list[Game]
+
+
+class GameLeaderboard(BaseModel):
+    user_id: int
+    current_value: float
+    joined: datetime
+
+class GameInfo(BaseModel):
+    game: Game
+    leaderboard: Optional[list[GameLeaderboard]] = None
+    

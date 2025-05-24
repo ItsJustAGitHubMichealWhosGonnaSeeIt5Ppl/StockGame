@@ -10,7 +10,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
 from typing import Type
-from pydantic._internal._model_construction import ModelMetaclass
+import helpers.exceptions as bexc
 load_dotenv()
 
 ### Methods (in order)
@@ -117,7 +117,7 @@ class Backend:
         resp = self.sql.insert(table='users', items=items)
         if resp.status != 'success': #TODO errors
             if resp.reason == 'SQLITE_CONSTRAINT_PRIMARYKEY':
-                raise ValueError(f'User with ID {user_id} already exists.')
+                raise bexc.UserExistsError(user_id=user_id)
             else:
                 raise Exception(f'Failed to add user.', resp)
         
@@ -216,15 +216,15 @@ class Backend:
  
         # Date formatting validation
         if not self._validate_date(start_date):
-            raise ValueError('Invalid `start_date` format.')
+            raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
         if end_date: # Enddate stuff
             if not self._validate_date(end_date):
-                raise ValueError('Invalid `end_date` format.')
+                raise bexc.InvalidDateFormatError('Invalid `end_date` format.')
             if datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
                 raise ValueError('`end_date` must be after `start_date`.')
             
         if pick_date and not self._validate_date(pick_date):
-            raise ValueError('Invalid `pick_date` format.')
+            raise bexc.InvalidDateFormatError('Invalid `pick_date` format.')
         #TODO should we check if pick_date is after end_date?  Doesn't cause an issue, just kinda silly
         
         if exclusive_picks: # Draftmode checks
@@ -257,7 +257,7 @@ class Backend:
         resp = self.sql.insert(table='games', items=items)
         if resp.status != 'success': #TODO errors
             if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'games.name': 
-                raise ValueError(f'Failed to add game, game with {name} already exists.')
+                raise bexc.AlreadyExistsError(table='games', duplicate=name, message='Cannot add multiple games with the same name')
 
             raise Exception(f'Failed to add game.', resp) 
     
@@ -1110,7 +1110,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         games = self.be.get_many_games(include_private=include_private, include_public=include_public, include_active=include_active, include_open=include_open, include_ended=include_ended)
         return games
     
-    def game_info(self, game_id:int, show_leaderboard:bool=True): 
+    def game_info(self, game_id:int, show_leaderboard:bool=True) -> dtv.GameInfo: 
         """Get information and leaderboard for a game.
         
         If user has set a nickname for a game that will be returned, otherwise their username will be used
@@ -1142,7 +1142,7 @@ class Frontend: # This will be where a bot (like discord) interacts
                 }) # Should keep order
                 
             info['leaderboard'] = leaderboard  # type: ignore WAA I DONT FUCKING CARE I KNOW THIS WORKS
-        return info
+        return dtv.GameInfo.model_validate(info)
     
     # # USER RELATED
     def register(self, user_id:int, source:Optional[str]=None, username:Optional[str]=None): #TODO should this be an internal function?
@@ -1187,7 +1187,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         except LookupError:
             raise LookupError('Game not found.')
             
-    def my_games(self, user_id:int, include_ended:bool=False)->dict:
+    def my_games(self, user_id:int, include_ended:bool=False)->dtv.MyGames:
         """Get a list of your current games
 
         Args:
@@ -1211,7 +1211,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             if game.status != 'ended' or include_ended: # Add games that are active or all games if include ended
                 games['games'].append(game)
 
-        return games
+        return dtv.MyGames.model_validate(games)
     
     def my_stocks(self, user_id:int, game_id:int, show_pending:bool=True, show_sold:bool=False):
         """Get your stocks for a specific game.

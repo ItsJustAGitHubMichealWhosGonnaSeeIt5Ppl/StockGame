@@ -14,7 +14,7 @@ import sys
 import os
 import logging
 import discord
-import datetime
+from datetime import datetime, timedelta
 from dateutil import parser
 from discord.ext import commands
 from discord import app_commands
@@ -187,7 +187,7 @@ async def create_game(interaction: discord.Interaction):
 
         start_date_input = discord.ui.TextInput(
             label="Start Date *No buying after this date",
-            placeholder=(datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y-%m-%d"), # Default to 7 days from now
+            placeholder=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"), # Default to 7 days from now
             required=True,
             max_length=10,
             min_length=10,
@@ -674,7 +674,7 @@ async def buy_stock(
     game_id: int, 
     ticker: str
 ):
-    game_picks = fe.game_info(game_id=game_id, show_leaderboard=False)['game']['total_picks']
+    game_picks = fe.game_info(game_id=game_id, show_leaderboard=False).game.pick_count
     my_picks = len(fe.my_stocks(interaction.user.id, game_id))
 
     picks_left = game_picks - my_picks
@@ -795,13 +795,13 @@ async def game_info(
     show_leaderboard: bool = True
 ):
     game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
-    game = game_info['game']
-    leaderboard_info = list(game_info['leaderboard'])
+    game = game_info.game
+    assert isinstance(game_info.leaderboard, list)
     description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game.owner_id,
         pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
         start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-        date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game["end_date"]}`') if game["end_date"] else '',
-        participants=f'> **Participants:** `{len(leaderboard_info)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
+        date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
+        participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
         )
     embed = discord.Embed(title=f'{game.name} ({game.id})', 
         description=description_str)
@@ -812,7 +812,7 @@ async def game_info(
         return
     
     lb_limit = 10 # Amount of users to show '🏆'
-    leaderboard_info = leaderboard_info[:lb_limit] # Only include top 10
+    leaderboard_info = game_info.leaderboard[:lb_limit] # Only include top 10
     pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
     
     ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
@@ -820,7 +820,7 @@ async def game_info(
     row_template = '| {pos} | {user} | {value} | {date} |'
     for rank, info in enumerate(leaderboard_info):
         try: # Try to get username
-            member = await interaction.guild.fetch_member(info["user_id"]) # Set display name
+            member = await interaction.guild.fetch_member(info.user_id) # Set display name
             if len(member.display_name) <= 16: # Server displayname
                 user= str(member.display_name)
             elif len(member.global_name) <= 16: # Globbal display
@@ -831,12 +831,12 @@ async def game_info(
                 user = str(member.global_name)[:15] + '~' # Name is just too long, give up
             
         except discord.errors.NotFound: # User doesn't exist
-            user = f'ID({info["user_id"]})'
+            user = f'ID({info.user_id})'
         ldrbrd_lines.append(row_template.format( # Create rows
             pos=pos[rank],
             user=user.center(16),
-            value= str('$'+ format(float(info["current_value"]), ',')).center(15),
-            date= f'{info["joined"][:10]}' # Manually centering I guess
+            value= str('$'+ format(float(info.current_value), ',')).center(15),
+            date= f'{datetime.strftime(info.joined, "%Y-%m-%d")[:10]}' # Manually centering I guess
         ))
     embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
     await interaction.response.send_message(embed=embed)
@@ -869,7 +869,7 @@ async def game_list(
                     **Owned by:** <@{game.owner_id}>
                     **Pick date:** {game.pick_date or "Not set"}
                     **Starting Cash:** ${int(game.start_money)}
-                    Starting on `{game.start_date}` and ending on `{game["end_date"]}`
+                    Starting on `{game.start_date}` and ending on `{game.end_date}`
                     There are currently **{len(game_members)}** members participating
                     """
                 )
@@ -889,16 +889,16 @@ async def my_games(
     )
     try:
         games = fe.my_games(interaction.user.id)
-        if len(games["games"]) == 0:
+        if len(games.games) == 0:
             raise LookupError("No games found")
         game_description: str = ""
         # Add each game to the embed
-        for game in games['games']: #TODO provide more info here
+        for game in games.games: #TODO provide more info here
             # Create status indicator
-            status_emoji = "🟢" if game['status'] != 'ended' else "🔴"
+            status_emoji = "🟢" if game.status != 'ended' else "🔴"
                         
             # Add game field
-            game_description= game_description + f"{status_emoji} {game['name']}   ID: {game['id']}\n"
+            game_description= game_description + f"{status_emoji} {game.name}   ID: {game.id}\n"
 
         embed.description = game_description
         embed.set_footer(text=f"Use /game-info <game_id> for more details")

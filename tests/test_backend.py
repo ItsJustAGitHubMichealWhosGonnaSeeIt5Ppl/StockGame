@@ -1,6 +1,7 @@
 import pytest
 from stocks import Backend 
 from datetime import datetime
+import helpers.exceptions as bexc
 
 # This will be the fixed timestamp used by the mocked _iso8601
 MOCK_DATETIME_STR = "2025-05-21 10:00:00"
@@ -35,8 +36,9 @@ class TestBackend:
         user_id = 102
         be.add_user(user_id=user_id, source='discord', display_name='OriginalUser')
 
-        with pytest.raises(ValueError, match=f'User with ID {user_id} already exists.'):
+        with pytest.raises(bexc.UserExistsError) as exc:
             be.add_user(user_id=user_id, source='discord', display_name='DuplicateUser')
+        assert exc.value.user_id == user_id
 
     def test_get_user_not_found(self, be: Backend):
         """Test getting a user that does not exist."""
@@ -250,7 +252,7 @@ class TestBackend:
         assert game.start_money == starting_money # First game should get ID 1
         assert game.pick_count == total_picks # First game should get ID 1
         
-        with pytest.raises(ValueError, match='Failed to add game.'):
+        with pytest.raises(bexc.AlreadyExistsError):
             be.add_game(
                 user_id=int(user_id),
                 name=str(name), 
