@@ -79,6 +79,8 @@ def open_and_close(func): #TODO MAKE THIS NOT AI
     return wrapper
 
 class SqlHelper: # Simple helper for SQL
+    """Helps with entering and retreiving data from an SQL database.  Runs kind of like an API, where responses come back with either a success or error message
+    """
     def __init__(self, db_name:str):
         """SQLlite helper tool
 
@@ -104,7 +106,6 @@ class SqlHelper: # Simple helper for SQL
             self.conn.close()
     
     def _simple_status(self, status:MainStatus='success', reason:str='NA', result: str | int | dict | tuple | Exception | None=None, more_info:str | int | dict | tuple | Exception | None='NA')-> Status:
-
         """Simple status and results object
 
         Args:
@@ -119,48 +120,57 @@ class SqlHelper: # Simple helper for SQL
         return Status(status=status, reason=reason, result=result, more_info=more_info)
         
     def _run_query(self, query:str, values:Optional[list]=None, mode: str ='get')-> Status:
+        if mode not in ['insert', 'update', 'delete', 'get', 'raw-get']:
+            raise ValueError(f'Invalid mode {mode}.')
+        status = 'error' # Assume the request was no good to start
+        more_info = None
         try:
             if values:
                 resp = self.cur.execute(query, values)
             else: # Run without values, prevents error
                 resp = self.cur.execute(query)
-            self.conn.commit()
-            if mode in ['insert', 'update', 'delete']:
-                return self._simple_status(reason=f'{mode}', result=self.cur.lastrowid) # Simple status
-            elif mode in ['get']: 
-                resp = self.cur.fetchall()
-                return self._simple_status(status='success', reason='got rows', result=self._format(resp, self.cur.description))
-            elif mode in ['raw-get']: # in case the respose columns have duplicate names
-                resp = self.cur.fetchall() 
-                return self._simple_status(status='success', reason='valid query', result=(resp, self.cur.description))
-            else: # Raise error if mode isn't alowed
-                raise ValueError(f'Invalid mode {mode}.')
+            self.conn.commit() # Commit changes, should only run if something happened
+            reason = 'VALID QUERY' # Assume query is valid (I love assuming)
             
-        except sqlite3.IntegrityError as e: #TODO just return the errors
-            if e.sqlite_errorcode == 2067: # Unique constraint failed # type: ignore is custom exception
-                return self._simple_status(status='error',
-                                   reason='SQLITE_CONSTRAINT_UNIQUE',
-                                   result=e.args[0].split(':')[1])
-                
-            elif e.sqlite_errorcode == 1555: # Unique constraint failed for primary key # type: ignore is custom exception
-                return self._simple_status(status='error',
-                                   reason='SQLITE_CONSTRAINT_PRIMARYKEY',
-                                   result=e.args[0].split(':')[1].strip())
+            if mode in ['insert', 'update', 'delete']: # Modify/change modes
+                result = self.cur.lastrowid # Get the last updated row ID
+                more_info = f'{self.cur.rowcount} row effected' # Shows how many rows were effected by the last command
+            elif mode in ['get', 'raw-get']: # Get modes
+                resp = self.cur.fetchall()
+                if len(resp) > 0:
+                    result = self._format(resp, self.cur.description) if mode == 'get' else (resp, self.cur.description)
+                    more_info = f'{len(resp)} rows found'
+                else: # The SQL query was valid, but no rows were returned
+                    reason = 'NO ROWS RETURNED'
+                    result = None
+                    more_info = 'Query valid, but no rows were returned'
+                    
+            status = 'success' if reason == 'VALID QUERY' else 'error'
+            
+        except sqlite3.IntegrityError as e:   
+            if e.sqlite_errorcode in [2067, 1555]: # (Unique, primary key) constraint failed # type: ignore is custom exception
+                reason = str(e.sqlite_errorname)  # type: ignore is custom exception
+                result = e.args[0].split(':')[1].strip() 
             
             elif e.sqlite_errorcode == 787: # Foreign Key Constraint Failed # type: ignore is custom exception
-                return self._simple_status(status='error',
-                                   reason='SQLITE_CONSTRAINT_FOREIGNKEY',
-                                   result=e.args[0])
+                reason = 'SQLITE_CONSTRAINT_FOREIGNKEY'
+                result = e.args[0]
+                
+            else:
+                reason = str(e.sqlite_errorname)  # type: ignore is custom exception
+                result = e
             
-            else: # Unknown SQLite error
-                return self._simple_status(status='error',
-                                   reason=str(e.sqlite_errorname),  # type: ignore is custom exception
-                                   result=e)
-    
         except Exception as e:
-            return self._simple_status(status='error',
-                                   reason='OTHER ERROR',
-                                   result=e)
+            reason = 'OTHER ERROR'
+            result = e
+            
+        finally:
+            return self._simple_status( # Return the result
+                status = status, 
+                reason = reason,
+                result = result,
+                more_info = more_info
+                )
 
     def _format(self, items:list | tuple, keys:list | tuple)-> tuple[dict]:
         item_keys = [key[0] for key in keys] # Extract keys
@@ -248,7 +258,7 @@ class SqlHelper: # Simple helper for SQL
         
         
     @open_and_close    
-    def get(self, table:str, columns:list=["*"], filters:dict | str | tuple={}, order:Optional[dict]=None) -> Status: 
+    def get(self, table:str, columns:list=["*"], filters:dict | str | tuple={}, order:Optional[dict[str,str]]=None) -> Status: 
         """Run SQL get queries
         
         THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
@@ -273,7 +283,11 @@ class SqlHelper: # Simple helper for SQL
         if order:
             for var, direction in order.items():
                 if direction.lower() not in ['asc', 'desc']: # Skip invalid order/sort
-                    raise ValueError(f'Invalid order direction {direction} specified for {var}')
+                    return self._simple_status( # Return the result
+                        status='error', 
+                        reason='INVALID ORDER DIRECTION',
+                        more_info=f'Order direction must be ASC or DESC, not \'{direction}\'.'
+                        )
                 
                 order_items.append(f"{var} {direction.upper()}") 
             
@@ -289,7 +303,12 @@ class SqlHelper: # Simple helper for SQL
         filter_str, filter_items = self._sql_filters(filters)
 
         keys, value_items, questionmarks = self._sql_items(items, mode='set')
-        
+        if len(value_items) == 0:
+            return self._simple_status( # Return the result
+                status='error', 
+                reason='NO COLUMNS CHANGED',
+                more_info='Atleast one column must be changed'
+                )
         all_items = value_items + (filter_items if isinstance(filter_items, list) else [])
             
         sql_query = sql_query.format(table=table, keys=",".join(keys), filters=filter_str)

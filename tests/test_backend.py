@@ -35,7 +35,7 @@ class TestBackend:
         """Test adding a user with an ID that already exists."""
         user_id = 102
         be.add_user(user_id=user_id, source='discord', display_name='OriginalUser')
-
+        be.sql.get(table='users', order={'user': 'three'})
         with pytest.raises(bexc.UserExistsError) as exc:
             be.add_user(user_id=user_id, source='discord', display_name='DuplicateUser')
         assert exc.value.user_id == user_id
@@ -43,6 +43,7 @@ class TestBackend:
     def test_add_user_str_id(self, be: Backend):
         """Test adding a user with an ID that already exists."""
         user_id = '1oh2'
+
         with pytest.raises(bexc.WrongTypeError) as exc:
             be.add_user(user_id=user_id, source='discord', display_name='OriginalUser')
 

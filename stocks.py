@@ -71,13 +71,14 @@ class Backend:
         """
         
         if resp.status == 'success':
-            assert isinstance(resp.result, tuple)
+            assert isinstance(resp.result, tuple) # Do this here because its not a tuple if its not successful
             if len(resp.result) == 1: # Single object (expected)
                 return model.model_validate(resp.result[0])
-            elif len(resp.result) == 0: # No results
-                raise LookupError(f'Item not found.')
             else:
                 raise LookupError(f'Expected one item, but got {len(resp.result)}.')
+            
+        elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
+            raise LookupError(f'Item not found.')
         else:
             raise Exception('Failed to get item.', resp)
         
@@ -95,11 +96,10 @@ class Backend:
         Returns:
             tuple: Tuple of formatted objects.
         """
-        assert isinstance(resp.result, tuple) # Real and true
-        if resp.status == 'success' and len(resp.result) > 0:
-            assert isinstance(resp.result, tuple)
+        if resp.status == 'success':
+            assert isinstance(resp.result, tuple) #  Real and true
             return tuple(typeadapter.validate_python(resp.result))
-        elif resp.status == 'success' and len(resp.result) == 0:
+        elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
             raise LookupError('No items found.')
         else:
             raise Exception(f'Failed to get items.', resp)
@@ -120,9 +120,17 @@ class Backend:
         except ValueError:
             return False
         
-    def _update_single(self, table:str, item_id:int, **update_columns):
-        pass
-    
+    def _update_single(self, table:str, id_column:str, item_id:int | str, **update_columns):            
+        resp = self.sql.update(table=table, filters={id_column: item_id}, items=update_columns) 
+        if resp.status != 'success': #TODO errors
+            raise Exception(f'Failed to update item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+        
+    def _delete_single(self, table:str, id_column:str, item_id:int | str):            
+        resp = self.sql.delete(table=table, filters={id_column: item_id}) 
+        if resp.status != 'success': #TODO errors
+            raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+        
+            
     # # USER ACTIONS # #
     def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
@@ -215,10 +223,14 @@ class Backend:
             'source': source
             }# TODO tag that an update ocurred
         
-        
-        resp = self.sql.update(table="users", filters={'user_id': user_id}, items=items) 
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to update user {user_id}.', resp) 
+        self._update_single(
+            table="users",
+            id_column='user_id',
+            item_id=user_id,
+            source=source,
+            display_name=display_name,
+            permissions=permissions
+        )
         
     def remove_user(self, user_id:int): 
         """Remove a user
@@ -227,9 +239,7 @@ class Backend:
             user_id (int): User ID.
         """
         
-        resp = self.sql.delete(table="users", filters={'user_id': user_id}) 
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to remove user {user_id}.', resp) 
+        self._delete_single(table="users", id_column='user_id', item_id=user_id)
     
     
     # # GAME ACTIONS # #
@@ -298,7 +308,7 @@ class Backend:
 
         resp = self.sql.insert(table='games', items=items)
         if resp.status != 'success': #TODO errors
-            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'games.name': 
+            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'games.name':
                 raise bexc.AlreadyExistsError(table='games', duplicate=name, message='Cannot add multiple games with the same name')
 
             raise Exception(f'Failed to add game.', resp) 
@@ -311,9 +321,9 @@ class Backend:
 
         Returns:
             dict: Game information.
-        """        
-        filters = {'game_id': int(game_id)}
-        resp = self.sql.get(table='games',filters=filters)
+        """
+        
+        resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
         return self._single_get(model=dtv.Game, resp=resp)
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
@@ -330,14 +340,13 @@ class Backend:
 
         Returns:
             tuple: Matching games.
-        """        
-        query = """SELECT *
-        FROM games
-        WHERE private_game IN ({privacy})
+        """
+           
+        query = """WHERE private_game IN ({privacy})
         AND STATUS IN ({statuses})
         """
-        values =[]
         
+        values =[]
         if name:
             query += 'AND name LIKE ?'
             values.append(name)
@@ -345,15 +354,14 @@ class Backend:
             query += 'AND owner_user_id = ?'
             values.append(owner_id)
         
-        # privacy
-        privacy = []
+        privacy = [] # privacy
+
         if include_public:
             privacy.append('0')
         if include_private:
             privacy.append('1')
         
-        # status
-        statuses = []
+        statuses = [] # status
         if include_open:
             statuses.append('"open"')
         if include_active:
@@ -361,7 +369,7 @@ class Backend:
         if include_ended:
             statuses.append('"ended"')
         
-        resp = self.sql.send_query(query=query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values=values)
+        resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
         return self._many_get(typeadapter=dtv.Games, resp=resp)
         
     def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
@@ -391,27 +399,27 @@ class Backend:
             if start_date or starting_money or pick_date or exclusive_picks:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
         
-        items = {'name': name,
-            'owner_user_id': owner,
-            'start_money': starting_money,
-            'pick_count': total_picks,
-            'draft_mode': exclusive_picks,
-            'pick_date': pick_date,
-            'private_game': private_game,
-            'allow_selling': sell_during_game,
-            'status': status,
-            'update_frequency': update_frequency.lower() if update_frequency else None,
-            'start_date': start_date,
-            'end_date': end_date,
-            'aggregate_value': aggregate_value,
-            'change_dollars': round(change_dollars, 2) if change_dollars else None,
-            'change_percent': round(change_percent, 2) if change_percent else None,
-            'datetime_updated': _iso8601()
-            }
-        
-        resp = self.sql.update(table='games', filters={'game_id': game_id}, items=items)
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to update game {game_id}.', resp) 
+        self._update_single(
+            table='games', 
+            id_column='game_id', 
+            item_id=game_id,
+            name=name,
+            owner_user_id = owner,
+            start_money = starting_money,
+            pick_count = total_picks,
+            draft_mode = exclusive_picks,
+            pick_date = pick_date,
+            private_game = private_game,
+            allow_selling = sell_during_game,
+            status = status,
+            update_frequency = update_frequency.lower() if update_frequency else None,
+            start_date = start_date,
+            end_date = end_date,
+            aggregate_value = aggregate_value,
+            change_dollars = round(change_dollars, 2) if change_dollars else None,
+            change_percent = round(change_percent, 2) if change_percent else None,
+            datetime_updated = _iso8601() 
+        )
     
     
     # # STOCK ACTIONS # #
@@ -483,14 +491,10 @@ class Backend:
             ticker_or_id (str | int): Stock ID (int) or ticker (str).
         """
         if isinstance(ticker_or_id, int): # ID
-            filters={'ticker': str(ticker_or_id)}
+            self._delete_single(table='stocks', id_column='stock_id', item_id=ticker_or_id)
         else: # Ticker
-            filters = {'stock_id': int(ticker_or_id)}
-            
-        resp = self.sql.delete(table="stocks", filters=filters) 
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to delete stock {ticker_or_id}.', resp) 
-    
+            self._delete_single(table='stocks', id_column='ticker', item_id=ticker_or_id)
+
     
     # # STOCK PRICE ACTIONS # #
     def add_stock_price(self, ticker_or_id:str | int, price:float, datetime:Optional[str]=None):
@@ -647,19 +651,21 @@ class Backend:
             change_dollars (float, optional): current_value - (games.starting_money).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
-        items = {
-            'shares': shares,
-            'start_value': start_value,
-            'current_value': current_value,
-            'status': status,
-            'change_dollars': round(change_dollars, 2) if change_dollars else None,
-            'change_percent': round(change_percent, 2) if change_percent else None,
-            'datetime_updated': _iso8601()
-            }
         
-        resp = self.sql.update(table='stock_picks', items=items, filters={'pick_id': pick_id})
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to update pick.', resp)
+        self._update_single(
+            table='stock_picks',
+            id_column='pick_id',
+            item_id=pick_id,
+            
+
+            shares = shares,
+            start_value = start_value,
+            current_value = current_value,
+            status = status,
+            change_dollars = round(change_dollars, 2) if change_dollars else None,
+            change_percent = round(change_percent, 2) if change_percent else None,
+            datetime_updated = _iso8601()
+        )
     
     def remove_stock_pick(self, pick_id:int):
         """Remove a stock pick
@@ -669,17 +675,9 @@ class Backend:
         Args:
             pick_id (int): Pick ID.
         """
-        try:
-            pick = self.get_stock_pick(pick_id)
-        except LookupError:
-            raise LookupError('Pick not found.')
         
-
-            
-        resp = self.sql.delete(table='stock_picks', filters={'pick_id': pick_id})
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to remove pick.', resp)
-    
+        self._delete_single(table="stock_picks", id_column='pick_id', item_id=pick_id)
+        
 
     # # GAME PARTICIPATION ACTIONS # #
     def add_participant(self, user_id:int, game_id:int, team_name:Optional[str]=None):
@@ -770,18 +768,18 @@ class Backend:
             change_dollars (float, optional): current_value - (starting_money / total_picks).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
         """
-        items = {
-            'name': team_name,
-            'status': status,
-            'current_value': current_value,
-            'change_dollars': round(change_dollars, 2) if change_dollars else None,
-            'change_percent': round(change_percent, 2) if change_percent else None,
-            'datetime_updated': _iso8601()
-            }
         
-        resp = self.sql.update(table='game_participants', filters={'participation_id': participant_id}, items=items)
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to update participant {participant_id}.', resp)
+        self._update_single(
+            table='game_participants',
+            id_column='participation_id',
+            item_id=participant_id,
+            name = team_name,
+            status = status,
+            current_value = current_value,
+            change_dollars = round(change_dollars, 2) if change_dollars else None,
+            change_percent = round(change_percent, 2) if change_percent else None,
+            datetime_updated = _iso8601()
+            )
         
     def remove_participant(self, participant_id:int):
         """Remove a game participant
@@ -789,9 +787,8 @@ class Backend:
         Args:
             participant_id (int): Participant ID.
         """
-        resp = self.sql.delete(table="game_participants", filters={'participant_id': participant_id}) 
-        if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to remove participant {participant_id}.', resp) 
+        
+        self._delete_single(table='game_participants', id_column='participant_id', item_id=participant_id)
         
   
 class GameLogic: # Might move some of the control/running actions here
@@ -1420,7 +1417,6 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
-    game.be._update_single('1', 2, two=3)
     game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
     many_games = game.be.get_many_games(include_private=True)
     game.register(user_id=1123)
