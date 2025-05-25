@@ -22,7 +22,6 @@ from discord.ui import Button, View
 from dotenv import load_dotenv
 from helpers.exceptions import NotAllowedError, DoesntExistError
 from typing import Optional
-
 load_dotenv()
 
 try:
@@ -818,25 +817,48 @@ async def my_stocks(
     game_id: int
 ):
     user_id = interaction.user.id
+    
+    picks_table = ['| Stock |  Price  | Shares |  Value  |  $Gain  | %Gain |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
+    # EXAMPLE LINE:            | AAPLE | $10,000 | 10,000 | $10,000 | $10,000 | 1000% |
+    status = 'failed' # Default to failed
+    title = 'Fetching Stocks Failed'
     try:
         picks = fe.my_stocks(user_id, game_id)
-        if len(picks) == 0:
-            raise Exception("No stocks are picked.")
-        embed = discord.Embed(title="blah blah", description="blah blah")
-    except Exception as e:
-        if e.args[0] == "Expected one participant ID, but got 0.":
-            embed = discord.Embed(
-            title="Fetching Stocks Failed",
-            description=f"You are not currently participating in this game. You can join it using the join-game command.",
-            color=discord.Color.red()
-        )
-        else:
-            embed = discord.Embed(
-                title="Fetching Stocks Failed",
-                description=f"There was an error while fetching your stocks.\n{e}",
-                color=discord.Color.red()
-            )
+        
+        row_template = '| {stock} | {price} | {shares} | {value} | {d_gain} | {p_gain} |'
+        for pick in picks: #TODO Do we want to limit how many stocks show here?
+            #TODO this could be simplified if we only wanted to show the active stocks!
+            if pick.status == 'owned': # Prevent null values
+                assert pick.current_value != None
+                assert pick.shares != None
+                share_price = str('$'+ format(float(pick.current_value / pick.shares), ','))[:7] # Cut it off at 7, although this is a very bad solution long term...
 
+            else:
+                share_price = 'NA'
+                
+            picks_table.append(row_template.format(
+                stock = str(pick.stock_ticker).center(5),
+                price = share_price.center(7),
+                shares = (str(round(pick.shares, 2)) if pick.shares else 'NA').center(6),
+                value = (str('$'+ format(round(pick.current_value, 2), ','))[:6] if pick.current_value else 'NA').center(6),
+                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'NA').center(6),
+                p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'NA').center(5),
+            ))
+        status = 'success'
+        
+    except DoesntExistError as e: # Raised when player is not in the game
+        description=f'You are not currently participating in this game. You can try to join it using the join-game command.'
+    
+    except LookupError as e: # No stocks were even returned
+        description = f'You don\'t currently have any stocks in game: {game_id}' 
+        
+    except Exception as e: # Other errors
+        description=f"There was an error while fetching your stocks.\n{e}",
+        logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
+        description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
+
+    embed = simple_embed(status=status, title=f'<@{user_id}>\'s stock picks')
+    embed.add_field(name='Your Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table)))
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # GAME INFO RELATED

@@ -258,15 +258,16 @@ class SqlHelper: # Simple helper for SQL
         
         
     @open_and_close    
-    def get(self, table:str, columns:list=["*"], filters:dict | str | tuple={}, order:Optional[dict[str,str]]=None) -> Status: 
+    def get(self, table:str, columns:list=["*"], filters:dict | str | tuple={}, left_join:Optional[str]=None, order:Optional[dict[str,str]]=None) -> Status: 
         """Run SQL get queries
         
         THE COLUMNS ARE NOT INJECTION SAFE! DO NOT LET USERS SEND ANYTHING HERE, AND NEVER SEND UNTRUSTED INPUT TO table OR columns
 
         Args:
             table (str): Table name
-            columns(list, optional): List of columns to be returned, Defaults to ['*'] (all columns)
+            columns (list, optional): List of columns to be returned, Defaults to ['*'] (all columns)
             filters (dict | str, optional): Run simple filters by sending them as a dict {'column': 'val'}.  These will be added as `WHERE column = `val` using injection safe input.  Alternatively, a str can be used to send pre-formatted filters, eg: `WHERE column IS NOT 1`.  These AREN'T currently injection safe!
+            left_join (str, optional): Include a LEFT JOIN SQL query in your request
             order (dict): Key should be the column name to order by, values should be ASC or DESC
             
         Returns:
@@ -274,7 +275,7 @@ class SqlHelper: # Simple helper for SQL
         """
         if len(columns) == 0:
             columns = ['*']        
-        sql_query = """SELECT {columns} FROM {table} {filters} {order}"""
+        sql_query = """SELECT {columns} FROM {table} {left_join} {filters} {order}"""
 
         filter_str, filter_items = self._sql_filters(filters)
         
@@ -293,7 +294,7 @@ class SqlHelper: # Simple helper for SQL
             
             order_str = "ORDER BY " + ", ".join(order_items)
             
-        sql_query = sql_query.format(columns=",".join(columns), table=table, filters=filter_str, order =order_str)
+        sql_query = sql_query.format(columns=",".join(columns), table=table, left_join=str(left_join), filters=filter_str, order =order_str)
         return self._run_query(sql_query, values=filter_items, mode='get')  # type: ignore its a list or status, idk why it has a hard time understanding that but im sick of trying to fix it
     
     @open_and_close

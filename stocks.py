@@ -90,7 +90,7 @@ class Backend:
             resp (Status): Status object from sqlhelper.
 
         Raises:
-            LookupError(Item not found.):  Raised if no items are found.
+            LookupError(No items found):  Raised if no items are found.
             Exception(Failed to get items.(more info)): Raised if another issue is encountered.
 
         Returns:
@@ -100,7 +100,7 @@ class Backend:
             assert isinstance(resp.result, tuple) #  Real and true
             return tuple(typeadapter.validate_python(resp.result))
         elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
-            raise LookupError('No items found.')
+            raise LookupError('No items found')
         else:
             raise Exception(f'Failed to get items.', resp)
         
@@ -616,19 +616,22 @@ class Backend:
         resp = self.sql.get(table='stock_picks', filters={'pick_id': pick_id})
         return self._single_get(model=dtv.StockPick, resp=resp)
     
-    def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None)-> tuple[dtv.StockPick]: 
+    def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None, include_tickers:bool=False)-> tuple[dtv.StockPick]: 
         """List stock picks.  Optionally, filter by a status or participant ID
+        
+        Stocks will be ordered from best performance to worst (by percent)
 
         Args:
             participant_id (int, optional): Filter by a participant ID.
             status (str | list, optional): Filter by a status(es) ('pending_buy', 'owned', 'pending_sell', 'sold').
             stock_id(int, optional): Filter by stock ID.
+            include_tickers(bool, optional):  Include the ticker when getting the stocks
             
         Returns:
             list: List of stock picks
         """
         valid_statuses = ['pending_buy', 'owned', 'pending_sell', 'sold']
-        
+        left_str = None
         filters = { 
             'participation_id': participant_id,
             'stock_id': stock_id
@@ -642,8 +645,11 @@ class Backend:
                     raise ValueError(f'invalid `status` {st}.')
                 statuses.append(f'"{st}"') # Add valid statues
             filters.update({('IN', 'status'): "" + ",".join(statuses)})
-
-        resp = self.sql.get(table='stock_picks', filters=filters)
+            
+        if include_tickers: # Run a left_join
+            left_str = 'LEFT JOIN stocks ON stocks.stock_id = stock_picks.stock_id\n'#IDK if the \n is needed
+        
+        resp = self.sql.get(table='stock_picks', left_join=left_str, filters=filters, order={'change_percent': 'DESC', 'change_dollars': 'DESC'})
         return self._many_get(typeadapter=dtv.StockPicks, resp=resp)
 
     def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None): #Update a single stock pick
@@ -1266,7 +1272,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         return dtv.MyGames.model_validate(games)
     
     def my_stocks(self, user_id:int, game_id:int, show_pending:bool=True, show_sold:bool=False):
-        """Get your stocks for a specific game.
+        """Get your stocks for a specific game
+        
+        Includes stock tickers!
 
         Args:
             user_id (int): User ID.
@@ -1276,15 +1284,15 @@ class Frontend: # This will be where a bot (like discord) interacts
 
         Returns:
             list: Stocks both owned and pending
+
+        Raises:
+            _participant_id > bexc.DoesntExistError: Player not in game
+            get_many_stock_picks > LookupError: No items found.  Raised when no stocks are found
+            
         """
-        try:
-            player_id = self._participant_id(user_id=user_id, game_id=game_id)
-        except LookupError:
-            raise LookupError('Player not in game.')
-        try:
-            picks = self.be.get_many_stock_picks(participant_id=player_id,status=['pending_buy', 'owned', 'pending_sell'])
-        except LookupError:
-            raise LookupError('Player has no stocks.')
+        
+        player_id = self._participant_id(user_id=user_id, game_id=game_id)
+        picks = self.be.get_many_stock_picks(participant_id=player_id,status=['pending_buy', 'owned', 'pending_sell'], include_tickers=True)            
         return picks
     
     # # STOCK RELATED

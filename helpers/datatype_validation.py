@@ -16,6 +16,7 @@ PydanticModelType = TypeVar('PydanticModelType', bound=BaseModel)
 
 class Status(BaseModel): # Status item
     model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     status: str
     reason: str
     result: Optional[str | int | dict | tuple | Exception] = None
@@ -116,6 +117,8 @@ GameParticipants = TypeAdapter(list[GameParticipant])
 
 
 class StockPick(BaseModel):
+    model_config = ConfigDict(extra='ignore') # Ignore extra data
+    
     id: int = Field(validation_alias=AliasChoices('pick_id'))
     participation_id: int
     stock_id: int
@@ -125,6 +128,7 @@ class StockPick(BaseModel):
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
     status: PickStatus = 'pending_buy'
+    stock_ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker')) # Allow ticker to be added in here.  Purely for ease of use
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
 
 StockPicks = TypeAdapter(list[StockPick])

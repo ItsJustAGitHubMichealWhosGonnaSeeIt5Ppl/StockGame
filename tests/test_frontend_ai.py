@@ -163,12 +163,12 @@ class TestFrontend:
             start_date=start_date,
             private_game=True
         )
-        with pytest.raises(LookupError, match='No items found.'):
+        with pytest.raises(LookupError, match='No items found'):
             games = fe.list_games(include_private=False)
        
 
     def test_list_no_games_when_db_is_empty(self, fe: Frontend):
-        with pytest.raises(LookupError, match='No items found.'):
+        with pytest.raises(LookupError, match='No items found'):
             games = fe.list_games(include_private=False)
 
 
@@ -431,7 +431,7 @@ class TestFrontend:
         # user 77 is not part of game_db.id
         with pytest.raises(LookupError) as excinfo:
             fe.my_stocks(user_id=other_user_id, game_id=game_db.id)
-        assert "Player not in game." in str(excinfo.value)
+        assert "No items found" in str(excinfo.value)
 
 
     # # BUY_STOCK # #
@@ -572,7 +572,7 @@ class TestFrontend:
         assert result is None # Backend.remove_stock_pick returns None on success
         with pytest.raises(LookupError) as exc:
             fe.be.get_many_stock_picks(participant_id=participant_obj, stock_id=stock_in_db.id, status='pending_buy')
-        assert 'No items found.' in str(exc)
+        assert 'No items found' in str(exc)
         
 
     def test_remove_pick_no_matching_pending_pick(self, fe: Frontend):
@@ -736,7 +736,7 @@ class TestFrontend:
         # Owner is auto-added and approved by default for their own game in this setup.
         # Let's approve the owner first.
         #owner_participant = fe._participant_id(user_id=owner_id, game_id=game_db.id)
-        with pytest.raises(LookupError, match='No items found.'):
+        with pytest.raises(LookupError, match='No items found'):
             pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
 
 
@@ -817,5 +817,5 @@ class TestFrontend:
     def test_get_all_participants_for_non_existent_game(self, fe: Frontend):
         # Backend.get_many_participants with a non-existent game_id will return an empty tuple
         # So this should not raise an error, but return an empty list/tuple.
-        with pytest.raises(LookupError, match='No items found.'):
+        with pytest.raises(LookupError, match='No items found'):
             participants = fe.get_all_participants(game_id=999)

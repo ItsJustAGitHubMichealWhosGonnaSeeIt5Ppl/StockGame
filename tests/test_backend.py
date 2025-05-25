@@ -50,13 +50,13 @@ class TestBackend:
     def test_get_user_not_found(self, be: Backend):
         """Test getting a user that does not exist."""
         non_existent_user_id = 999
-        with pytest.raises(LookupError, match='Item not found.'):
+        with pytest.raises(LookupError, match='Item not found'):
             be.get_user(user_id=non_existent_user_id)
 
     def test_get_many_users_empty(self, be: Backend):
         """Test getting users when the users table is empty."""
         
-        with pytest.raises(LookupError, match='No items found.'):
+        with pytest.raises(LookupError, match='No items found'):
             users = be.get_many_users()
 
 
