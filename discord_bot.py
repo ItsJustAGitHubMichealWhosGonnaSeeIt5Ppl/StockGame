@@ -7,23 +7,28 @@
 # TODO add help command
 
 # should i rename the commands? my-games and my-stocks are a bit annoying to type
-# is my_games necessary?
 
-from stocks import Backend, Frontend
+# BUILT-IN
 import sys
 import os
 import logging
-import discord
+from typing import Optional # 3.13 +
 from datetime import datetime, timedelta
-from dateutil import parser
-from discord.ext import commands
+
+# LOCAL
+from stocks import Frontend
+from helpers.exceptions import NotAllowedError, DoesntExistError
+
+# DISCORD 
+import discord
 from discord import app_commands
 from discord.ui import Button, View
-from dotenv import load_dotenv
-from helpers.exceptions import NotAllowedError, DoesntExistError
-from typing import Optional
-load_dotenv()
+from discord.ext import commands
 
+#OTHER
+from dotenv import load_dotenv
+
+load_dotenv()
 try:
     TOKEN = os.getenv('DISCORD_TOKEN')
     assert isinstance(TOKEN, str)
@@ -384,9 +389,7 @@ async def create_game(interaction: discord.Interaction):
                                 game_update_frequency = "minute"
                             else:
                                 game_update_frequency = "realtime"
-
-                            
-
+                    
                             game_name=name_input.value
                             game_start_date=start_date_input.value
                             game_end_date=end_date_input.value if end_date_input.value else None
@@ -435,7 +438,6 @@ async def create_game(interaction: discord.Interaction):
                                         exclusive_picks=game_exclusive_picks,
                                         private_game=private_game,
                                         update_frequency=game_update_frequency,
-                                        #join_after_start=join_after_start, #TODO DOES NOT RUN ANYMORE
                                         sell_during_game=False # Placeholder for sell_during_game
                                         # sell_during_game=sell_during_game
                                     )
@@ -514,41 +516,35 @@ async def join_game(
     if not name:
         name = interaction.user.display_name
     
-    joined = False
+    status = 'failed'
     try:
         fe.join_game(
             user_id=interaction.user.id, 
             game_id=game_id, 
             name=name
-        ) 
-        embed = discord.Embed(
-            title="Game Joined Successfully",
-            description=f"You have joined game: {game_id}.",
-            color=discord.Color.green()
         )
-        joined = True
+
+        title= "Game Joined Successfully"
+        description = f"You have joined game: {game_id}."
+        status = 'success'
     except LookupError as e:
         failed_desc = f'No game with the ID {game_id}.'
         
     except ValueError as e:
         if 'already in game.' in str(e):
-            failed_desc = f'You are already in this game ID {game_id}.'
+            description = f'You are already in this game ID {game_id}.'
             
         elif '`pick_date` has passed.' in str(e):
-            failed_desc = f'The pick date for this game has passed.'
+            description = f'The pick date for this game has passed.'
             
     except Exception as e:
         logger.exception(f'User: {interaction.user.id} failed to join game {game_id}.  Error: {e}')
-        failed_desc = f'An unexpected error ocurred. Please report this! {game_id}.\n{e}'
+        description = f'An unexpected error ocurred. Please report this! {game_id}.\n{e}'
 
-    if not joined:
-        embed = discord.Embed(
-            title="Game Join Failed",
-            description=failed_desc,
-            color=discord.Color.red()
-        )
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    if status == 'failed':
+        title = "Game Join Failed"
+
+    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=True)
 
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
 @app_commands.describe(
