@@ -1454,7 +1454,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         except ValueError: # no pending users, return empty list 
             return () #TODO problem?
         
-    def approve_game_users(self, user_id:int, participant_id:int, enforce_permissions:bool=True):
+    def approve_game_users(self, user_id:int, game_id:int, enforce_permissions:bool=True):
         """Approve/add a user to private game
 
         Args:
@@ -1465,12 +1465,13 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             dict: status
         """
-        player = self.be.get_participant(participant_id=participant_id)
+        
+        player_id = self._participant_id(user_id=user_id, game_id=game_id) #TODO check for errors
         if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
-            raise PermissionError(f'User {user_id} is not allowed to approve players for game {player.game_id}')
+            raise PermissionError(f'User {user_id} is not allowed to approve players for game {player_id}')
         
         #TODO errors!
-        self.be.update_participant(participant_id=participant_id, status='active')
+        self.be.update_participant(participant_id=player_id, status='active')
 
 
     def get_all_participants(self, game_id: int):
