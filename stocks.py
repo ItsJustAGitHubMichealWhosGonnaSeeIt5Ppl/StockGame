@@ -123,12 +123,18 @@ class Backend:
     def _update_single(self, table:str, id_column:str, item_id:int | str, **update_columns):            
         resp = self.sql.update(table=table, filters={id_column: item_id}, items=update_columns) 
         if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to update item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+            if resp.reason == 'NO ROWS EFFECTED':
+                raise bexc.DoesntExistError(table=table, item=item_id)
+            else:
+                raise Exception(f'Failed to update item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
         
     def _delete_single(self, table:str, id_column:str, item_id:int | str):            
         resp = self.sql.delete(table=table, filters={id_column: item_id}) 
         if resp.status != 'success': #TODO errors
-            raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+            if resp.reason == 'NO ROWS EFFECTED':
+                raise bexc.DoesntExistError(table=table, item=item_id)
+            else:
+                raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
         
             
     # # USER ACTIONS # #
@@ -1235,6 +1241,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         Args:
             user_id (int): User ID.
             name (str): New name.
+        
+        Raises:
+            update_user > bexc.DoesntExistError: Attempted to update a user who doesn't exist.
         """
         self.be.update_user(user_id=int(user_id), display_name=str(name)) 
     
@@ -1247,7 +1256,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             name (str, optional): Team name/nickname for game.
         
         Raises:
-            LookupError('Game not found.'): If no game with the provided ID is found
+            add_participant > bexc.DoesntExistError: Attempted to join a game that doesn't exist
         """
         try:
             self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))

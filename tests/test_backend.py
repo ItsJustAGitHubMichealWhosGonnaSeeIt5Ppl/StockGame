@@ -136,23 +136,11 @@ class TestBackend:
 
     def test_update_user_non_existent(self, be: Backend):
         """Test updating a user that does not exist.
-        
-        The Backend.update_user method currently raises a generic Exception
-        if the SqlHelper's update operation fails (e.g., returns status != 'success').
-        It doesn't specifically check if 0 rows were affected for a 'success' status.
-        This test assumes SqlHelper.update will return 'success' even if no rows are updated.
-        If SqlHelper signals failure on 0 affected rows, this test might need adjustment.
         """
         non_existent_user_id = 998
-        try:
+        with pytest.raises(bexc.DoesntExistError) as exc:
             be.update_user(user_id=non_existent_user_id, display_name='GhostUser')
-            # If SqlHelper.update returns 'success' with 0 rows affected, no exception might be raised by Backend.
-            # To confirm, try to get the user (it shouldn't exist).
-            with pytest.raises(LookupError):
-                be.get_user(user_id=non_existent_user_id)
-        except Exception as e:
-            # If your SqlHelper or Backend is designed to raise an error for non-existent updates:
-            pytest.fail(f"Update on non-existent user raised an unexpected exception: {e}")
+        assert exc.value.item == non_existent_user_id
 
     def test_remove_user_success(self, be: Backend):
         """Test successfully removing an existing user."""
@@ -169,20 +157,14 @@ class TestBackend:
 
     def test_remove_user_non_existent(self, be: Backend):
         """Test removing a user that does not exist.
-        
-        Similar to update_user, Backend.remove_user raises a generic Exception
-        if the SqlHelper's delete operation indicates failure.
-        If SqlHelper returns 'success' even with 0 rows affected, Backend might not raise.
         """
         non_existent_user_id = 997
-        try:
+        
+        with pytest.raises(bexc.DoesntExistError) as exc:
             be.remove_user(user_id=non_existent_user_id)
-            # No exception is expected if SqlHelper reports success on 0 rows deleted.
-        except Exception as e:
-            # If your setup is stricter:
-            pytest.fail(f"Remove on non-existent user raised an unexpected exception: {e}")
+        assert exc.value.item == non_existent_user_id # Check it tried to remove the right thing
 
-      
+
     # # GAMES # #
     def test_add_game_success(self, be: Backend):
         """Test successfully adding a new game."""
@@ -268,6 +250,48 @@ class TestBackend:
                 starting_money=float(starting_money), 
                 total_picks=int(total_picks), 
             )
+            
+    def test_remove_game_sucess(self, be: Backend):
+        user_id = 101
+        name = 'testgame'
+        start_date = '2024-04-02'
+        be.add_user(user_id=user_id, source='discord') # Must add a user or it gets mad
+
+        be.add_game(
+            user_id=int(user_id),
+            name=str(name), 
+            start_date=str(start_date), 
+        )
+        # 
+        game = be.get_many_games(owner_id=user_id, name=name)[0]
+        assert game.name == name # Check that the game actually got created
+        assert game.owner_id == user_id
+        
+        be.remove_game(game.id) 
+
+        with pytest.raises(LookupError, match='No items found'):
+            be.get_many_games(owner_id=user_id, name=name)
+            
+    def test_remove_game_doesnt_eixt(self, be: Backend):
+        user_id = 101
+        name = 'testgame'
+        start_date = '2024-04-02'
+        be.add_user(user_id=user_id, source='discord') # Must add a user or it gets mad
+
+        be.add_game(
+            user_id=int(user_id),
+            name=str(name), 
+            start_date=str(start_date), 
+        )
+        # 
+        game = be.get_many_games(owner_id=user_id, name=name)[0]
+        assert game.name == name # Check that the game actually got created
+        assert game.owner_id == user_id
+        fake_game = int(game.id+1)
+
+        with pytest.raises(bexc.DoesntExistError) as exc:
+            be.remove_game(fake_game) 
+        assert exc.value.item == fake_game
     
     # # STOCKS # #
     def test_add_stock_success(self, be: Backend):

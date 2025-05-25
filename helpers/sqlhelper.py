@@ -124,6 +124,7 @@ class SqlHelper: # Simple helper for SQL
             raise ValueError(f'Invalid mode {mode}.')
         status = 'error' # Assume the request was no good to start
         more_info = None
+        result = None
         try:
             if values:
                 resp = self.cur.execute(query, values)
@@ -133,8 +134,12 @@ class SqlHelper: # Simple helper for SQL
             reason = 'VALID QUERY' # Assume query is valid (I love assuming)
             
             if mode in ['insert', 'update', 'delete']: # Modify/change modes
-                result = self.cur.lastrowid # Get the last updated row ID
-                more_info = f'{self.cur.rowcount} row effected' # Shows how many rows were effected by the last command
+                if self.cur.rowcount > 0:
+                    result = self.cur.lastrowid # Get the last updated row ID
+                    more_info = f'{self.cur.rowcount} row effected' # Shows how many rows were effected by the last command
+                else:
+                    reason = 'NO ROWS EFFECTED'
+                    more_info = 'Query valid, but no rows were returned'
             elif mode in ['get', 'raw-get']: # Get modes
                 resp = self.cur.fetchall()
                 if len(resp) > 0:
@@ -142,7 +147,6 @@ class SqlHelper: # Simple helper for SQL
                     more_info = f'{len(resp)} rows found'
                 else: # The SQL query was valid, but no rows were returned
                     reason = 'NO ROWS RETURNED'
-                    result = None
                     more_info = 'Query valid, but no rows were returned'
                     
             status = 'success' if reason == 'VALID QUERY' else 'error'

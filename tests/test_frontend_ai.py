@@ -286,11 +286,8 @@ class TestFrontend:
         assert user.display_name == new_name
 
     def test_change_name_non_existent_user(self, fe: Frontend):
-        # Backend.update_user doesn't raise error for non-existent user,
-        # it just updates 0 rows. So, no exception is expected here.
-        fe.change_name(user_id=9999, name="GhostName")
-        with pytest.raises(LookupError):
-            fe.be.get_user(user_id=9999)
+        with pytest.raises(bexc.DoesntExistError):
+            fe.change_name(user_id=9999, name="GhostName")
 
 
     # # JOIN_GAME # #
