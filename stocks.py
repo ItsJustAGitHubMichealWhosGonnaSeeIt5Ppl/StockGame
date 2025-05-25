@@ -1370,20 +1370,21 @@ class Frontend: # This will be where a bot (like discord) interacts
     def start_draft(self, user_id:int, game_id:int): #TODO add
         pass
     
-    def force_update(self, user_id:int, game_id:Optional[int]=None):
+    def force_update(self, user_id:int, game_id:Optional[int]=None, enforce_permissions:bool=True):
         """Force update game(s)
 
         Args:
             user_id (int): User ID.
             game_id (Optional[int], optional): Game ID. If blank, all games will be updated.
+            enforce_permissions (bool): Disable to bypass permission checking.
         """
-        if user_id != self.owner_id:
+        if (user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to manage game {game_id}')
 
         
         self.gl.update_all(game_id=game_id, force=True) # 
         
-    def manage_game(self, user_id:int, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None):
+    def manage_game(self, user_id:int, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, enforce_permissions:bool=True):
         """Update/Manage an existing game.
         
         start_date, starting_money, pick_date, total_picks, exclusive_picks, sell_during_game cannot be changed once a game has started
@@ -1403,11 +1404,12 @@ class Frontend: # This will be where a bot (like discord) interacts
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. Pick date must be on or before start date. Cannot be changed once game has started.
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False. Cannot be changed once game has started.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime').
+            enforce_permissions (bool): Disable to bypass permission checking.
 
         Raises:
             dict: Status/result
         """
-        if not self._user_owns_game(user_id=user_id, game_id=game_id):
+        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
 
         try:            
@@ -1415,7 +1417,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         except Exception as e: #TODO ERRORS
             raise e
         
-    def remove_game(self, user_id:int, game_id:int):
+    def remove_game(self, user_id:int, game_id:int, enforce_permissions:bool=True):
         """Remove a game
         
         Only the games creator or the bots owner can remove a game!
@@ -1423,45 +1425,48 @@ class Frontend: # This will be where a bot (like discord) interacts
         Args:
             user_id (int): User ID. (Must be the game owner OR the bot owner)
             game_id (int): Game ID.
+            enforce_permissions (bool): Disable to bypass permission checking.
 
         Raises:
             PermissionError: Raised if someone who isn't allowed to remove the game tries
         """
         
-        if not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id:
+        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
         
         self.be.remove_game(game_id)
     
-    def pending_game_users(self, user_id:int, game_id:int):
+    def pending_game_users(self, user_id:int, game_id:int, enforce_permissions:bool=True):
         """Get a list of pending users for private games
 
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
+            enforce_permissions (bool): Disable to bypass permission checking.
 
         Returns:
             list: Pending users (including participant ID)
         """
-        if not self._user_owns_game(user_id=user_id, game_id=game_id):
+        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to manage players for game {game_id}')
         try:
             return self.be.get_many_participants(game_id=game_id, status='pending')
         except ValueError: # no pending users, return empty list 
             return () #TODO problem?
         
-    def approve_game_users(self, user_id:int, participant_id:int):
+    def approve_game_users(self, user_id:int, participant_id:int, enforce_permissions:bool=True):
         """Approve/add a user to private game
 
         Args:
             user_id (int): User ID (command runner).
             participant_id (int): Participant ID (get with pending_game_users).
+            enforce_permissions (bool): Disable to bypass permission checking.
 
         Returns:
             dict: status
         """
         player = self.be.get_participant(participant_id=participant_id)
-        if not self._user_owns_game(user_id=user_id, game_id=player.game_id):
+        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to approve players for game {player.game_id}')
         
         #TODO errors!
