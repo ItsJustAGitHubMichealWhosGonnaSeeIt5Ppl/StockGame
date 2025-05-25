@@ -420,6 +420,15 @@ class Backend:
             change_percent = round(change_percent, 2) if change_percent else None,
             datetime_updated = _iso8601() 
         )
+        
+    def remove_game(self, game_id:int): 
+        """Remove a game
+
+        Args:
+            game_id (int): Game ID.
+        """
+        
+        self._delete_single(table='games', id_column='game_id', item_id=game_id)
     
     
     # # STOCK ACTIONS # #
@@ -1396,6 +1405,24 @@ class Frontend: # This will be where a bot (like discord) interacts
             self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
         except Exception as e: #TODO ERRORS
             raise e
+        
+    def remove_game(self, user_id:int, game_id:int):
+        """Remove a game
+        
+        Only the games creator or the bots owner can remove a game!
+
+        Args:
+            user_id (int): User ID. (Must be the game owner OR the bot owner)
+            game_id (int): Game ID.
+
+        Raises:
+            PermissionError: Raised if someone who isn't allowed to remove the game tries
+        """
+        
+        if not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id:
+            raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
+        
+        self.be.remove_game(game_id)
     
     def pending_game_users(self, user_id:int, game_id:int):
         """Get a list of pending users for private games
