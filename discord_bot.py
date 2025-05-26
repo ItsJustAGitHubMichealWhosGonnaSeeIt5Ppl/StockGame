@@ -73,6 +73,7 @@ def has_permission(user:discord.member.Member):
     Returns:
         bool: True if allowed
     """
+    
     return user.guild_permissions.administrator
 
 def simple_embed(status:str, title:str, desc:Optional[str]=None):
@@ -987,6 +988,37 @@ async def my_games(
         embed.color = discord.Color.red()
     
     # Send the response
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="delete-game", description="For admins to delete games if needed")
+@app_commands.describe(
+    game_id="The game ID to delete"
+)
+async def delete_game(
+    interaction: discord.Interaction,
+    game_id: int,
+):
+    embed = discord.Embed()
+    try:
+        fe.remove_game(user_id=interaction.user.id, game_id=game_id) # Permission check is done in frontend
+        embed.title = "Success"
+        embed.description = f"Game with the id {game_id} has been successfully deleted"
+        embed.color = discord.Color.green()
+    except PermissionError:
+        if isinstance(interaction.user, discord.member.Member) and has_permission(user=interaction.user):
+            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=False)
+            embed.title = "Success"
+            embed.description = f"Game with the id {game_id} has been successfully deleted"
+            embed.color = discord.Color.green()
+        else:
+            embed.title = "Failed"
+            embed.description = "You do not have permission to delete this game"
+            embed.color = discord.Color.red()
+    except Exception as e:
+        embed.title = "Failed"
+        embed.description = f"There was an error while executing this command:\n{e}"
+        embed.color = discord.Color.red()
+    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Run the bot using the token
