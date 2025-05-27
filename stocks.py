@@ -78,6 +78,7 @@ class Backend:
                 raise LookupError(f'Expected one item, but got {len(resp.result)}.')
             
         elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
+            self.logger.error(f'Failed to get item - Not found. {resp}' )
             raise LookupError(f'Item not found.')
         else:
             raise Exception('Failed to get item.', resp)
@@ -149,6 +150,8 @@ class Backend:
             display_name (str): Username/Displayname for user.
             permissions (int, optional): User permissions (see). - UNUSED in V1.0.0
         """
+        
+        self.logger.debug(f'Adding user {user_id} to database.  source: {source}, display_name: {display_name}.')
         items = {
             'user_id': user_id,
             'display_name':display_name,
@@ -159,12 +162,16 @@ class Backend:
         
         resp = self.sql.insert(table='users', items=items)
         if resp.status != 'success': #TODO errors
+            self.logger.error(f'Failed to add user: {user_id}. Reason: {resp}')
             if resp.reason == 'SQLITE_CONSTRAINT_PRIMARYKEY': # User already in the database
                 raise bexc.UserExistsError(user_id=user_id)
             elif resp.reason == 'SQLITE_MISMATCH': # Invalid data in one of the fields
                 raise bexc.WrongTypeError(table='users')
             else: # Can't think of any other issues you could have with this honestly
                 raise Exception(f'Failed to add user.', resp)
+        else:
+            self.logger.debug(f'Added user {user_id}.')
+            
         
     def get_user(self, user_id:int) -> dtv.User:
         """Get a single user
@@ -175,6 +182,7 @@ class Backend:
         Returns:
             dict: User information.
         """
+        self.logger.debug(f'Getting user: {user_id}.')
         resp = self.sql.get(table='users', filters={'user_id': user_id})
         return self._single_get(model=dtv.User, resp=resp)
     
@@ -844,6 +852,14 @@ class GameLogic: # Might move some of the control/running actions here
         Returns:
             bool: True when within market hours.
         """
+        
+        try:
+            market = yf.Market('US')
+            return False if market.status == 'closed' else True
+        except: #TODO log
+            pass
+        
+        # ALL OF THIS IS JUST IN CASE WE STOP USING YAHOO FINANCE
         the_time = datetime.strftime(datetime.now() + timedelta(hours=self.est_offset), "%H:%M")
         if datetime.strptime(the_time,"%H:%M") > self.market_open_est and self.market_close_est > datetime.strptime(the_time,"%H:%M"):
             return True
@@ -947,16 +963,21 @@ class GameLogic: # Might move some of the control/running actions here
         
         try:        
             if game_id:
+                self.logger.debug(f'Updating stock picks for single game: {game_id}')
                 games = [self.be.get_game(game_id=game_id)] # TODO flag that the checked game specifically did not update
             else:
+                self.logger.debug(f'Updating stock picks for games')
                 games = self.be.get_many_games(include_open=False, include_active=True, include_private=True) # Only active games
-                
-        except LookupError:
+            
+        except LookupError as e:
+            self.logger.exception(f'Failed to update stock picks', exc_info=e)
             return # No games
         
-        for game in games: 
-            if game.update_frequency == 'daily' and self._is_market_hours(): 
+        for game in games:
+            if game.update_frequency == 'daily' and self._is_market_hours():
+                self.logger.info(f'Not updating stock picks for game: {game.id} because update_frequency is daily and market is still open')
                 continue # daily game, currently in market hours, don't run
+            self.logger.debug(f'Updating stock picks for game: {game.id}')
             pending_and_owned_query = """
             WHERE status IN ("pending_buy", "owned")
             AND participation_id IN (SELECT participation_id
@@ -970,12 +991,14 @@ class GameLogic: # Might move some of the control/running actions here
                 picks:tuple[dtv.StockPick, ...] = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
                 pass
             except LookupError:
+                self.logger.debug(f'No stock picks to update for game: {game.id}')
                 continue # No picks
             
             for pick in picks:
                 assert isinstance(pick.id, int)
                 assert isinstance(pick.stock_id, int)
                 if game.update_frequency == 'daily' and pick.status == 'owned' and datetime.strptime(str(pick.last_updated), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                    self.logger.debug(f'Skipping stock pick: {pick.id} in game: {game_id} because update_frequency is daily, and it was last updated less than 8 hours ago')
                     continue # Skip picks with daily update frequency that have been updated in the last 12 hours
                 try:
                     price = self.be.get_many_stock_prices(stock_id=int(pick.stock_id),datetime=_iso8601('date'))[0]
@@ -1120,10 +1143,18 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             bool: True if owned, False if not.
         """
-        game = self.be.get_game(game_id=game_id)
+        self.logger.debug(f'Checking if user: {user_id} owns game: {game_id}')
+        try:
+            game = self.be.get_game(game_id=game_id)
+        except LookupError as e: # TODO log this in the main bit
+            self.logger.error(f'Game: {game_id} does not exist')
+            raise LookupError(e)
+        
         if game.owner_id != user_id:
+            self.logger.debug(f'User: {user_id} does not own game: {game_id}')
             return False
         else:
+            self.logger.debug(f'User: {user_id} owns game: {game_id}')
             return True
         
     def _participant_id(self, user_id:int, game_id:int)-> int:
@@ -1142,7 +1173,26 @@ class Frontend: # This will be where a bot (like discord) interacts
             return players[0].id
         else:
             raise ValueError(f'Expected one participant ID, but got {len(players)}.')
+    
+    def _get_game_name(self, game_id:int): # Get a game name from ID
+        """Get game name from ID
+
+        Args:
+            game_id (int): Game ID.
+
+        Raises:
+            LookupError: Game not found if ID is invalid
+
+        Returns:
+            str: Game name
+        """
         
+        game_info = self.be.sql.get(table='games', columns=['name'], filters={'game_id':game_id})
+        if game_info.status !='success':
+            raise LookupError('Game not found')
+        else:
+            return game_info.result[0]['name']
+
     # # GAME RELATED # #
     def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
@@ -1513,6 +1563,7 @@ class Frontend: # This will be where a bot (like discord) interacts
     
 # TESTING
 if __name__ == "__main__":
+    
     DB_NAME = str(os.getenv('DB_NAME')) # Only added so itll shut the fuck up about types
     OWNER = int(os.getenv("OWNER")) # type: ignore # Set owner ID from env 
     test_users = [111, 222, 333, 444, 555, 666]
