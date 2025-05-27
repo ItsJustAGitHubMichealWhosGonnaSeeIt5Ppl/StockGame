@@ -1,6 +1,6 @@
 # Stock Game
 
-VERY VERY EARLY STOCK PICK GAME CODE
+THIS BRANCH IS CURRENTLY RUNNING AS A TEST, DON'T PUSH UNTESTED CODE HERE!
 
 ## Overall Concept
 - Users will get a certain amount of starting money, and a set amount of stock picks.  The money will then be divided evenly between the picks
