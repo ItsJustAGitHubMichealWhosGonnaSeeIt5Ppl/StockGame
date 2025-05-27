@@ -894,7 +894,6 @@ class GameLogic: # Might move some of the control/running actions here
             if game.status == 'active' and game.end_date and game.end_date < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
                 self.be.update_game(game_id=game.id, status='ended')
 
-        
     def update_stock_prices(self):
         """Find and update stock prices for all stocks currently in games (pending picks are included)
         
@@ -997,7 +996,10 @@ class GameLogic: # Might move some of the control/running actions here
                     dollar_change = 0
                     percent_change = 0
                     status = 'owned'
-                else: # Stock is owned
+                
+                else: # Stock is owned 
+                    assert isinstance(pick.shares, float) # Owned stocks would have to have this
+                    assert isinstance(pick.start_value, float) # Owned stocks would have to have this
                     current_value = float(pick.shares * price.price)
                     dollar_change = current_value - pick.start_value
                     percent_change = (dollar_change / pick.start_value) * 100
