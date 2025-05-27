@@ -211,8 +211,10 @@ def create(db_name:str):
     conn.close()
     
 if __name__ == "__main__":
+    
     DB_NAME = str(os.getenv('DB_NAME'))
-    v002_to_v003(DB_NAME)
+    print(f'DB Name is: {DB_NAME}')
+    #v002_to_v003(DB_NAME)
     create(DB_NAME)
     
     
