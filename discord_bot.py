@@ -794,6 +794,10 @@ async def buy_stock(
     except ValueError as exc:
         if 'Invalid Ticker, too long!' in str(exc):
             description = f'The ticker {ticker} is not valid!'
+        
+        elif 'Stock is not tradeable' in str(exc):
+            description = f'The ticker {ticker} is not tradeable.  This can occur when a stock is private or has been delisted.'
+            
         else:
             logger.exception(f'Uncaught value error user: {interaction.user.id} tried to buy stock with ticker: {ticker}', exc_info=exc)
             'An error ocurred while finding your stock.'
@@ -894,10 +898,10 @@ async def my_stocks(
             picks_table.append(row_template.format(
                 stock = str(pick.stock_ticker).center(5),
                 price = share_price.center(7),
-                shares = (str(round(pick.shares, 2)) if pick.shares else 'NA').center(6),
-                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'NA').center(6),
-                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'NA').center(6),
-                p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'NA').center(5),
+                shares = (str(round(pick.shares, 2)) if pick.shares else 'N/A').center(6),
+                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(6),
+                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'N/A').center(6),
+                p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
         status = 'success'
         

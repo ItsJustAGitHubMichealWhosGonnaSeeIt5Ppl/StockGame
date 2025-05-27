@@ -948,6 +948,9 @@ class GameLogic: # Might move some of the control/running actions here
         if len(tickers) > 0:
             prices = yf.Tickers(tickers).tickers
             for ticker, price in prices.items(): # update pricing
+                if not price.info['tradeable']: #TODO decide what should happen if someone manages this
+                    self.logger.error(f'Ticker {ticker} is not tradeable! Skipping')
+                    continue
                 price = price.info['regularMarketPrice'] 
                 try:
                     self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=_iso8601()) # Update pricing
@@ -1092,10 +1095,13 @@ class GameLogic: # Might move some of the control/running actions here
         self.update_participants_and_games() # Update participants (set their total value, etc.)
             
     def find_stock(self, ticker:str): 
-        """Find and add a stock
+        """Find and add a stock to database
 
         Args:
             ticker (str): Stock ticker.  Eg: 'MSFT'.
+            
+        Raises:
+            ValueError: Stock is not tradeable
         """        
         #TODO regex the subimissions to check for invalid characters and save time.
         #TODO should only USD stocks be allowed/limit exchanges?
@@ -1110,11 +1116,14 @@ class GameLogic: # Might move some of the control/running actions here
                 info = [] # Set list to 0 length so error is thrown
 
             if len(info) > 0: # Try to verify ticker is real and get the relevant infos
+                if not info['tradeable']: # Stock can no longer be traded
+                    raise ValueError('Stock is not tradeable')
                 self.be.add_stock(ticker=ticker.upper(),
                     exchange=info['fullExchangeName'], #TODO this fails with CLR stock
                     company_name=info['displayName'] if 'displayName' in info else info['shortName'])
             else:
                 raise ValueError(f'Failed to add `ticker` {ticker}.')
+        pass
 
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
@@ -1414,6 +1423,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             ValueError: Invalid Ticker, too long!
             _participant_id > bexc.DoesntExistError: Player not in game
+            find_stock > ValueError: Stock is not tradeable.  Stock existed at some point, but cannot be traded
             find_stock > ValueError: Failed to add stock (usually means the stock doesn't exist)
             add_stock_pick > bexc.NotAllowedError: reason='Not active'.  Player status isn't active, so cannot pick stocks
             add_stock_pick > bexc.NotAllowedError: reason='Past pick_date'.  (only possible if a pick date is set).
@@ -1571,7 +1581,6 @@ class Frontend: # This will be where a bot (like discord) interacts
         #TODO errors!
         self.be.update_participant(participant_id=player_id, status='active')
 
-
     def get_all_participants(self, game_id: int):
         return self.be.get_many_participants(game_id=game_id, sort_by_value=True)
     
@@ -1584,32 +1593,7 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
-    game.be.update_game(1, update_frequency='hourly')
     game.gl.update_all()
-    game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
-    many_games = game.be.get_many_games(include_private=True)
-    game.register(user_id=1123)
-    game.join_game(user_id=1123, game_id=1)
-    picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
-    #game.gl.update_stock_prices()
-    my_stock = game.my_stocks(user_id=OWNER, game_id=1)
-    print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')
-    
-
-    for user in test_users: # Add some random users
-        print(game.register(user_id=user, username=str(user)))
-        try:
-            game.join_game(user_id=user,game_id=1)
-        except:
-            pass
-        for stock in test_stocks2: # Buy some stocks
-            game.buy_stock(user, 1, stock)
-    print(game.join_game(user_id=OWNER,game_id=1)) # Try to join a game
-    
-    for stock in test_stocks: # Buy stocks
-        print(f'BUY {stock}! {game.buy_stock(OWNER, 1, stock)}') # Try to purchase stock
-    
-    #print(game.update(OWNER)) # Try to update
-    leaders = game.game_info(game_id=1)
-    print([info for info in leaders])
-    pass
+    game.be.add_stock(ticker='YM=F',exchange='fake', company_name='fake')
+    game.gl.find_stock(ticker='YM=F')
+    game.be.update_game(1, update_frequency='hourly')
