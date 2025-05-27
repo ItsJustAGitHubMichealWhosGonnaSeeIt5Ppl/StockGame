@@ -1146,7 +1146,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         self.default_perms = default_permissions
         self.register(user_id=owner_user_id, source=self.source) # Try to register user
         self.be.update_user(user_id=owner_user_id, permissions=288)
-        self.owner_id = owner_user_id
+        self.owner_id = int(owner_user_id)
     
     def _user_owns_game(self, user_id:int, game_id:int): # Check if a user owns a specific game
         """Check whether a user owns a specific game
