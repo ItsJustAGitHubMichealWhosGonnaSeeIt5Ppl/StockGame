@@ -981,8 +981,17 @@ async def game_list(
     interaction: discord.Interaction,
     page_length: int = 10
 ):
-    games = fe.list_games(include_open=False, include_active=True) # Only get currently running games
-    
+    embed = discord.Embed()
+    try:
+        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games
+    except LookupError:
+        embed.title = 'No games found'
+        embed.description = 'There are no public open or active games'
+        embed.color = discord.Color.red()
+    except Exception as e:
+        logger.exception(f'Error when loading game list. Page length: {page_length}', exc_info=e)
+        embed.title = 'Error'
+        embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     async def get_page(page: int):
         embed = discord.Embed(title="Currently running games", description="")
         offset = (page - 1) * page_length
@@ -990,14 +999,13 @@ async def game_list(
             game_members = fe.get_all_participants(game.id)
             embed.add_field(
                 name=f"{game.name}: [{game.id}]", #TODO switch this to use the simpler formatting
-                value=f"""
-                    **Owned by:** <@{game.owner_id}>
-                    **Pick date:** {game.pick_date or "Not set"}
-                    **Starting Cash:** ${int(game.start_money)}
-                    Starting on `{game.start_date}` and ending on `{game.end_date}`
-                    There are currently **{len(game_members)}** members participating
-                    """
+                value='> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
+                pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+                start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+                date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
                 )
+                )
+    
         n = Pagination.compute_total_pages(len(games), page_length)
         embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
         return embed, n
