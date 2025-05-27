@@ -68,10 +68,10 @@ def setup_logging(level):
         os.mkdir('logs')
     except FileExistsError:
         pass # Folder already exists
-    log_to_file = logging.FileHandler(filename=f'logs/stock_game{now}.log', mode='w') # Create new log everything it crashes?
-    log_to_file.setLevel(logging.DEBUG)
-    log_to_file.setFormatter(frmt)
-    logger.addHandler(log_to_file)
+    
+    logging.basicConfig(filename=f'logs/stock_game{now}.log',filemode='w',
+        format='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.DEBUG)
     logger.setLevel(level)
     
 setup_logging(level=logging.DEBUG) # debug for now
