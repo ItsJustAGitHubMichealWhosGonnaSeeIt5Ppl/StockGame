@@ -553,10 +553,10 @@ async def join_game(
     await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
 @bot.tree.command(name="delete-game", description="For admins to delete games if needed")
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 @app_commands.describe(
     game_id="The game ID to delete"
 )
-@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def delete_game(
     interaction: discord.Interaction,
     game_id: int,
@@ -585,6 +585,7 @@ async def delete_game(
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to update",
     name="New name of the game",
@@ -599,7 +600,6 @@ async def delete_game(
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
     update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
 )
-@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
@@ -659,11 +659,11 @@ async def manage_game(
 
 #TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to invite them to",
     user="User to invite"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def invite_user(
     interaction: discord.Interaction, 
     game_id: int,
@@ -757,11 +757,11 @@ async def invite_user(
 # STOCK RELATED
 
 @bot.tree.command(name="buy-stock", description="Buy a stock in a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def buy_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -809,11 +809,11 @@ async def buy_stock(
         )
 
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete, ticker=ac.sell_ticker_autocomplete)
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def remove_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -831,6 +831,7 @@ async def remove_stock(
         title="Stock Removal Successful"
         description=f"You have successfully removed {ticker} from your picks in game: {game_id}."
 
+        
     except Exception as e:
         status = 'failed'
         title="Stock Removal Failed"
