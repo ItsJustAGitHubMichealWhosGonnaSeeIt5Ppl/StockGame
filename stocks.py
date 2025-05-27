@@ -950,7 +950,7 @@ class GameLogic: # Might move some of the control/running actions here
             if game_id:
                 games = [self.be.get_game(game_id=game_id)] # TODO flag that the checked game specifically did not update
             else:
-                games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+                games = self.be.get_many_games(include_open=False, include_active=True, include_private=True) # Only active games
                 
         except LookupError:
             return # No games
@@ -969,8 +969,9 @@ class GameLogic: # Might move some of the control/running actions here
             try:
                 resp = self.be.sql.get(table='stock_picks', filters=(pending_and_owned_query, [game.id]))
                 picks = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
+                pass
             except LookupError:
-                return # No picks
+                continue # No picks
             
             for pick in picks:
                 assert isinstance(pick['id'], int)
@@ -1516,6 +1517,7 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.be.update_game(1, update_frequency='hourly')
     game.gl.update_all()
     game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
     many_games = game.be.get_many_games(include_private=True)
