@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from helpers.views import Pagination
 import helpers.autocomplete as ac
 from stocks import Frontend
-from helpers.exceptions import NotAllowedError, DoesntExistError
+from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError
 
 # DISCORD 
 import discord
@@ -778,7 +778,7 @@ async def buy_stock(
     game_id: int, 
     ticker: str
 ):
-    
+    await interaction.response.defer()
     status = 'failed' # Start with failed status
     title = 'Stock Purchase Failed'
     try:
@@ -790,7 +790,14 @@ async def buy_stock(
         title = 'Stock Purchased'
         description = f'You have successfully bought {ticker} in game: {game_id}.'
         status = 'success'
-        
+    
+    except ValueError as exc:
+        if 'Invalid Ticker, too long!' in str(exc):
+            description = f'The ticker {ticker} is not valid!'
+        else:
+            logger.exception(f'Uncaught value error user: {interaction.user.id} tried to buy stock with ticker: {ticker}', exc_info=exc)
+            'An error ocurred while finding your stock.'
+            
     except NotAllowedError as exc: # REASONS ARE NOW IN THE DOCSTRING OF buy_stock!!
         if exc.reason == 'Not active': # Player isn't an active member of the game - IDK HOW YOU WANT TO TELL THE USER THIS.  This could happen if they got banned, or if the game is private and they haven't been approved
             description = f'You are not allowed to buy stocks in the game: {game_id}.'
@@ -801,16 +808,19 @@ async def buy_stock(
         
         elif exc.reason == 'Past pick_date':
             description = f'The pick date for this game has passed, so you can no longer pick stocks.'
-            
+    
+    except AlreadyExistsError as exc:
+        description = f'You already own {ticker} in this game!'
+        
     except DoesntExistError as exc: # Player isnt in the game at all
         if exc.table == 'game_participants':
             description = f'You are not in the game: {game_id}.'
-            
+
     except Exception as e: # Other unexpeted errors
         logger.exception(f'User: {interaction.user.id} tried to buy the stock: {ticker} in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to buy a stock\nReport this! Ticker: {ticker}, Game: {game_id}'
             
-    await interaction.response.send_message(
+    await interaction.followup.send(
         embed=simple_embed( # This just creates the status message
             status = status,
             title = title,
@@ -867,7 +877,6 @@ async def my_stocks(
     picks_table = ['| Stock |  Price  | Shares |  Value  |  $Gain  | %Gain |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
     # EXAMPLE LINE:            | AAPLE | $10,000 | 10,000 | $10,000 | $10,000 | 1000% |
     status = 'failed' # Default to failed
-    title = 'Fetching Stocks Failed'
     try:
         picks = fe.my_stocks(user_id, game_id)
         
@@ -886,7 +895,7 @@ async def my_stocks(
                 stock = str(pick.stock_ticker).center(5),
                 price = share_price.center(7),
                 shares = (str(round(pick.shares, 2)) if pick.shares else 'NA').center(6),
-                value = (str('$'+ format(round(pick.current_value, 2), ','))[:6] if pick.current_value else 'NA').center(6),
+                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'NA').center(6),
                 d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'NA').center(6),
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'NA').center(5),
             ))
@@ -1024,8 +1033,6 @@ async def my_games(
     )
     try:
         games = fe.my_games(interaction.user.id)
-        if len(games.games) == 0:
-            raise LookupError("No games found")
         game_description: str = ""
         # Add each game to the embed
         for game in games.games: #TODO provide more info here
