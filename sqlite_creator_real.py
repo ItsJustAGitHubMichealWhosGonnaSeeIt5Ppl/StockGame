@@ -31,7 +31,6 @@ def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version
 
 def v002_to_v003(db_name:str,):
     """Migrate v0.0.2 DB to v0.0.3 (see changelog)
-    
 
     Args:
         db_name (str): Existing database name.
