@@ -54,7 +54,7 @@ intents.members = True
 ephemeral_test = False # Set to False for testing, True for production
 
 # Logger thing
-now = datetime.now().strftime('%Y.%m.%d.%H:%M:%S')
+now = datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
 def setup_logging(level): 
     global console, logger
     frmt = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S') #Format that I like
@@ -68,11 +68,12 @@ def setup_logging(level):
         os.mkdir('logs')
     except FileExistsError:
         pass # Folder already exists
-    log_to_file = logging.FileHandler(filename=f'logs/stock_game{now}.log', mode='w') # Create new log everything it crashes?
-    log_to_file.setLevel(logging.DEBUG)
-    log_to_file.setFormatter(frmt)
-    logger.addHandler(log_to_file)
+    
+    logging.basicConfig(filename=f'logs/stock_game{now}.log',filemode='w',
+        format='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.DEBUG)
     logger.setLevel(level)
+    
 setup_logging(level=logging.DEBUG) # debug for now
 
 def has_permission(user:discord.member.Member):
@@ -563,10 +564,10 @@ async def join_game(
     await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
 @bot.tree.command(name="delete-game", description="For admins to delete games if needed")
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 @app_commands.describe(
     game_id="The game ID to delete"
 )
-@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def delete_game(
     interaction: discord.Interaction,
     game_id: int,
@@ -595,6 +596,7 @@ async def delete_game(
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to update",
     name="New name of the game",
@@ -609,7 +611,6 @@ async def delete_game(
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
     update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
 )
-@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
@@ -669,11 +670,11 @@ async def manage_game(
 
 #TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to invite them to",
     user="User to invite"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def invite_user(
     interaction: discord.Interaction, 
     game_id: int,
@@ -767,11 +768,11 @@ async def invite_user(
 # STOCK RELATED
 
 @bot.tree.command(name="buy-stock", description="Buy a stock in a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def buy_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -819,11 +820,11 @@ async def buy_stock(
         )
 
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete, ticker=ac.sell_ticker_autocomplete)
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def remove_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -841,6 +842,7 @@ async def remove_stock(
         title="Stock Removal Successful"
         description=f"You have successfully removed {ticker} from your picks in game: {game_id}."
 
+        
     except Exception as e:
         status = 'failed'
         title="Stock Removal Failed"
@@ -979,27 +981,38 @@ async def game_list(
     interaction: discord.Interaction,
     page_length: int = 10
 ):
-    games = fe.list_games(include_open=False, include_active=True) # Only get currently running games
+    embed = discord.Embed()
+    try:
+        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games
+        async def get_page(page: int):
+            embed = discord.Embed(title="Currently running games", description="")
+            offset = (page - 1) * page_length
+            for game in games:
+                game_members = fe.get_all_participants(game.id)
+                embed.add_field(
+                    name=f"{game.name}: [{game.id}]", #TODO switch this to use the simpler formatting
+                    value='> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
+                    pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+                    start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+                    date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
+                    )
+                    )
+        
+            n = Pagination.compute_total_pages(len(games), page_length)
+            embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
+            return embed, n
+        await Pagination(interaction, get_page, ephemeral=ephemeral_test).navigate()
+    except LookupError:
+        embed.title = 'No games found'
+        embed.description = 'There are no public open or active games'
+        embed.color = discord.Color.red()
+    except Exception as e:
+        logger.exception(f'Error when loading game list. Page length: {page_length}', exc_info=e)
+        embed.title = 'Error'
+        embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    async def get_page(page: int):
-        embed = discord.Embed(title="Currently running games", description="")
-        offset = (page - 1) * page_length
-        for game in games:
-            game_members = fe.get_all_participants(game.id)
-            embed.add_field(
-                name=f"{game.name}: [{game.id}]", #TODO switch this to use the simpler formatting
-                value=f"""
-                    **Owned by:** <@{game.owner_id}>
-                    **Pick date:** {game.pick_date or "Not set"}
-                    **Starting Cash:** ${int(game.start_money)}
-                    Starting on `{game.start_date}` and ending on `{game.end_date}`
-                    There are currently **{len(game_members)}** members participating
-                    """
-                )
-        n = Pagination.compute_total_pages(len(games), page_length)
-        embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
-        return embed, n
-    await Pagination(interaction, get_page, ephemeral=ephemeral_test).navigate()
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
@@ -1062,7 +1075,7 @@ async def update_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
     
-@bot.tree.command(name="logs", description="For admins to get logs") # For debugging, get logs
+@bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
 async def logs(
     interaction: discord.Interaction,
 ):
