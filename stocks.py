@@ -968,18 +968,18 @@ class GameLogic: # Might move some of the control/running actions here
             """ #TODO instead of setting games to active, just use start and end date?
             try:
                 resp = self.be.sql.get(table='stock_picks', filters=(pending_and_owned_query, [game.id]))
-                picks = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
+                picks:tuple[dtv.StockPick, ...] = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
                 pass
             except LookupError:
                 continue # No picks
             
             for pick in picks:
-                assert isinstance(pick['id'], int)
-                assert isinstance(pick['stock_id'], int)
-                if game.update_frequency == 'daily' and pick['status'] == 'owned' and datetime.strptime(str(pick['last_updated']), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                assert isinstance(pick.id, int)
+                assert isinstance(pick.stock_id, int)
+                if game.update_frequency == 'daily' and pick.status == 'owned' and datetime.strptime(str(pick.last_updated), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
                     continue # Skip picks with daily update frequency that have been updated in the last 12 hours
                 try:
-                    price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
+                    price = self.be.get_many_stock_prices(stock_id=int(pick.stock_id),datetime=_iso8601('date'))[0]
                 except LookupError as e:
                     self.logger.exception(e) #TODO any change this causes more problems?
                     continue
@@ -990,7 +990,7 @@ class GameLogic: # Might move some of the control/running actions here
                 start_value = None
                 status = None
                 
-                if pick['status'] == 'pending_buy':
+                if pick.status == 'pending_buy':
                     buying_power = float(game.start_money / game.pick_count) # Amount available to buy this stock (starting money divided by picks)
                     shares = buying_power / price.price# Total shares owned
                     start_value = current_value = round(float(shares * price.price), 2)
@@ -998,10 +998,10 @@ class GameLogic: # Might move some of the control/running actions here
                     percent_change = 0
                     status = 'owned'
                 else: # Stock is owned
-                    current_value = float(pick['shares'] * price.price)
-                    dollar_change = current_value - pick['start_value']
-                    percent_change = (dollar_change / pick['start_value']) * 100
-                self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
+                    current_value = float(pick.shares * price.price)
+                    dollar_change = current_value - pick.start_value
+                    percent_change = (dollar_change / pick.start_value) * 100
+                self.be.update_stock_pick(pick_id=pick.id,shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
 
     def update_participants_and_games(self, game_id:Optional[int]=None):
         """Update game participant and game information
