@@ -880,18 +880,20 @@ class GameLogic: # Might move some of the control/running actions here
         
         Sets games that have started to 'active' and games that have ended to 'ended'
         """
-        games = self.be.get_many_games(include_private=True) # Get all games
-        if len(games) > 0:
-            for game in games: #TODO add log here
-                
-                # Start and end games
-                if game.status == 'open' and game.start_date <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
-                    self.be.update_game(game_id=game.id, status='active')
-                if game.status == 'active' and game.end_date and game.end_date < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
-                    self.be.update_game(game_id=game.id, status='ended')
-        else:
-            raise Exception('Failed to update game statuses.', games)
         
+        try:
+            games = self.be.get_many_games(include_private=True) # Get all games
+        except LookupError:
+            return # No games
+
+        for game in games: #TODO add log here
+            
+            # Start and end games
+            if game.status == 'open' and game.start_date <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
+                self.be.update_game(game_id=game.id, status='active')
+            if game.status == 'active' and game.end_date and game.end_date < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
+                self.be.update_game(game_id=game.id, status='ended')
+
     def update_stock_prices(self):
         """Find and update stock prices for all stocks currently in games (pending picks are included)
         
@@ -918,9 +920,9 @@ class GameLogic: # Might move some of the control/running actions here
             resp = self.be.sql.get(table='stocks', filters=query)
             active_stocks = self.be._many_get(typeadapter=dtv.Stocks, resp=resp)
         except LookupError:
-            raise LookupError('Failed to update stock prices.  No active stocks.')
+            return # No stocks
 
-        tickers = [tkr['ticker'] for tkr in active_stocks]
+        tickers = [tkr.ticker for tkr in active_stocks]
         if len(tickers) > 0:
             prices = yf.Tickers(tickers).tickers
             for ticker, price in prices.items(): # update pricing
@@ -941,11 +943,16 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all games will be checked/run
 
-        """        
-        if game_id:
-            games = [self.be.get_game(game_id=game_id)]
-        else:
-            games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+        """
+        
+        try:        
+            if game_id:
+                games = [self.be.get_game(game_id=game_id)] # TODO flag that the checked game specifically did not update
+            else:
+                games = self.be.get_many_games(include_open=False, include_active=True, include_private=True) # Only active games
+                
+        except LookupError:
+            return # No games
         
         for game in games: 
             if game.update_frequency == 'daily' and self._is_market_hours(): 
@@ -958,33 +965,45 @@ class GameLogic: # Might move some of the control/running actions here
                 AND game_id = ?
                 )
             """ #TODO instead of setting games to active, just use start and end date?
+            try:
+                resp = self.be.sql.get(table='stock_picks', filters=(pending_and_owned_query, [game.id]))
+                picks:tuple[dtv.StockPick, ...] = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
+                pass
+            except LookupError:
+                continue # No picks
             
-            resp = self.be.sql.get(table='stock_picks', filters=(pending_and_owned_query, game.id))
-            picks = self.be._many_get(typeadapter=dtv.StockPicks, resp=resp)
             for pick in picks:
-                assert isinstance(pick['id'], int)
-                assert isinstance(pick['stock_id'], int)
-                if game.update_frequency == 'daily' and pick['status'] == 'owned' and datetime.strptime(str(pick['last_updated']), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                assert isinstance(pick.id, int)
+                assert isinstance(pick.stock_id, int)
+                if game.update_frequency == 'daily' and pick.status == 'owned' and datetime.strptime(str(pick.last_updated), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
                     continue # Skip picks with daily update frequency that have been updated in the last 12 hours
-                price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
+                try:
+                    price = self.be.get_many_stock_prices(stock_id=int(pick.stock_id),datetime=_iso8601('date'))[0]
+                except LookupError as e:
+                    self.logger.exception(e) #TODO any change this causes more problems?
+                    continue
+                
                 #TODO check datetime here and decide if price should be used
                 buying_power = None,
                 shares = None
                 start_value = None
                 status = None
                 
-                if pick['status'] == 'pending_buy':
+                if pick.status == 'pending_buy':
                     buying_power = float(game.start_money / game.pick_count) # Amount available to buy this stock (starting money divided by picks)
                     shares = buying_power / price.price# Total shares owned
                     start_value = current_value = round(float(shares * price.price), 2)
                     dollar_change = 0
                     percent_change = 0
                     status = 'owned'
-                else: # Stock is owned
-                    current_value = float(pick['shares'] * price.price)
-                    dollar_change = current_value - pick['start_value']
-                    percent_change = (dollar_change / pick['start_value']) * 100
-                self.be.update_stock_pick(pick_id=pick['id'],shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
+                
+                else: # Stock is owned 
+                    assert isinstance(pick.shares, float) # Owned stocks would have to have this
+                    assert isinstance(pick.start_value, float) # Owned stocks would have to have this
+                    current_value = float(pick.shares * price.price)
+                    dollar_change = current_value - pick.start_value
+                    percent_change = (dollar_change / pick.start_value) * 100
+                self.be.update_stock_pick(pick_id=pick.id,shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
 
     def update_participants_and_games(self, game_id:Optional[int]=None):
         """Update game participant and game information
@@ -995,18 +1014,30 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
         """
-        if game_id:
-            games = [self.be.get_game(game_id=game_id)]
-        else:
-            games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+        try:        
+            if game_id:
+                games = [self.be.get_game(game_id=game_id)] # TODO flag that the checked game specifically did not update
+            else:
+                games = self.be.get_many_games(include_open=False, include_active=True) # Only active games
+                
+        except LookupError:
+            return # No games
         for game in games:
             aggr_val = 0
             if game.status != 'active':
                 return "Game not active"
-            players = self.be.get_many_participants(game_id=game.id, status='active')
+            try:
+                players = self.be.get_many_participants(game_id=game.id, status='active')
+            except LookupError:
+                continue # No players
+                
             for player in players:
                 portfolio_value = 0.0
-                picks = self.be.get_many_stock_picks(participant_id=player.id, status='owned')
+                try:
+                    picks = self.be.get_many_stock_picks(participant_id=player.id, status='owned')
+                except LookupError: # Skip games with no picks 
+                    continue
+                      
                 for pick in picks:
                     assert isinstance(pick.current_value, float)
                     portfolio_value += pick.current_value
@@ -1488,12 +1519,13 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.be.update_game(1, update_frequency='hourly')
+    game.gl.update_all()
     game.be.sql.update(table='stock_picks', items={'datetime_updated': '2025-05-20 22:07:26'})
     many_games = game.be.get_many_games(include_private=True)
     game.register(user_id=1123)
     game.join_game(user_id=1123, game_id=1)
     picks = game.be.get_many_stock_picks(status=['owned', 'pending_sell'])
-    game.gl.update_all()
     #game.gl.update_stock_prices()
     my_stock = game.my_stocks(user_id=OWNER, game_id=1)
     print(f'my stocks: {game.my_stocks(user_id=OWNER, game_id=1)}')

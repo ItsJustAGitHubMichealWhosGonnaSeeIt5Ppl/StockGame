@@ -192,7 +192,7 @@ class SqlHelper: # Simple helper for SQL
             
         return tuple(formatted_items)
     
-    def _sql_filters(self, filters:dict | str | tuple)-> tuple[str, list[str | int | float | bool]| None]:
+    def _sql_filters(self, filters:dict | str | tuple[str, list])-> tuple[str, list[str | int | float | bool]| None]:
         """Handle different filtering formats and items for other internal methods
 
         Args:
