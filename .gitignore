@@ -183,3 +183,5 @@ cython_debug/
 .DS_Store
 **.db
 ./settings.json
+settings.json
+testPIL.py
