@@ -977,7 +977,12 @@ class GameLogic: # Might move some of the control/running actions here
                 assert isinstance(pick['stock_id'], int)
                 if game.update_frequency == 'daily' and pick['status'] == 'owned' and datetime.strptime(str(pick['last_updated']), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
                     continue # Skip picks with daily update frequency that have been updated in the last 12 hours
-                price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
+                try:
+                    price = self.be.get_many_stock_prices(stock_id=int(pick['stock_id']),datetime=_iso8601('date'))[0]
+                except LookupError as e:
+                    self.logger.exception(e) #TODO any change this causes more problems?
+                    continue
+                
                 #TODO check datetime here and decide if price should be used
                 buying_power = None,
                 shares = None
@@ -1018,10 +1023,18 @@ class GameLogic: # Might move some of the control/running actions here
             aggr_val = 0
             if game.status != 'active':
                 return "Game not active"
-            players = self.be.get_many_participants(game_id=game.id, status='active')
+            try:
+                players = self.be.get_many_participants(game_id=game.id, status='active')
+            except LookupError:
+                continue # No players
+                
             for player in players:
                 portfolio_value = 0.0
-                picks = self.be.get_many_stock_picks(participant_id=player.id, status='owned')
+                try:
+                    picks = self.be.get_many_stock_picks(participant_id=player.id, status='owned')
+                except LookupError: # Skip games with no picks 
+                    continue
+                      
                 for pick in picks:
                     assert isinstance(pick.current_value, float)
                     portfolio_value += pick.current_value
