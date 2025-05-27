@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 # LOCAL
 from helpers.views import Pagination
+import helpers.autocomplete as ac
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError
 
@@ -555,6 +556,7 @@ async def join_game(
 @app_commands.describe(
     game_id="The game ID to delete"
 )
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def delete_game(
     interaction: discord.Interaction,
     game_id: int,
@@ -597,6 +599,7 @@ async def delete_game(
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
     update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
 )
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
@@ -654,12 +657,13 @@ async def manage_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-# TODO fix response to command
+#TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
 @app_commands.describe(
     game_id="ID of the game to invite them to",
     user="User to invite"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def invite_user(
     interaction: discord.Interaction, 
     game_id: int,
@@ -757,6 +761,7 @@ async def invite_user(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def buy_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -803,12 +808,12 @@ async def buy_stock(
         ephemeral=ephemeral_test
         )
 
-# TODO add autofill for user's stocks and games
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def remove_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -826,7 +831,6 @@ async def remove_stock(
         title="Stock Removal Successful"
         description=f"You have successfully removed {ticker} from your picks in game: {game_id}."
 
-        
     except Exception as e:
         status = 'failed'
         title="Stock Removal Failed"
@@ -834,13 +838,11 @@ async def remove_stock(
 
     await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
-# TODO Get user's stocks from frontend
-# TODO Add autofill for user's games
-# TODO Display stocks in an embed with stock info
 # TODO Add buttons for buying/selling stocks?
 # TODO Add pagination if there are many stocks (10+)
 # TODO Add last updated date/time in footer
 @bot.tree.command(name="my-stocks", description="View your stocks in a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game"
 )
@@ -897,8 +899,8 @@ async def my_stocks(
 
 # TODO Add join game button to game info embed
 # TODO frontend: change to show only public games
-# TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
     show_leaderboard="Whether to display the leaderboard or not, will by default"
@@ -957,11 +959,6 @@ async def game_info(
     embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-# TODO get list of public games
-#   - list the user count
-#   - list the game status
-#   - list the game name
-# TODO add pagination if there are many games (10+)
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
