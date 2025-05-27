@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from pydantic import TypeAdapter
 from typing import Type
 import helpers.exceptions as bexc
+from requests import exceptions # Exceptions!
 load_dotenv()
 
 
@@ -1102,6 +1103,7 @@ class GameLogic: # Might move some of the control/running actions here
             
         Raises:
             ValueError: Stock is not tradeable
+            ValueError: Unable to find stock
         """        
         #TODO regex the subimissions to check for invalid characters and save time.
         #TODO should only USD stocks be allowed/limit exchanges?
@@ -1114,7 +1116,9 @@ class GameLogic: # Might move some of the control/running actions here
                 info = stock.info
             except AttributeError: # If stock isn't valid, an attribute error should be raised
                 info = [] # Set list to 0 length so error is thrown
-
+            except exceptions.HTTPError: # Just fully gives up
+                raise ValueError('Unable to find stock')
+                
             if len(info) > 0: # Try to verify ticker is real and get the relevant infos
                 if not info['tradeable']: # Stock can no longer be traded
                     raise ValueError('Stock is not tradeable')
@@ -1146,7 +1150,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         self.default_perms = default_permissions
         self.register(user_id=owner_user_id, source=self.source) # Try to register user
         self.be.update_user(user_id=owner_user_id, permissions=288)
-        self.owner_id = owner_user_id
+        self.owner_id = int(owner_user_id)
     
     def _user_owns_game(self, user_id:int, game_id:int): # Check if a user owns a specific game
         """Check whether a user owns a specific game
@@ -1423,7 +1427,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             ValueError: Invalid Ticker, too long!
             _participant_id > bexc.DoesntExistError: Player not in game
+            _participant_id > LookupError: Game or player doesn't exist
             find_stock > ValueError: Stock is not tradeable.  Stock existed at some point, but cannot be traded
+            find_stock > ValueError: Unable to find stock.  HTTP error when searching for stock, assume it doesn't exist
             find_stock > ValueError: Failed to add stock (usually means the stock doesn't exist)
             add_stock_pick > bexc.NotAllowedError: reason='Not active'.  Player status isn't active, so cannot pick stocks
             add_stock_pick > bexc.NotAllowedError: reason='Past pick_date'.  (only possible if a pick date is set).
