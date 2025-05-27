@@ -782,6 +782,7 @@ async def buy_stock(
     status = 'failed' # Start with failed status
     title = 'Stock Purchase Failed'
     try:
+        ticker = ticker.upper()
         fe.buy_stock(
             user_id=interaction.user.id,
             game_id=game_id,
@@ -790,7 +791,7 @@ async def buy_stock(
         title = 'Stock Purchased'
         description = f'You have successfully bought {ticker} in game: {game_id}.'
         status = 'success'
-    
+
     except ValueError as exc:
         if 'Invalid Ticker, too long!' in str(exc):
             description = f'The ticker {ticker} is not valid!'
@@ -798,10 +799,16 @@ async def buy_stock(
         elif 'Stock is not tradeable' in str(exc):
             description = f'The ticker {ticker} is not tradeable.  This can occur when a stock is private or has been delisted.'
             
+        elif 'Unable to find stock' in str(exc):
+            description = f'The ticker {ticker} was not found.  Double check your spelling and try again!'
+        
         else:
             logger.exception(f'Uncaught value error user: {interaction.user.id} tried to buy stock with ticker: {ticker}', exc_info=exc)
             'An error ocurred while finding your stock.'
-            
+    
+    except LookupError:
+        description = f'No game with ID {game_id} found.'
+    
     except NotAllowedError as exc: # REASONS ARE NOW IN THE DOCSTRING OF buy_stock!!
         if exc.reason == 'Not active': # Player isn't an active member of the game - IDK HOW YOU WANT TO TELL THE USER THIS.  This could happen if they got banned, or if the game is private and they haven't been approved
             description = f'You are not allowed to buy stocks in the game: {game_id}.'
@@ -881,6 +888,8 @@ async def my_stocks(
     picks_table = ['| Stock |  Price  | Shares |  Value  |  $Gain  | %Gain |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
     # EXAMPLE LINE:            | AAPLE | $10,000 | 10,000 | $10,000 | $10,000 | 1000% |
     status = 'failed' # Default to failed
+    title = 'Failed to get stocks'
+    description = ''
     try:
         picks = fe.my_stocks(user_id, game_id)
         
@@ -904,6 +913,7 @@ async def my_stocks(
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
         status = 'success'
+        title = f'{interaction.user.display_name}\'s picks for game {fe._get_game_name(game_id=game_id)}({game_id})'
         
     except DoesntExistError as e: # Raised when player is not in the game
         description=f'You are not currently participating in this game. You can try to join it using the join-game command.'
@@ -915,10 +925,12 @@ async def my_stocks(
         description=f"There was an error while fetching your stocks.\n{e}"
         logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
-
-    embed = simple_embed(status=status, title=f'<@{user_id}>\'s stock picks')
-    embed.add_field(name='Your Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table)))
+    
+    embed = simple_embed(status=status, title=title, desc=description)
+    if status == 'success': # add stock picks
+        embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table)))
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+
 
 # GAME INFO RELATED
 
@@ -935,53 +947,57 @@ async def game_info(
     game_id: int,
     show_leaderboard: bool = True
 ):
-    game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
-    game = game_info.game
-    assert isinstance(game_info.leaderboard, list)
-    description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game.owner_id,
-        pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
-        start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-        date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-        participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
-        )
-    embed = discord.Embed(
-        title=f'{game.name} ({game.id})', 
-        description=description_str,
-        )
-    embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
+    try:
+        game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
+        game = game_info.game
+        assert isinstance(game_info.leaderboard, list)
+        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game.owner_id,
+            pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+            start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+            date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
+            participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
+            )
+        embed = discord.Embed(
+            title=f'{game.name} ({game.id})', 
+            description=description_str,
+            )
+        embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
 
-    if not show_leaderboard:
-        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
-        return
-    
-    lb_limit = 10 # Amount of users to show '🏆'
-    leaderboard_info = game_info.leaderboard[:lb_limit] # Only include top 10
-    pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
-    
-    ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
-    leaderboard_block = '```\n{ldrbrd_linees}\n```'
-    row_template = '| {pos} | {user} | {value} | {date} |'
-    for rank, info in enumerate(leaderboard_info):
-        try: # Try to get username
-            member = await interaction.guild.fetch_member(info.user_id) # Set display name
-            if len(member.display_name) <= 16: # Server displayname
-                user= str(member.display_name)
-            elif len(member.global_name) <= 16: # Globbal display
-                user= str(member.global_name)
-            elif len(member.name) <= 16: # Username
-                user= str(member.global_name)
-            else:
-                user = str(member.global_name)[:15] + '~' # Name is just too long, give up
-            
-        except discord.errors.NotFound: # User doesn't exist
-            user = f'ID({info.user_id})'
-        ldrbrd_lines.append(row_template.format( # Create rows
-            pos=pos[rank],
-            user=user.center(16),
-            value= str('$'+ format(float(info.current_value), ',')).center(15),
-            date= f'{datetime.strftime(info.joined, "%Y-%m-%d")[:10]}' # Manually centering I guess
-        ))
-    embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
+        if not show_leaderboard:
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+            return
+        
+        lb_limit = 10 # Amount of users to show '🏆'
+        leaderboard_info = game_info.leaderboard[:lb_limit] # Only include top 10
+        pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
+        
+        ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
+        leaderboard_block = '```\n{ldrbrd_linees}\n```'
+        row_template = '| {pos} | {user} | {value} | {date} |'
+        for rank, info in enumerate(leaderboard_info):
+            try: # Try to get username
+                member = await interaction.guild.fetch_member(info.user_id) # Set display name
+                if len(member.display_name) <= 16: # Server displayname
+                    user= str(member.display_name)
+                elif len(member.global_name) <= 16: # Globbal display
+                    user= str(member.global_name)
+                elif len(member.name) <= 16: # Username
+                    user= str(member.global_name)
+                else:
+                    user = str(member.global_name)[:15] + '~' # Name is just too long, give up
+                
+            except discord.errors.NotFound: # User doesn't exist
+                user = f'ID({info.user_id})'
+            ldrbrd_lines.append(row_template.format( # Create rows
+                pos=pos[rank],
+                user=user.center(16),
+                value= str('$'+ format(float(info.current_value), ',')).center(15),
+                date= f'{datetime.strftime(info.joined, "%Y-%m-%d")[:10]}' # Manually centering I guess
+            ))
+        embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
+    except LookupError:
+        embed = simple_embed(status='failed', title='Failed to get info', desc=f'Game with ID {game_id} does not exist.')
+        
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 # TODO add buttons for joining games?
@@ -1064,6 +1080,7 @@ async def update_game(
     interaction: discord.Interaction, 
     # game_id: int, - NOT IMPLEMENTED IN force_update
 ):
+    await interaction.response.defer()
     embed = discord.Embed()
     try:
         fe.force_update(
@@ -1084,7 +1101,7 @@ async def update_game(
         embed.color = discord.Color.red()
 
 
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
     
 @bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
 async def logs(
