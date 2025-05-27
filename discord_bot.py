@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 # LOCAL
 from helpers.views import Pagination
+import helpers.autocomplete as ac
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError
 
@@ -49,6 +50,8 @@ intents.guilds = True
 intents.members = True
 # intents.dm_messages = True # for invite user command
 
+# Testing variables
+ephemeral_test = False # Set to False for testing, True for production
 
 # Logger thing
 now = datetime.now().strftime('%Y.%m.%d.%H:%M:%S')
@@ -181,7 +184,7 @@ async def create_game_advanced(
         color=discord.Color.red()
         )
      
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 # this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
 # THIS ITERATION IS WORKING IN THE CURRENT STATE
@@ -207,7 +210,7 @@ async def create_game(interaction: discord.Interaction):
     game_creation_button_view.add_item(game_creation_wizard_start)
     
     # Send the initial message with the embed and button
-    await interaction.response.send_message(embed=embed, view=game_creation_button_view, ephemeral=True)
+    await interaction.response.send_message(embed=embed, view=game_creation_button_view, ephemeral=ephemeral_test)
     
     # Define what happens when the button is clicked
     async def game_creation_wizard_start_callback(interaction: discord.Interaction):
@@ -529,6 +532,7 @@ async def join_game(
         name = interaction.user.display_name
     
     status = 'failed'
+    description = "failed"
     try:
         fe.join_game(
             user_id=interaction.user.id, 
@@ -540,13 +544,13 @@ async def join_game(
         description = f"You have joined game: {game_id}."
         status = 'success'
     except LookupError as e:
-        failed_desc = f'No game with the ID {game_id}.'
+        description = f'No game with the ID {game_id}.'
         
     except ValueError as e:
-        if 'already in game.' in str(e):
+        if 'already in game.' in str(e).lower():
             description = f'You are already in this game ID {game_id}.'
             
-        elif '`pick_date` has passed.' in str(e):
+        elif '`pick_date` has passed.' in str(e).lower():
             description = f'The pick date for this game has passed.'
             
     except Exception as e:
@@ -556,7 +560,39 @@ async def join_game(
     if status == 'failed':
         title = "Game Join Failed"
 
-    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=True)
+    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
+
+@bot.tree.command(name="delete-game", description="For admins to delete games if needed")
+@app_commands.describe(
+    game_id="The game ID to delete"
+)
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
+async def delete_game(
+    interaction: discord.Interaction,
+    game_id: int,
+):
+    embed = discord.Embed()
+    try:
+        fe.remove_game(user_id=interaction.user.id, game_id=game_id) # Permission check is done in frontend
+        embed.title = "Success"
+        embed.description = f"Game with the id {game_id} has been successfully deleted"
+        embed.color = discord.Color.green()
+    except PermissionError:
+        if isinstance(interaction.user, discord.member.Member) and has_permission(user=interaction.user):
+            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=False)
+            embed.title = "Success"
+            embed.description = f"Game with the id {game_id} has been successfully deleted"
+            embed.color = discord.Color.green()
+        else:
+            embed.title = "Failed"
+            embed.description = "You do not have permission to delete this game"
+            embed.color = discord.Color.red()
+    except Exception as e:
+        embed.title = "Failed"
+        embed.description = f"There was an error while executing this command:\n{e}"
+        embed.color = discord.Color.red()
+    
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="manage-game", description="Manage an existing stock game")
 @app_commands.describe(
@@ -573,6 +609,7 @@ async def join_game(
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
     update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
 )
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
 async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
@@ -596,7 +633,7 @@ async def manage_game(
             description=f"Could not find a game with ID {game_id}.",
             color=discord.Color.red()
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
         return
 
     try:
@@ -628,14 +665,15 @@ async def manage_game(
             color=discord.Color.red()
         )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-# TODO fix response to command
+#TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
 @app_commands.describe(
     game_id="ID of the game to invite them to",
     user="User to invite"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def invite_user(
     interaction: discord.Interaction, 
     game_id: int,
@@ -709,7 +747,7 @@ async def invite_user(
         await interaction.response.send_message(
             content=f"Invite sent to {user.mention}.",
             embed=invite_response_embed,
-            ephemeral=True
+            ephemeral=ephemeral_test
         )
 
         await user.send(embed=invite_embed, view=view)
@@ -723,7 +761,7 @@ async def invite_user(
         
         await interaction.response.send_message(
             embed=invite_response_embed,
-            ephemeral=True
+            ephemeral=ephemeral_test
         )
 
 # STOCK RELATED
@@ -733,6 +771,7 @@ async def invite_user(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def buy_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -776,15 +815,15 @@ async def buy_stock(
             title = title,
             desc = description
             ), 
-        ephemeral=True
+        ephemeral=ephemeral_test
         )
 
-# TODO add autofill for user's stocks and games
 @bot.tree.command(name="remove-stock", description="Remove a stock from your picks")
 @app_commands.describe(
     game_id="ID of the game",
     ticker="Stock ticker symbol"
 )
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 async def remove_stock(
     interaction: discord.Interaction, 
     game_id: int, 
@@ -802,21 +841,18 @@ async def remove_stock(
         title="Stock Removal Successful"
         description=f"You have successfully removed {ticker} from your picks in game: {game_id}."
 
-        
     except Exception as e:
         status = 'failed'
         title="Stock Removal Failed"
         description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}"
 
-    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=True)
+    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
-# TODO Get user's stocks from frontend
-# TODO Add autofill for user's games
-# TODO Display stocks in an embed with stock info
 # TODO Add buttons for buying/selling stocks?
 # TODO Add pagination if there are many stocks (10+)
 # TODO Add last updated date/time in footer
 @bot.tree.command(name="my-stocks", description="View your stocks in a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game"
 )
@@ -861,20 +897,20 @@ async def my_stocks(
         description = f'You don\'t currently have any stocks in game: {game_id}' 
         
     except Exception as e: # Other errors
-        description=f"There was an error while fetching your stocks.\n{e}",
+        description=f"There was an error while fetching your stocks.\n{e}"
         logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
 
     embed = simple_embed(status=status, title=f'<@{user_id}>\'s stock picks')
     embed.add_field(name='Your Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table)))
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 # GAME INFO RELATED
 
 # TODO Add join game button to game info embed
 # TODO frontend: change to show only public games
-# TODO add autofill for user's games?
 @bot.tree.command(name="game-info", description="View information about a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
     show_leaderboard="Whether to display the leaderboard or not, will by default"
@@ -893,12 +929,14 @@ async def game_info(
         date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
         participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
         )
-    embed = discord.Embed(title=f'{game.name} ({game.id})', 
-        description=description_str)
+    embed = discord.Embed(
+        title=f'{game.name} ({game.id})', 
+        description=description_str,
+        )
     embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
 
     if not show_leaderboard:
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
         return
     
     lb_limit = 10 # Amount of users to show '🏆'
@@ -929,13 +967,8 @@ async def game_info(
             date= f'{datetime.strftime(info.joined, "%Y-%m-%d")[:10]}' # Manually centering I guess
         ))
     embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-# TODO get list of public games
-#   - list the user count
-#   - list the game status
-#   - list the game name
-# TODO add pagination if there are many games (10+)
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
@@ -966,8 +999,7 @@ async def game_list(
         n = Pagination.compute_total_pages(len(games), page_length)
         embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
         return embed, n
-    await Pagination(interaction, get_page).navigate()
-    
+    await Pagination(interaction, get_page, ephemeral=ephemeral_test).navigate()
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
@@ -998,38 +1030,37 @@ async def my_games(
         embed.color = discord.Color.red()
     
     # Send the response
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="delete-game", description="For admins to delete games if needed")
+@bot.tree.command(name="update", description="(Moderator Only) Update the all game stock prices")
 @app_commands.describe(
-    game_id="The game ID to delete"
+    # game_id="ID of the game to update", - NOT IMPLEMENTED IN force_update
 )
-async def delete_game(
-    interaction: discord.Interaction,
-    game_id: int,
+async def update_game(
+    interaction: discord.Interaction, 
+    # game_id: int, - NOT IMPLEMENTED IN force_update
 ):
     embed = discord.Embed()
     try:
-        fe.remove_game(user_id=interaction.user.id, game_id=game_id) # Permission check is done in frontend
+        fe.force_update(
+            user_id=interaction.user.id,
+            # game_id=game_id, # NOT IMPLEMENTED IN force_update
+            enforce_permissions=True
+        )
         embed.title = "Success"
-        embed.description = f"Game with the id {game_id} has been successfully deleted"
+        embed.description = f"All games have been successfully updated"
         embed.color = discord.Color.green()
     except PermissionError:
-        if isinstance(interaction.user, discord.member.Member) and has_permission(user=interaction.user):
-            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=False)
-            embed.title = "Success"
-            embed.description = f"Game with the id {game_id} has been successfully deleted"
-            embed.color = discord.Color.green()
-        else:
-            embed.title = "Failed"
-            embed.description = "You do not have permission to delete this game"
-            embed.color = discord.Color.red()
+        embed.title = "Failed"
+        embed.description = "You do not have permission to update this game"
+        embed.color = discord.Color.red()
     except Exception as e:
         embed.title = "Failed"
         embed.description = f"There was an error while executing this command:\n{e}"
         embed.color = discord.Color.red()
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
     
 @bot.tree.command(name="logs", description="For admins to get logs") # For debugging, get logs
 async def logs(
@@ -1040,7 +1071,7 @@ async def logs(
         title = "Logs"
         status = 'success'
         logfile = discord.File(fp=f'logs/stock_game{now}.log', filename='log-latest.log')
-        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=''), file=logfile, ephemeral=False)
+        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=''), file=logfile, ephemeral=ephemeral_test)
 
     else:
         title = "Not Allowed"

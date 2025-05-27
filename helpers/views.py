@@ -8,11 +8,12 @@ from typing import Callable, Optional
 
 
 class Pagination(discord.ui.View):
-    def __init__(self, interaction: discord.Interaction, get_page: typing.Callable):
+    def __init__(self, interaction: discord.Interaction, get_page: typing.Callable, ephemeral: bool = True):
         self.interaction = interaction
         self.get_page = get_page
         self.total_pages: typing.Optional[int] = None
         self.index = 1
+        self.ephemeral = ephemeral
         super().__init__(timeout=100)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -23,16 +24,16 @@ class Pagination(discord.ui.View):
                 description=f"Only the author of the command can perform this action.",
                 color=16711680
             )
-            await interaction.response.send_message(embed=emb, ephemeral=True)
+            await interaction.response.send_message(embed=emb, ephemeral=self.ephemeral)
             return False
 
     async def navigate(self):
         emb, self.total_pages = await self.get_page(self.index)
         if self.total_pages == 1:
-            await self.interaction.response.send_message(embed=emb)
+            await self.interaction.response.send_message(embed=emb, ephemeral=self.ephemeral)
         elif self.total_pages > 1:
             self.update_buttons()
-            await self.interaction.response.send_message(embed=emb, view=self)
+            await self.interaction.response.send_message(embed=emb, view=self, ephemeral=self.ephemeral)
 
     async def edit_page(self, interaction: discord.Interaction):
         emb, self.total_pages = await self.get_page(self.index)
