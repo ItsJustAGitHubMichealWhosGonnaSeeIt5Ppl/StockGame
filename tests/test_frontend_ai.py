@@ -1,6 +1,6 @@
 import pytest
 from stocks import Frontend, Backend 
-from helpers.datatype_validation import GameInfo, GameLeaderboard
+from helpers.datatype_validation import GameInfo, GameLeaderboard, GameParticipant
 from datetime import datetime
 import helpers.exceptions as bexc
 
@@ -704,12 +704,11 @@ class TestFrontend:
         fe.join_game(user_id=user1_pending_id, game_id=game_db.id)
         # user2 joins and gets approved by owner (owner needs to be the one calling approve)
         fe.join_game(user_id=user2_approved_id, game_id=game_db.id)
-        participant2_obj = fe._participant_id(user_id=user2_approved_id, game_id=game_db.id)
         pending_users_before = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
-        fe.approve_game_users(user_id=owner_id, participant_id=participant2_obj)
+        fe.approve_game_users(user_id=owner_id, game_id=game_db.id, approved_user_id=user2_approved_id)
 
 
-        pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
+        pending_users: tuple[GameParticipant] | tuple[()] = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
         assert len(pending_users) == 1 # Only user1 should be pending (owner is also active)
         assert pending_users[0].user_id == user1_pending_id
         assert pending_users[0].status == 'pending'
@@ -722,7 +721,6 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01", private_game=True)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
         with pytest.raises(PermissionError):
-
             result = fe.pending_game_users(user_id=non_owner_id, game_id=game_db.id)
 
     def test_pending_game_users_no_pending_users(self, fe: Frontend):
@@ -751,7 +749,7 @@ class TestFrontend:
         participant_to_approve = fe.be.get_participant(participant_id=fe._participant_id(user_id=user_to_approve_id, game_id=game_db.id))
         assert participant_to_approve.status == 'pending' # Should be pending
 
-        fe.approve_game_users(user_id=owner_id, participant_id=participant_to_approve.id)
+        fe.approve_game_users(user_id=owner_id, game_id=game_db.id, approved_user_id=user_to_approve_id )
 
         approved_user_participant = fe.be.get_participant(participant_id=participant_to_approve.id)
         assert approved_user_participant.status == 'active'
@@ -770,7 +768,7 @@ class TestFrontend:
         fe.join_game(user_id=user_to_approve_id, game_id=game_db.id)
         participant_to_approve = fe._participant_id(user_id=user_to_approve_id, game_id=game_db.id)
         with pytest.raises(PermissionError):
-            result = fe.approve_game_users(user_id=non_owner_id, participant_id=participant_to_approve)
+            result = fe.approve_game_users(user_id=non_owner_id, game_id=game_db.id, approved_user_id=user_to_approve_id)
 
         # Verify user is still pending
         still_pending_participant = fe.be.get_participant(participant_id=participant_to_approve)

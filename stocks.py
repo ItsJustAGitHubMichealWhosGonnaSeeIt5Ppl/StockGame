@@ -1454,19 +1454,22 @@ class Frontend: # This will be where a bot (like discord) interacts
         except ValueError: # no pending users, return empty list 
             return () #TODO problem?
         
-    def approve_game_users(self, user_id:int, game_id:int, enforce_permissions:bool=True):
+    def approve_game_users(self, user_id:int, game_id:int, approved_user_id:int, enforce_permissions:bool=True):
         """Approve/add a user to private game
+        
+        Only the bot owner or game owner can approve users for a game by default
 
         Args:
             user_id (int): User ID (command runner).
-            participant_id (int): Participant ID (get with pending_game_users).
+            game_id (int): Game ID.
+            approved_user_id (int): User ID to approve.
             enforce_permissions (bool): Disable to bypass permission checking.
 
         Returns:
             dict: status
         """
         
-        player_id = self._participant_id(user_id=user_id, game_id=game_id) #TODO check for errors
+        player_id = self._participant_id(user_id=approved_user_id, game_id=game_id) #TODO check for errors
         if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to approve players for game {player_id}')
         
