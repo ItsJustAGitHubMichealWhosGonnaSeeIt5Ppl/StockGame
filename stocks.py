@@ -598,6 +598,7 @@ class Backend:
             get_participant > bexc.DoesntExistError: Player not in game
             bexc.NotAllowedError: reason=Past pick_date.  (only possible if a pick date is set).
             bexc.NotAllowedError: reason=Maximum picks reached.  Player already has the maximum amount of stock picks.
+            bexc.AlreadyExistsError: Cannot buy the same stock twice.
             Exception: Some other issues ocurred
         """
         
@@ -626,6 +627,9 @@ class Backend:
         
         resp = self.sql.insert(table='stock_picks', items=items)
         if resp.status != 'success': #TODO errors
+            if resp.reason =='SQLITE_CONSTRAINT_UNIQUE':
+                raise bexc.AlreadyExistsError(table='add_picks', duplicate={'participant_id': participant_id, 'stock_id':stock_id }, message='Cannot buy the same stock twice')
+                
             raise Exception(f'Failed to add pick.', resp)
     
     def get_stock_pick(self, pick_id:int)-> dtv.StockPick:
@@ -1104,10 +1108,10 @@ class GameLogic: # Might move some of the control/running actions here
                 info = stock.info
             except AttributeError: # If stock isn't valid, an attribute error should be raised
                 info = [] # Set list to 0 length so error is thrown
-        
+
             if len(info) > 0: # Try to verify ticker is real and get the relevant infos
                 self.be.add_stock(ticker=ticker.upper(),
-                    exchange=info['fullExchangeName'],
+                    exchange=info['fullExchangeName'], #TODO this fails with CLR stock
                     company_name=info['displayName'] if 'displayName' in info else info['shortName'])
             else:
                 raise ValueError(f'Failed to add `ticker` {ticker}.')
@@ -1408,13 +1412,19 @@ class Frontend: # This will be where a bot (like discord) interacts
             ticker (str): Ticker.
             
         Raises:
+            ValueError: Invalid Ticker, too long!
             _participant_id > bexc.DoesntExistError: Player not in game
             find_stock > ValueError: Failed to add stock (usually means the stock doesn't exist)
             add_stock_pick > bexc.NotAllowedError: reason='Not active'.  Player status isn't active, so cannot pick stocks
             add_stock_pick > bexc.NotAllowedError: reason='Past pick_date'.  (only possible if a pick date is set).
             add_stock_pick > bexc.NotAllowedError: reason='Maximum picks reached'.  Player already has the maximum amount of stock picks.
-            add_stock_pick > Exception: Some other issues ocurred
+            add_stock_pick > bexc.AlreadyExistsError: Cannot own the same stock twice.
+            add_stock_pick > Exception: Some other issues ocurred.
+            
         """ #TODO should this return picks remaining? Could also add that as another function
+        
+        if len(str(ticker)) > 5:
+            raise ValueError('Invalid Ticker, too long!')
         
         player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
         self.gl.find_stock(ticker=str(ticker))  # This will add the stock
@@ -1492,7 +1502,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             dict: Status/result
         """
-        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
+        self.logger.debug(f'User: {user_id} is updating game: {game_id}.  Settings[Owner: {owner}, name: {name}, tbd]')
+        if (self._user_owns_game(user_id=user_id, game_id=game_id) == False or user_id != self.owner_id) and enforce_permissions:
+            self.logger.error(f'User {user_id} is not allowed to make changes to game {game_id}')
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
 
         try:            
