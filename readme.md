@@ -74,7 +74,8 @@ VERY VERY EARLY STOCK PICK GAME CODE
      - `applications.commands`
    - Under "Bot Permissions", select:
      - `Send Messages`
-     - `Read Messages/View Channels`
+     - `Read Messages`
+     - `View Channels`
      - `Use Slash Commands`
      - `Embed Links`
      - `Attach Files`
