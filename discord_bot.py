@@ -51,6 +51,7 @@ intents.members = True
 
 
 # Logger thing
+now = datetime.now().strftime('%Y.%m.%d.%H:%M:%S')
 def setup_logging(level): 
     global console, logger
     frmt = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S') #Format that I like
@@ -64,7 +65,6 @@ def setup_logging(level):
         os.mkdir('logs')
     except FileExistsError:
         pass # Folder already exists
-    now = datetime.now().strftime('%Y.%m.%d.%H:%M:%S')
     log_to_file = logging.FileHandler(filename=f'logs/stock_game{now}.log', mode='w') # Create new log everything it crashes?
     log_to_file.setLevel(logging.DEBUG)
     log_to_file.setFormatter(frmt)
@@ -1030,6 +1030,23 @@ async def delete_game(
         embed.color = discord.Color.red()
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+@bot.tree.command(name="logs", description="For admins to get logs") # For debugging, get logs
+async def logs(
+    interaction: discord.Interaction,
+):
+    
+    if has_permission(interaction.user): # Check if user is an admin
+        title = "Logs"
+        status = 'success'
+        logfile = discord.File(fp=f'logs/stock_game{now}.log', filename='log-latest.log')
+        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=''), file=logfile, ephemeral=False)
+
+    else:
+        title = "Not Allowed"
+        status = 'failed'
+        logs = 'Must be admin to get logs'
+        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=logs), ephemeral=True)
 
 # Run the bot using the token
 if TOKEN:
