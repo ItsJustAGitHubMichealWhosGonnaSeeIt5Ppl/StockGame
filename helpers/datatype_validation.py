@@ -1,10 +1,11 @@
-from typing import Optional, Literal, TypeVar
+# BUILT-IN
 from datetime import datetime, date
+from typing import Optional, Literal, TypeVar
+
+# EXTERNAL
 from pydantic import BaseModel, Field, PositiveInt, PositiveFloat, field_validator, TypeAdapter, AliasChoices, ConfigDict
 
 
-
-    
 # Statuses
 MainStatus = Literal['success', 'error']
 GameStatus = Literal['open', 'active', 'ended']

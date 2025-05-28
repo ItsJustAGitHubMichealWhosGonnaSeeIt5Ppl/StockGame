@@ -1,40 +1,25 @@
-import re
-import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
+# BUILT-IN
+from datetime import datetime, timedelta
 import logging
 import os
-from datetime import datetime, timedelta
-import pytz
-import helpers.datatype_validation as dtv
-from helpers.sqlhelper import SqlHelper, _iso8601, Status
-from typing import Optional
+import re
+from typing import Optional, Type
+
+# EXTERNAL
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
-from typing import Type
-import helpers.exceptions as bexc
+import pytz
 from requests import exceptions # Exceptions!
-load_dotenv()
+import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
 
-
-
-### Methods (in order)
-## add (create)
-# Return nothing if successful
-
-## get
-# Raise error if the response is not 1 user
-
-## get_many (list)
-# Return 0+ items
-# Raise error if search fails
-
-## update
-# Return nothing if successful
-
-## delete
-# Return nothing if successful
-
-#TODO implement custom types
+# INTERNAL
+import helpers.datatype_validation as dtv
+import helpers.exceptions as bexc
+from helpers.sqlhelper import SqlHelper, _iso8601, Status
 from sqlite_creator_real import create as create_db
+
+
+load_dotenv()
 
 version = "???" #TODO should frontend and backend have different versions?
 

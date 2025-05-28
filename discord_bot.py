@@ -9,11 +9,18 @@
 # should i rename the commands? my-games and my-stocks are a bit annoying to type
 
 # BUILT-IN
-import sys
-import os
-import logging
-from typing import Optional # 3.13 +
 from datetime import datetime, timedelta
+import logging
+import os
+import sys
+from typing import Optional # 3.13 +
+
+# EXTERNAL
+import discord
+from discord import app_commands
+from discord.ui import Button, View
+from discord.ext import commands
+from dotenv import load_dotenv
 
 # LOCAL
 from helpers.views import Pagination
@@ -21,16 +28,9 @@ import helpers.autocomplete as ac
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError
 
-# DISCORD 
-import discord
-from discord import app_commands
-from discord.ui import Button, View
-from discord.ext import commands
-
-#OTHER
-from dotenv import load_dotenv
 
 load_dotenv()
+
 try:
     TOKEN = os.getenv('DISCORD_TOKEN')
     assert isinstance(TOKEN, str)
