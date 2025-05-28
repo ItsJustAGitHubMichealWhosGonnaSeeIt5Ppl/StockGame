@@ -116,7 +116,7 @@ def create(db_name:str):
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
 
-    # Games table #TODO write different game statuses and explainers #TODO descriptions #TODO names don't need to be uni
+    # Games table #TODO descriptions #TODO names don't need to be uni
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,

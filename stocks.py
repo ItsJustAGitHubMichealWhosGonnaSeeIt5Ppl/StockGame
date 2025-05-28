@@ -1,40 +1,25 @@
-import re
-import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
+# BUILT-IN
+from datetime import datetime, timedelta
 import logging
 import os
-from datetime import datetime, timedelta
-import pytz
-import helpers.datatype_validation as dtv
-from helpers.sqlhelper import SqlHelper, _iso8601, Status
-from typing import Optional
+import re
+from typing import Optional, Type
+
+# EXTERNAL
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
-from typing import Type
-import helpers.exceptions as bexc
+import pytz
 from requests import exceptions # Exceptions!
-load_dotenv()
+import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
 
-
-
-### Methods (in order)
-## add (create)
-# Return nothing if successful
-
-## get
-# Raise error if the response is not 1 user
-
-## get_many (list)
-# Return 0+ items
-# Raise error if search fails
-
-## update
-# Return nothing if successful
-
-## delete
-# Return nothing if successful
-
-#TODO implement custom types
+# INTERNAL
+import helpers.datatype_validation as dtv
+import helpers.exceptions as bexc
+from helpers.sqlhelper import SqlHelper, _iso8601, Status
 from sqlite_creator_real import create as create_db
+
+
+load_dotenv()
 
 version = "???" #TODO should frontend and backend have different versions?
 
@@ -238,7 +223,7 @@ class Backend:
             'display_name': display_name,
             'permissions': permissions,
             'source': source
-            }# TODO tag that an update ocurred
+            }# TODO tag that an update occurred
         
         self._update_single(
             table="users",
@@ -1187,6 +1172,7 @@ class Frontend: # This will be where a bot (like discord) interacts
            int: Participant ID
         """
         
+        self.register(user_id) # Must try to register user
         players = self.be.get_many_participants(user_id=user_id, game_id=game_id)
         if len(players) == 1:
             return players[0].id
@@ -1295,8 +1281,8 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             dict: Game information
         """
+
         # Return Tuples
-        
         game = self.be.get_game(game_id) # Will raise an error for invalid games
         game.current_value = round(game.current_value, 2) if game.current_value else 0# Round to two decimal places
         
@@ -1345,6 +1331,8 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             update_user > bexc.DoesntExistError: Attempted to update a user who doesn't exist.
         """
+         
+        self.register(user_id) # Must try to register user
         self.be.update_user(user_id=int(user_id), display_name=str(name)) 
     
     def join_game(self, user_id:int, game_id:int, name:Optional[str]=None):
@@ -1358,6 +1346,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             add_participant > bexc.DoesntExistError: Attempted to join a game that doesn't exist
         """
+        self.register(user_id) # Must try to register user
         try:
             self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))
         except LookupError:
@@ -1374,6 +1363,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             dict: User information along with current games
         """
         #TODO should this alow filtering for inactive games, etc.?
+        self.register(user_id) # Must try to register user
         try:
             players = self.be.get_many_participants(user_id=int(user_id))
         except LookupError:
@@ -1404,11 +1394,13 @@ class Frontend: # This will be where a bot (like discord) interacts
             list: Stocks both owned and pending
 
         Raises:
+        self.register(user_id) # Must try to register user
             _participant_id > bexc.DoesntExistError: Player not in game
             get_many_stock_picks > LookupError: No items found.  Raised when no stocks are found
             
         """
         
+        self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id)
         picks = self.be.get_many_stock_picks(participant_id=player_id,status=['pending_buy', 'owned', 'pending_sell'], include_tickers=True)            
         return picks
@@ -1442,12 +1434,14 @@ class Frontend: # This will be where a bot (like discord) interacts
         if len(str(ticker)) > 5:
             raise ValueError('Invalid Ticker, too long!')
         
+        self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
         self.gl.find_stock(ticker=str(ticker))  # This will add the stock
         stock = self.be.get_stock(ticker_or_id=str(ticker)) # This should only run if the stock was added successfully
         self.be.add_stock_pick(participant_id=player_id, stock_id=stock.id) # Add the pick
 
     def sell_stock(self, user_id:int, game_id:int, ticker:str): # Will also allow for cancelling an order #TODO add sell_stock
+        self.register(user_id) # Must try to register user
         pass
     
     def remove_pick(self, user_id:int, game_id:int, ticker:str): # Remove a stock pick
@@ -1461,6 +1455,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             dict: Status/result
         """
+        self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id) #TODO check for errors
         stock = self.be.get_stock(ticker_or_id=ticker)
         try:
@@ -1487,6 +1482,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             game_id (Optional[int], optional): Game ID. If blank, all games will be updated.
             enforce_permissions (bool): Disable to bypass permission checking.
         """
+        self.register(user_id) # Must try to register user
         if (user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to manage game {game_id}')
 
@@ -1518,6 +1514,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             dict: Status/result
         """
+        self.register(user_id) # Must try to register user
         self.logger.debug(f'User: {user_id} is updating game: {game_id}.  Settings[Owner: {owner}, name: {name}, tbd]')
         if (self._user_owns_game(user_id=user_id, game_id=game_id) == False or user_id != self.owner_id) and enforce_permissions:
             self.logger.error(f'User {user_id} is not allowed to make changes to game {game_id}')
@@ -1542,6 +1539,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             PermissionError: Raised if someone who isn't allowed to remove the game tries
         """
         
+        self.register(user_id) # Must try to register user
         if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
         
@@ -1558,6 +1556,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             list: Pending users (including participant ID)
         """
+        self.register(user_id) # Must try to register user
         if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to manage players for game {game_id}')
         try:
@@ -1580,6 +1579,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             dict: status
         """
         
+        self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=approved_user_id, game_id=game_id) #TODO check for errors
         if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to approve players for game {player_id}')
