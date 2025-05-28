@@ -508,6 +508,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         self.backend.update_user(user_id=owner_user_id, permissions=288)
         self.owner_id = owner_user_id
         pass
+        
     
     # Game actions (Return information that is relevant to overall games)
     def new_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
