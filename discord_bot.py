@@ -1040,7 +1040,7 @@ async def game_list(
         embed.title = 'Error'
         embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    # await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
