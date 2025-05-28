@@ -1197,6 +1197,15 @@ class Frontend: # This will be where a bot (like discord) interacts
             raise LookupError('Game not found')
         else:
             return game_info.result[0]['name']
+    
+    def clean_text(self, text:str) -> str:
+        """
+        Helper function to clean text input, to prevent users from injecting formatting that breaks embeds. 
+        Only removes formatting that causes line breaks or links.
+        """
+        text = re.sub(r'```(.*)```', '\`\`\`\1\`\`\`', text) # Remove code blocks
+        text = re.sub(r'\[(.*)\]\(.*\)', '\1', text) # Remove links
+        return text
 
     # # GAME RELATED # #
     def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
@@ -1238,7 +1247,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         try:  # Create game
             self.be.add_game(
                 user_id=user_id,
-                name=name,
+                name=self.clean_text(name),
                 start_date=start_date,
                 end_date=end_date,
                 starting_money=starting_money,
