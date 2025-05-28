@@ -1,0 +1,3 @@
+DISCORD_TOKEN = <Bot Token>
+OWNER = <Your Discord ID>
+DB_NAME = <Database name>.db
