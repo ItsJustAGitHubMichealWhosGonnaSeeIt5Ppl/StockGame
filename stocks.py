@@ -509,6 +509,16 @@ class Frontend: # This will be where a bot (like discord) interacts
         self.owner_id = owner_user_id
         pass
     
+    def clean_text(self, text:str) -> str:
+        """
+        Helper function to clean text input, to prevent users from injecting formatting that breaks embeds. 
+        Only removes formatting that causes line breaks or links.
+        """
+        text = re.sub(r'```(.*)```', '\`\`\`\1\`\`\`', text) # Remove code blocks
+        text = re.sub(r'\[(.*)\]\(.*\)', '\1', text) # Remove links
+        return text
+        
+    
     # Game actions (Return information that is relevant to overall games)
     def new_game(self, user_id:int, name:str, start_date:str, end_date:str=None, starting_money:float=10000.00, pick_date:str=None, private_game:bool=False, total_picks:int=10, draft_mode:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
         """Create a new stock game!
@@ -567,7 +577,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         try:  # User is allowed to create games
             self.backend.add_game(
                 user_id=int(user_id), 
-                name=str(name), 
+                name=self.clean_text(str(name)), 
                 start_date=str(start_date), 
                 end_date=str(end_date), 
                 starting_money=float(starting_money), 
