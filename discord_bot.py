@@ -799,7 +799,7 @@ async def buy_stock(
         elif 'Stock is not tradeable' in str(exc):
             description = f'The ticker {ticker} is not tradeable.  This can occur when a stock is private or has been delisted.'
             
-        elif 'Unable to find stock' in str(exc):
+        elif 'Unable to find stock' in str(exc) or 'Failed to add `ticker`' in str(exc):
             description = f'The ticker {ticker} was not found.  Double check your spelling and try again!'
         
         else:
