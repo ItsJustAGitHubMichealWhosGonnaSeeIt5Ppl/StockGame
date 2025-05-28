@@ -949,7 +949,7 @@ class GameLogic: # Might move some of the control/running actions here
         if len(tickers) > 0:
             prices = yf.Tickers(tickers).tickers
             for ticker, price in prices.items(): # update pricing
-                if not price.info['tradeable']: #TODO decide what should happen if someone manages this
+                if price.info['quoteType'] != 'EQUITY': #TODO decide what should happen if someone manages this
                     self.logger.error(f'Ticker {ticker} is not tradeable! Skipping')
                     continue
                 price = price.info['regularMarketPrice'] 
@@ -1120,7 +1120,7 @@ class GameLogic: # Might move some of the control/running actions here
                 raise ValueError('Unable to find stock')
                 
             if len(info) > 0: # Try to verify ticker is real and get the relevant infos
-                if not info['tradeable']: # Stock can no longer be traded
+                if info['quoteType'] != 'EQUITY': # Stock can no longer be traded
                     raise ValueError('Stock is not tradeable')
                 self.be.add_stock(ticker=ticker.upper(),
                     exchange=info['fullExchangeName'], #TODO this fails with CLR stock
@@ -1599,7 +1599,7 @@ if __name__ == "__main__":
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
+    game.gl.find_stock(ticker='COST')
     game.gl.update_all()
     game.be.add_stock(ticker='YM=F',exchange='fake', company_name='fake')
-    game.gl.find_stock(ticker='YM=F')
     game.be.update_game(1, update_frequency='hourly')
