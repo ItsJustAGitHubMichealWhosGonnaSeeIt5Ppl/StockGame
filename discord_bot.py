@@ -634,9 +634,10 @@ async def manage_game(
     sell_during_game: bool | None = None,
     update_frequency: str | None = None
 ):
-    game_info = fe.game_info(game_id, False)
-
-    if not game_info:
+    
+    try:
+        game_info = fe.game_info(game_id, False)
+    except LookupError:
         embed = discord.Embed(
             title="Game Not Found",
             description=f"Could not find a game with ID {game_id}.",
@@ -666,6 +667,13 @@ async def manage_game(
             title="Game Updated Successfully",
             description=f"Game #{game_id} has been updated!",
             color=discord.Color.green()
+        )
+        
+    except ValueError as e: # Should catch issues
+        embed = discord.Embed(
+            title="Game Update Failed",
+            description=e,
+            color=discord.Color.red()
         )
     except Exception as e:
         embed = discord.Embed(
@@ -920,8 +928,9 @@ async def my_stocks(
                 d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'N/A').center(6),
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
-        status = 'success'
+
         title = f'{interaction.user.display_name}\'s picks for game {fe._get_game_name(game_id=game_id)[:name_cutoff]}({game_id})' # Maximum name length is now 25
+        status = 'success'
         
     except DoesntExistError as e: # Raised when player is not in the game
         description=f'You are not currently participating in this game. You can try to join it using the join-game command.'
@@ -936,7 +945,7 @@ async def my_stocks(
     
     embed = simple_embed(status=status, title=title, desc=description)
     if status == 'success': # add stock picks
-        embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table)))
+        embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table[:15]))) # Show only 15 stocks #TODO add pagination
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
@@ -1043,12 +1052,13 @@ async def game_list(
         embed.title = 'No games found'
         embed.description = 'There are no public open or active games'
         embed.color = discord.Color.red()
+        
     except Exception as e:
         logger.exception(f'Error when loading game list. Page length: {page_length}', exc_info=e)
         embed.title = 'Error'
         embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    # await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
