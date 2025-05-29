@@ -1225,15 +1225,6 @@ class Frontend: # This will be where a bot (like discord) interacts
         except bexc.UserExistsError: # User was already there, my bad
             self.logger.info(f'User with ID {user_id} already exists.')
             pass #TODO log
-        
-        try:
-            datetime.strptime(start_date, '%Y-%m-%d')
-            if end_date:
-                datetime.strptime(end_date, '%Y-%m-%d')
-            if pick_date:
-                datetime.strptime(pick_date, '%Y-%m-%d')
-        except:
-            raise ValueError("There is an incorrectly formatted date.")
 
         try:  # Create game
             self.be.add_game(
