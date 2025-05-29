@@ -127,8 +127,10 @@ class Backend:
                 raise bexc.DoesntExistError(table=table, item=item_id)
             else:
                 raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+    
+    def _validation_recovery(self, table:str, error:ValidationError, resp:Status): # Try to recover from errors 
+        pass
         
-            
     # # USER ACTIONS # #
     def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
@@ -255,7 +257,7 @@ class Backend:
 
         Args:
             user_id (int): Game creators user ID.
-            name (str): Name for this game.
+            name (str): Name for this game.  Maximum 35 chatacters.
             start_date (str): Start date.  Format: `YYYY-MM-DD`.
             end_date (str, optional): End date.  Format: `YYYY-MM-DD`.  Leave blank for infinite game.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
@@ -331,21 +333,43 @@ class Backend:
         """
         
         self.logger.debug(f'Getting game: {game_id}')
-        attempts = 0
-        while attempts < 4: # Should allow it to fix some issues
-            attempts += 1
+        tobsi_loop = 0 # Issue originally found by @tobsi on discord
+        while tobsi_loop < 4: # Should allow it to fix some issues
+            tobsi_loop += 1
             resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
             try:
                 return self._single_get(model=dtv.Game, resp=resp)
             except ValidationError as exc: # Something has gone terribly wrong
                 self.logger.exception(f'Game exists, but validation failed', exc_info=exc)
                 # Reset values back to their defaults #TODO add more
-                if 'update_frequency' in str(exc): # Must do it this way
-                    self.logger.debug('Trying to set update_frequency back to valid string')
-                    self.sql.update(table='games', filters={'game_id': game_id}, items={'update_frequency':'daily'})
-                else:
-                    raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
+                fixes = {} # Empty dictionary
+                if 'update_frequency' in str(exc):
+                    self.logger.debug(f'Setting update_frequency to \'daily\' for game: {game_id}')
+                    fixes['update_frequency'] = 'daily' 
                 
+                if 'name' in str(exc):
+                    self.logger.debug(f'Shortening name to 35 characters for game: {game_id}')
+                    name = re.sub(r'[\(\)\[\]/`\\/{}]', '', resp.result[0]['name']) # Clean the name more
+                    if tobsi_loop != 0: # We've been here before, add the game ID to the name
+                        fixes['name'] = str(str(game_id) + name)[:35] # name string at 35 characters and get rid of shit.  If it fails, remove an extra character
+                    else:
+                        fixes['name'] = name[:35] # name string at 35 characters and get rid of shit.  If it fails, remove an extra character
+                
+                if 'status' in str(exc):
+                    self.logger.debug(f'Setting status to \'open\' for game: {game_id}')
+                    fixes['status'] = 'open' 
+                    
+                if 'end_date' in str(exc):
+                    self.logger.debug(f'Removing end date for game: {game_id}')
+                    fixes['end_date'] = 'NULL' 
+                
+                if len(fixes) == 0:
+                    raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
+                else: # Apply fixes
+                    apply = self.sql.update(table='games', filters={'game_id': game_id}, items=fixes)
+                    if apply.status !='success': 
+                        self.logger.error(f'Fix to game: {game_id} failed.  More info: {apply}')
+
         raise ValidationError('Failed to recover from a validation error loop.')
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
@@ -391,8 +415,17 @@ class Backend:
         if include_ended:
             statuses.append('"ended"')
         
-        resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
-        return self._many_get(typeadapter=dtv.Games, resp=resp)
+        repair= 0
+        e = ''
+        while repair < 2: # Try this twice
+            resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
+            repair +=1
+            try:
+                return self._many_get(typeadapter=dtv.Games, resp=resp)
+            except ValidationError as e: # Something bad happened
+                self.repair_games() # Repair games and loop again
+        
+        raise Exception('Failed to repair games', e)
         
     def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update an existing game
@@ -400,7 +433,7 @@ class Backend:
         Args:
             game_id (int): Game ID.
             owner (Optional[int], optional): New owner ID. 
-            name (Optional[str], optional): New game name. 
+            name (Optional[str], optional): New game name.  Maximum 35 chatacters.
             start_date (Optional[str], optional): New start date.  Format: `YYYY-MM-DD`.  Cannot be changed once game has started.
             end_date (Optional[str], optional): New end date.  Format: `YYYY-MM-DD`.
             status (Optional[str], optional): Status ('open', 'active', 'ended').  Once start date has passed, game will become 'active'.  Shouldn't be changed manually.
@@ -417,9 +450,21 @@ class Backend:
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
+        if start_date and not self._validate_date(start_date):
+            raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
+        
         if game.start_date < datetime.today().date():
             if start_date or starting_money or pick_date or exclusive_picks:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
+            
+        if end_date: # Enddate stuff
+            if not self._validate_date(end_date):
+                raise bexc.InvalidDateFormatError('Invalid `end_date` format.')
+            if game.start_date > datetime.strptime(end_date, "%Y-%m-%d").date():
+                raise ValueError('`end_date` must be after `start_date`.')
+            
+        if pick_date and not self._validate_date(pick_date):
+            raise bexc.InvalidDateFormatError('Invalid `pick_date` format.')
         
         if update_frequency and update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
             raise ValueError(f'Invalid update frequency {update_frequency}')
@@ -463,6 +508,13 @@ class Backend:
         
         self._delete_single(table='games', id_column='game_id', item_id=game_id)
     
+    def repair_games(self):
+        # Repair games in database
+        resp = self.sql.get(table='games', columns=['game_id']) # Get ALL games
+        if resp.status == 'success': # Found games
+            assert isinstance(resp.result, tuple)
+            for game in resp.result: # Go through games and try to fix them
+                self.get_game(game['game_id']) 
     
     # # STOCK ACTIONS # #
     def add_stock(self, ticker:str, exchange:str, company_name:str):
@@ -955,20 +1007,27 @@ class GameLogic: # Might move some of the control/running actions here
                 )
             )
         """
+        
         try:
             resp = self.be.sql.get(table='stocks', filters=query)
             active_stocks = self.be._many_get(typeadapter=dtv.Stocks, resp=resp)
         except LookupError:
             return # No stocks
 
-        tickers = [tkr.ticker for tkr in active_stocks]
-        if len(tickers) > 0:
-            prices = yf.Tickers(tickers).tickers
-            for ticker, price in prices.items(): # update pricing
-                if price.info['quoteType'] != 'EQUITY': #TODO decide what should happen if someone manages this
+        #tickers = [tkr.ticker for tkr in active_stocks]
+        if len(active_stocks) > 0:
+            market_open = self._is_market_hours()
+            for ticker in active_stocks:
+                basic_info = yf.Ticker(ticker.ticker).fast_info # Hopefully speed this up
+                if basic_info['quote_type'] != 'EQUITY': #TODO decide what should happen if someone manages this
                     self.logger.error(f'Ticker {ticker} is not tradeable! Skipping')
                     continue
-                price = price.info['regularMarketPrice'] 
+                
+                if market_open:
+                    price = basic_info['last_price'] 
+                else:
+                    price = basic_info['regular_market_previous_close'] 
+                    
                 try:
                     self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=_iso8601()) # Update pricing
                 except Exception as e:
@@ -1223,20 +1282,16 @@ class Frontend: # This will be where a bot (like discord) interacts
             str: Game name
         """
         
-        
+        self.logger.debug(f'Getting game name for game: {game_id}')
         game_info = self.be.get_game(game_id)
-        if game_info.status !='success':
-            raise LookupError('Game not found')
-        else:
-            return str(game_info.name)
+        return str(game_info.name)
     
     def clean_text(self, text:str) -> str:
         """
         Helper function to clean text input, to prevent users from injecting formatting that breaks embeds. 
         Only removes formatting that causes line breaks or links.
         """
-        text = re.sub(r'```(.*)```', '\\`\\`\\`\1\\`\\`\\`', text) # Remove code blocks
-        text = re.sub(r'\[(.*)\]\(.*\)', '\1', text) # Remove links
+        text = re.sub(r'[\(\)\[\]/`\\/{}]', '', text) # Remove stupid characters
         return text
 
     # # GAME RELATED # #
@@ -1271,7 +1326,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         try:  # Create game
             self.be.add_game(
                 user_id=user_id,
-                name=self.clean_text(name),
+                name=self.clean_text(name)[:35], # Limit to 35
                 start_date=start_date,
                 end_date=end_date,
                 starting_money=starting_money,
@@ -1641,6 +1696,8 @@ if __name__ == "__main__":
     test_users = [111, 222, 333, 444, 555, 666]
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
+    
+    
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
     game.gl.find_stock(ticker='COST')
     game.gl.update_all()

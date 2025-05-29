@@ -8,12 +8,16 @@ from typing import Callable, Optional
 
 
 class Pagination(discord.ui.View):
-    def __init__(self, interaction: discord.Interaction, get_page: typing.Callable, ephemeral: bool = True):
+    def __init__(self, interaction: discord.Interaction, page_len:int, embed: discord.Embed, games: list[tuple[str,str]| str], mode: str = 'field', ephemeral: bool = True):
+        # Mode field or codeblock
         self.interaction = interaction
-        self.get_page = get_page
-        self.total_pages: typing.Optional[int] = None
-        self.index = 1
+        self.games = games # Formatted pages
+        self.embed = embed
+        self.page_len = page_len if page_len <= 25 else 25 # Maximum page length must be 25
+        self.total_pages =  self.compute_total_pages(total_results=len(self.games), results_per_page=self.page_len)
+        self.index = 0 # THIS IS STARTING AT 0 ADD 1 TO SHOW VISUAL
         self.ephemeral = ephemeral
+        self.mode = mode
         super().__init__(timeout=100)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -26,9 +30,22 @@ class Pagination(discord.ui.View):
             )
             await interaction.response.send_message(embed=emb, ephemeral=self.ephemeral)
             return False
-
+        
+    def get_page(self): # Return an embed object of current page
+        self.embed.set_footer(text=f"Page {self.index + 1} of {self.total_pages} | Dates are formatted as (YYYY/MM/DD)") # Set a footer
+        emb = self.embed.copy()
+        if self.mode == 'field':
+            for game in self.games[self.page_len * self.index: self.page_len * (self.index +1)]: # Get only the subset of games we're after
+                
+                    emb.add_field(name=game[0],value=game[1]) # Fill out the embed!
+        else: # Codeblock mode
+            codeblock_lines = self.games[self.page_len * self.index: self.page_len * (self.index +1)]
+            emb.add_field(name='', value='```{lines}```'.format(lines='\n'.join(codeblock_lines)))
+                
+        return emb
+    
     async def navigate(self):
-        emb, self.total_pages = await self.get_page(self.index)
+        emb = self.get_page() 
         if self.total_pages == 1:
             await self.interaction.response.send_message(embed=emb, ephemeral=self.ephemeral)
         elif self.total_pages > 1:
@@ -36,7 +53,7 @@ class Pagination(discord.ui.View):
             await self.interaction.response.send_message(embed=emb, view=self, ephemeral=self.ephemeral)
 
     async def edit_page(self, interaction: discord.Interaction):
-        emb, self.total_pages = await self.get_page(self.index)
+        emb = self.get_page()
         self.update_buttons()
         await interaction.response.edit_message(embed=emb, view=self)
 
@@ -45,8 +62,9 @@ class Pagination(discord.ui.View):
             self.children[2].emoji = "⏮️"
         else:
             self.children[2].emoji = "⏭️"
-        self.children[0].disabled = self.index == 1
-        self.children[1].disabled = self.index == self.total_pages
+            
+        self.children[0].disabled = self.index == 0
+        self.children[1].disabled = self.index +1 == self.total_pages
 
     @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.blurple)
     async def previous(self, interaction: discord.Interaction, button: discord.Button):
@@ -61,9 +79,9 @@ class Pagination(discord.ui.View):
     @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.blurple)
     async def end(self, interaction: discord.Interaction, button: discord.Button):
         if self.index <= self.total_pages//2:
-            self.index = self.total_pages
+            self.index = self.total_pages -1
         else:
-            self.index = 1
+            self.index = 0
         await self.edit_page(interaction)
 
     async def on_timeout(self):
@@ -73,4 +91,5 @@ class Pagination(discord.ui.View):
 
     @staticmethod
     def compute_total_pages(total_results: int, results_per_page: int) -> int:
+        # Divide total results (-1) by results per page,  +1
         return ((total_results - 1) // results_per_page) + 1

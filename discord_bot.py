@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 import sys
-from typing import Optional # 3.13 +
+from typing import Literal, Optional # 3.13 +
 
 # EXTERNAL
 import discord
@@ -150,12 +150,12 @@ async def create_game_advanced(
     name: str,
     start_date: str,
     end_date: str | None = None,
-    starting_money: float = 10000.00,
-    total_picks: int = 10,
+    starting_money: app_commands.Range[int, 1, 1000000000000] = 10000,
+    total_picks: app_commands.Range[int, 1, 1000] = 10,
     exclusive_picks: bool = False,
     private_game: bool = False,
     pick_date: str | None = None,
-    update_frequency: str = 'daily',
+    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
     # sell_during_game: bool = False
 ):
     # Create game using frontend and return
@@ -626,13 +626,13 @@ async def manage_game(
     owner: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    starting_money: float | None = None,
+    starting_money: app_commands.Range[int, 1, 1000000000000] | None = None,
+    total_picks: app_commands.Range[int, 1, 1000] | None = None,
     pick_date: str | None = None,
     private_game: bool | None = None,
-    total_picks: int | None = None,
     draft_mode: bool | None = None,
     sell_during_game: bool | None = None,
-    update_frequency: str | None = None
+    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] | None = None
 ):
     
     try:
@@ -924,8 +924,8 @@ async def my_stocks(
                 stock = str(pick.stock_ticker).center(5),
                 price = share_price.center(7),
                 shares = (str(round(pick.shares, 2)) if pick.shares else 'N/A').center(6),
-                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(6),
-                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'N/A').center(6),
+                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(7),
+                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:7] if pick.change_dollars else 'N/A').center(7),
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
 
@@ -942,11 +942,17 @@ async def my_stocks(
         description=f"There was an error while fetching your stocks.\n{e}"
         logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
-    
     embed = simple_embed(status=status, title=title, desc=description)
+    
+    
     if status == 'success': # add stock picks
-        embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table[:15]))) # Show only 15 stocks #TODO add pagination
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        if len(picks_table) > 15:
+            await Pagination(interaction=interaction, page_len=15, embed=embed, games=picks_table, mode='codeblock', ephemeral=ephemeral_test).navigate()
+        else:   
+            embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table))) # Show only 15 stocks #TODO add pagination
+    
+    if not len(picks_table) > 15 or status != 'success': # Only run this if it failed or there are only 15 stocks
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 # GAME INFO RELATED
@@ -989,6 +995,7 @@ async def game_info(
         pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
         
         ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
+        newstr = '| 🏆 |    Investor    |   Holdings   |  $Gain  | %Gain |'
         leaderboard_block = '```\n{ldrbrd_linees}\n```'
         row_template = '| {pos} | {user} | {value} | {date} |'
         for rank, info in enumerate(leaderboard_info):
@@ -1019,46 +1026,48 @@ async def game_info(
 
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
+#TODO max page length cant be more than 25
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
-    page_length="The length of the list per page. Defaults to 10"
+    page_length="The length of the list per page. Defaults to 9"
 )
 async def game_list(
     interaction: discord.Interaction,
-    page_length: int = 10
+    page_length: int = 9 # 9 looks nicer than 10
 ):
     embed = discord.Embed()
+    error = False
     try:
-        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games
-        async def get_page(page: int):
-            embed = discord.Embed(title="Currently running games", description="")
-            offset = (page - 1) * page_length
-            for game in games:
-                game_members = fe.get_all_participants(game.id)
-                embed.add_field(
-                    name=f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
-                    value='> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
-                    pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
-                    start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-                    date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-                    )
-                    )
+        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games. Does not include private games
         
-            n = Pagination.compute_total_pages(len(games), page_length)
-            embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
-            return embed, n
-        await Pagination(interaction, get_page, ephemeral=ephemeral_test).navigate()
-    except LookupError:
+        embed = discord.Embed(title="Currently running games", description="")
+        formatted_games = [] # 
+        for game in games: # Make a field for each game
+            formatted_games.append(( 
+                f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
+                '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
+                pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+                start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+                date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else ''
+                    )
+                ) # Tuple of game info
+                ) # Formatted games
+        await Pagination(interaction, page_len=page_length, embed=embed, games=formatted_games, ephemeral=ephemeral_test).navigate()
+
+    except LookupError as e:
+        error = True
         embed.title = 'No games found'
         embed.description = 'There are no public open or active games'
         embed.color = discord.Color.red()
         
     except Exception as e:
+        error = True
         logger.exception(f'Error when loading game list. Page length: {page_length}', exc_info=e)
         embed.title = 'Error'
         embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    if error:
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
