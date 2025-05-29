@@ -37,7 +37,7 @@ Users = TypeAdapter(list[User])
 # Game
 class Game(BaseModel):
     id: int = Field(validation_alias=AliasChoices('game_id'))
-    name: str
+    name: str = Field(max_length=35)
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
     start_money: PositiveFloat 
     pick_count: PositiveInt

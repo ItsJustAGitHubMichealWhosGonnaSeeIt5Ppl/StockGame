@@ -255,7 +255,7 @@ class Backend:
 
         Args:
             user_id (int): Game creators user ID.
-            name (str): Name for this game.
+            name (str): Name for this game.  Maximum 35 chatacters.
             start_date (str): Start date.  Format: `YYYY-MM-DD`.
             end_date (str, optional): End date.  Format: `YYYY-MM-DD`.  Leave blank for infinite game.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
@@ -331,20 +331,32 @@ class Backend:
         """
         
         self.logger.debug(f'Getting game: {game_id}')
-        attempts = 0
-        while attempts < 4: # Should allow it to fix some issues
-            attempts += 1
+        tobsi_loop = 0 # Issue originally found by @tobsi on discord
+        while tobsi_loop < 4: # Should allow it to fix some issues
+            tobsi_loop += 1
             resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
             try:
                 return self._single_get(model=dtv.Game, resp=resp)
             except ValidationError as exc: # Something has gone terribly wrong
                 self.logger.exception(f'Game exists, but validation failed', exc_info=exc)
                 # Reset values back to their defaults #TODO add more
-                if 'update_frequency' in str(exc): # Must do it this way
-                    self.logger.debug('Trying to set update_frequency back to valid string')
-                    self.sql.update(table='games', filters={'game_id': game_id}, items={'update_frequency':'daily'})
-                else:
-                    raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
+                fixes = {} # Empty dictionary
+                if 'update_frequency' in str(exc):
+                    self.logger.debug(f'Setting update_frequency to \'daily\' for game: {game_id}')
+                    fixes['update_frequency'] = 'daily' 
+                
+                if 'name' in str(exc):
+                    self.logger.debug(f'Shortening name to 35 characters for game: {game_id}')
+                    fixes['name'] = resp.result[0]['name'][:35].strip('`\\/[]()') # name string at 35 characters and get rid of shit
+                
+                if 'status' in str(exc):
+                    self.logger.debug(f'Setting status to \'open\' for game: {game_id}')
+                    fixes['status'] = 'open' 
+                    
+                if len(fixes) == 0:
+                    raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
+                else: # Apply fixes
+                    self.sql.update(table='games', filters={'game_id': game_id}, items=fixes)
                 
         raise ValidationError('Failed to recover from a validation error loop.')
     
@@ -400,7 +412,7 @@ class Backend:
         Args:
             game_id (int): Game ID.
             owner (Optional[int], optional): New owner ID. 
-            name (Optional[str], optional): New game name. 
+            name (Optional[str], optional): New game name.  Maximum 35 chatacters.
             start_date (Optional[str], optional): New start date.  Format: `YYYY-MM-DD`.  Cannot be changed once game has started.
             end_date (Optional[str], optional): New end date.  Format: `YYYY-MM-DD`.
             status (Optional[str], optional): Status ('open', 'active', 'ended').  Once start date has passed, game will become 'active'.  Shouldn't be changed manually.
