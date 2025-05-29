@@ -942,11 +942,17 @@ async def my_stocks(
         description=f"There was an error while fetching your stocks.\n{e}"
         logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
-    
     embed = simple_embed(status=status, title=title, desc=description)
+    
+    
     if status == 'success': # add stock picks
-        embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table[:15]))) # Show only 15 stocks #TODO add pagination
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        if len(picks_table) > 15:
+            await Pagination(interaction=interaction, page_len=15, embed=embed, games=picks_table, mode='codeblock', ephemeral=ephemeral_test).navigate()
+        else:   
+            embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table))) # Show only 15 stocks #TODO add pagination
+    
+    if not len(picks_table) > 15 or status != 'success': # Only run this if it failed or there are only 15 stocks
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 # GAME INFO RELATED
