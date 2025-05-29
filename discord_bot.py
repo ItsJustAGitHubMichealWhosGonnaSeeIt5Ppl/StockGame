@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import logging
 import os
 import sys
-from typing import Optional # 3.13 +
+from typing import Literal, Optional # 3.13 +
 
 # EXTERNAL
 import discord
@@ -155,7 +155,7 @@ async def create_game_advanced(
     exclusive_picks: bool = False,
     private_game: bool = False,
     pick_date: str | None = None,
-    update_frequency: str = 'daily',
+    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
     # sell_during_game: bool = False
 ):
     # Create game using frontend and return
@@ -632,7 +632,7 @@ async def manage_game(
     total_picks: int | None = None,
     draft_mode: bool | None = None,
     sell_during_game: bool | None = None,
-    update_frequency: str | None = None
+    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] | None = None
 ):
     
     try:
