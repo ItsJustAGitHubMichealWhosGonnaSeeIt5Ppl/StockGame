@@ -330,15 +330,23 @@ class Backend:
             dict: Game information.
         """
         
-        resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
-        try:
-            return self._single_get(model=dtv.Game, resp=resp)
-        except ValidationError as exc: # Something has gone terribly wrong
-            # Reset values back to their defaults #TODO add more
-            if 'update_frequency' in str(exc): 
-                self.update_game(game_id, update_frequency='daily')
+        self.logger.debug(f'Getting game: {game_id}')
+        attempts = 0
+        while attempts < 4: # Should allow it to fix some issues
+            attempts += 1
+            resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
+            try:
+                return self._single_get(model=dtv.Game, resp=resp)
+            except ValidationError as exc: # Something has gone terribly wrong
+                self.logger.exception(f'Game exists, but validation failed', exc_info=exc)
+                # Reset values back to their defaults #TODO add more
+                if 'update_frequency' in str(exc): # Must do it this way
+                    self.logger.debug('Trying to set update_frequency back to valid string')
+                    self.sql.update(table='games', filters={'game_id': game_id}, items={'update_frequency':'daily'})
+                else:
+                    raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
                 
-            raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
+        raise ValidationError('Failed to recover from a validation error loop.')
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
         """Get multiple games
