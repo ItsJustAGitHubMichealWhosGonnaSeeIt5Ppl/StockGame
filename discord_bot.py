@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from helpers.views import Pagination
 import helpers.autocomplete as ac
 from stocks import Frontend
-from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError
+from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
 
 
 load_dotenv()
@@ -52,6 +52,7 @@ intents.members = True
 
 # Testing variables
 ephemeral_test = False # Set to False for testing, True for production
+name_cutoff = 25 # Cut names off at 25 characters
 
 # Logger thing
 now = datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
@@ -223,7 +224,7 @@ async def create_game(interaction: discord.Interaction):
             label="Name of your Stock Game",
             placeholder=f"{interaction.user.display_name}'s Stock Game",
             required=True,
-            max_length=100,
+            max_length=name_cutoff,
             min_length=3,
         )
 
@@ -465,6 +466,13 @@ async def create_game(interaction: discord.Interaction):
                                     )
 
                                 except ValueError as e:
+                                    creation_status_embed = discord.Embed(
+                                        title="Game Creation Failed",
+                                        description=e,
+                                        color=discord.Color.red()
+                                    )
+                                
+                                except InvalidDateFormatError as e: # This handles invalid dates
                                     creation_status_embed = discord.Embed(
                                         title="Game Creation Failed",
                                         description=e,
@@ -799,7 +807,7 @@ async def buy_stock(
         elif 'Stock is not tradeable' in str(exc):
             description = f'The ticker {ticker} is not tradeable.  This can occur when a stock is private or has been delisted.'
             
-        elif 'Unable to find stock' in str(exc):
+        elif 'Unable to find stock' in str(exc) or 'Failed to add `ticker`' in str(exc):
             description = f'The ticker {ticker} was not found.  Double check your spelling and try again!'
         
         else:
@@ -913,7 +921,7 @@ async def my_stocks(
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
         status = 'success'
-        title = f'{interaction.user.display_name}\'s picks for game {fe._get_game_name(game_id=game_id)}({game_id})'
+        title = f'{interaction.user.display_name}\'s picks for game {fe._get_game_name(game_id=game_id)[:name_cutoff]}({game_id})' # Maximum name length is now 25
         
     except DoesntExistError as e: # Raised when player is not in the game
         description=f'You are not currently participating in this game. You can try to join it using the join-game command.'
@@ -958,7 +966,7 @@ async def game_info(
             participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
             )
         embed = discord.Embed(
-            title=f'{game.name} ({game.id})', 
+            title=f'{game.name[:name_cutoff]} ({game.id})', 
             description=description_str,
             )
         embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
@@ -1019,7 +1027,7 @@ async def game_list(
             for game in games:
                 game_members = fe.get_all_participants(game.id)
                 embed.add_field(
-                    name=f"{game.name}: [{game.id}]", #TODO switch this to use the simpler formatting
+                    name=f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
                     value='> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
                     pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
                     start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
@@ -1040,7 +1048,7 @@ async def game_list(
         embed.title = 'Error'
         embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    # await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
@@ -1060,7 +1068,7 @@ async def my_games(
             status_emoji = "🟢" if game.status != 'ended' else "🔴"
                         
             # Add game field
-            game_description= game_description + f"{status_emoji} {game.name}   ID: {game.id}\n"
+            game_description= game_description + f"{status_emoji} {game.name[:name_cutoff]}   ID: {game.id}\n"
 
         embed.description = game_description
         embed.set_footer(text=f"Use /game-info <game_id> for more details")
