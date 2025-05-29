@@ -114,6 +114,8 @@ class Backend:
         if resp.status != 'success': #TODO errors
             if resp.reason == 'NO ROWS EFFECTED':
                 raise bexc.DoesntExistError(table=table, item=item_id)
+            if resp.reason == 'SQLITE_CONSTRAINT_CHECK':
+                raise ValueError(resp.result) # Pass on the result
             else:
                 raise Exception(f'Failed to update item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
         
@@ -401,28 +403,32 @@ class Backend:
             if start_date or starting_money or pick_date or exclusive_picks:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
         
-        self._update_single(
-            table='games', 
-            id_column='game_id', 
-            item_id=game_id,
-            name=name,
-            owner_user_id = owner,
-            start_money = starting_money,
-            pick_count = total_picks,
-            draft_mode = exclusive_picks,
-            pick_date = pick_date,
-            private_game = private_game,
-            allow_selling = sell_during_game,
-            status = status,
-            update_frequency = update_frequency.lower() if update_frequency else None,
-            start_date = start_date,
-            end_date = end_date,
-            aggregate_value = aggregate_value,
-            change_dollars = round(change_dollars, 2) if change_dollars else None,
-            change_percent = round(change_percent, 2) if change_percent else None,
-            datetime_updated = _iso8601() 
-        )
-        
+        try:
+            self._update_single(
+                table='games', 
+                id_column='game_id', 
+                item_id=game_id,
+                name=name,
+                owner_user_id = owner,
+                start_money = starting_money,
+                pick_count = total_picks,
+                draft_mode = exclusive_picks,
+                pick_date = pick_date,
+                private_game = private_game,
+                allow_selling = sell_during_game,
+                status = status,
+                update_frequency = update_frequency.lower() if update_frequency else None,
+                start_date = start_date,
+                end_date = end_date,
+                aggregate_value = aggregate_value,
+                change_dollars = round(change_dollars, 2) if change_dollars else None,
+                change_percent = round(change_percent, 2) if change_percent else None,
+                datetime_updated = _iso8601() 
+            )
+        except ValueError as e: # Raised when Constraint check fails
+            if 'CHECK constraint failed:' in str(e):
+                raise ValueError(str(e).strip('IntegrityError(\'CHECK constraint failed:').strip(')')) # Pass on just the field that failed #TODO regex
+            
     def remove_game(self, game_id:int): 
         """Remove a game
 
@@ -1192,18 +1198,19 @@ class Frontend: # This will be where a bot (like discord) interacts
             str: Game name
         """
         
-        game_info = self.be.sql.get(table='games', columns=['name'], filters={'game_id':game_id})
+        
+        game_info = self.be.get_game(game_id)
         if game_info.status !='success':
             raise LookupError('Game not found')
         else:
-            return game_info.result[0]['name']
+            return str(game_info.name)
     
     def clean_text(self, text:str) -> str:
         """
         Helper function to clean text input, to prevent users from injecting formatting that breaks embeds. 
         Only removes formatting that causes line breaks or links.
         """
-        text = re.sub(r'```(.*)```', '\`\`\`\1\`\`\`', text) # Remove code blocks
+        text = re.sub(r'```(.*)```', '\\`\\`\\`\1\\`\\`\\`', text) # Remove code blocks
         text = re.sub(r'\[(.*)\]\(.*\)', '\1', text) # Remove links
         return text
 
@@ -1293,21 +1300,25 @@ class Frontend: # This will be where a bot (like discord) interacts
 
         # Return Tuples
         game = self.be.get_game(game_id) # Will raise an error for invalid games
-        game.current_value = round(game.current_value, 2) if game.current_value else 0# Round to two decimal places
         
+        game.current_value = round(game.current_value, 2) if game.current_value else 0# Round to two decimal places
         info = {
             'game': game,
         }
         if show_leaderboard:
             leaderboard = list()
-            players = self.be.get_many_participants(game_id=game_id, sort_by_value=True)
-            for player in players:
-                user = self.be.get_user(player.user_id)
-                leaderboard.append({ 
-                    'user_id': int(player.user_id),
-                    'current_value': round(player.current_value, 2) if player.current_value else 0, # Round to two decimal places
-                    'joined': player.datetime_joined
-                }) # Should keep order
+            try:
+                players = self.be.get_many_participants(game_id=game_id, sort_by_value=True)
+                for player in players:
+                    user = self.be.get_user(player.user_id)
+                    leaderboard.append({ 
+                        'user_id': int(player.user_id),
+                        'current_value': round(player.current_value, 2) if player.current_value else 0, # Round to two decimal places
+                        'joined': player.datetime_joined
+                    }) # Should keep order
+                    
+            except LookupError: # No players in game
+                self.logger.info(f'No players are currently in game: {game_id}')
                 
             info['leaderboard'] = leaderboard  # type: ignore WAA I DONT FUCKING CARE I KNOW THIS WORKS
         return dtv.GameInfo.model_validate(info)
@@ -1525,14 +1536,11 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         self.register(user_id) # Must try to register user
         self.logger.debug(f'User: {user_id} is updating game: {game_id}.  Settings[Owner: {owner}, name: {name}, tbd]')
-        if (self._user_owns_game(user_id=user_id, game_id=game_id) == False or user_id != self.owner_id) and enforce_permissions:
+        if (self._user_owns_game(user_id=user_id, game_id=game_id) == False and user_id != self.owner_id) and enforce_permissions:
             self.logger.error(f'User {user_id} is not allowed to make changes to game {game_id}')
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
-
-        try:            
-            self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
-        except Exception as e: #TODO ERRORS
-            raise e
+        
+        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
         
     def remove_game(self, user_id:int, game_id:int, enforce_permissions:bool=True):
         """Remove a game
