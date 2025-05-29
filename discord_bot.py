@@ -1029,6 +1029,7 @@ async def game_list(
     page_length: int = 9 # 9 looks nicer than 10
 ):
     embed = discord.Embed()
+    error = False
     try:
         games = fe.list_games(include_open=True, include_active=True) # Only get currently running games. Does not include private games
         
@@ -1045,18 +1046,21 @@ async def game_list(
                 ) # Tuple of game info
                 ) # Formatted games
         await Pagination(interaction, page_len=page_length, embed=embed, games=formatted_games, ephemeral=ephemeral_test).navigate()
-    
+
     except LookupError as e:
+        error = True
         embed.title = 'No games found'
         embed.description = 'There are no public open or active games'
         embed.color = discord.Color.red()
         
     except Exception as e:
+        error = True
         logger.exception(f'Error when loading game list. Page length: {page_length}', exc_info=e)
         embed.title = 'Error'
         embed.description = f'An unexpected error ocurred while trying to load games\nReport this!'
     
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+    if error:
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games

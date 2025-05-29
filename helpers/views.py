@@ -14,7 +14,7 @@ class Pagination(discord.ui.View):
         self.embed = embed
         self.page_len = page_len if page_len <= 25 else 25 # Maximum page length must be 25
         self.total_pages =  self.compute_total_pages(total_results=len(self.games), results_per_page=self.page_len)
-        self.index = 0
+        self.index = 0 # THIS IS STARTING AT 0 ADD 1 TO SHOW VISUAL
         self.ephemeral = ephemeral
         super().__init__(timeout=100)
 
@@ -36,6 +36,7 @@ class Pagination(discord.ui.View):
         for game in self.games[self.page_len * self.index: self.page_len * (self.index +1)]: # Get only the subset of games we're after
             emb.add_field(name=game[0],value=game[1]) # Fill out the embed!
         return emb
+    
     async def navigate(self):
         emb = self.get_page() 
         if self.total_pages == 1:
@@ -54,8 +55,9 @@ class Pagination(discord.ui.View):
             self.children[2].emoji = "⏮️"
         else:
             self.children[2].emoji = "⏭️"
-        self.children[0].disabled = self.index == 1
-        self.children[1].disabled = self.index == self.total_pages
+            
+        self.children[0].disabled = self.index == 0
+        self.children[1].disabled = self.index +1 == self.total_pages
 
     @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.blurple)
     async def previous(self, interaction: discord.Interaction, button: discord.Button):
@@ -70,9 +72,9 @@ class Pagination(discord.ui.View):
     @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.blurple)
     async def end(self, interaction: discord.Interaction, button: discord.Button):
         if self.index <= self.total_pages//2:
-            self.index = self.total_pages
+            self.index = self.total_pages -1
         else:
-            self.index = 1
+            self.index = 0
         await self.edit_page(interaction)
 
     async def on_timeout(self):
