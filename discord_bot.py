@@ -995,6 +995,7 @@ async def game_info(
         pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
         
         ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
+        newstr = '| 🏆 |    Investor    |   Holdings   |  $Gain  | %Gain |'
         leaderboard_block = '```\n{ldrbrd_linees}\n```'
         row_template = '| {pos} | {user} | {value} | {date} |'
         for rank, info in enumerate(leaderboard_info):
