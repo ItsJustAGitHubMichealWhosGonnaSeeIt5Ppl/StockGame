@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from typing import Optional, Type
+from pydantic import ValidationError
 
 # EXTERNAL
 from dotenv import load_dotenv
@@ -247,7 +248,7 @@ class Backend:
     
     
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -290,6 +291,8 @@ class Backend:
                 raise ValueError('`start_date` must be after `pick_date` when `exclusive_picks` is enabled.')
     
         # Misc
+        if update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
+            raise ValueError(f'Invalid update frequency {update_frequency}')
         if starting_money < 1.0:
             raise ValueError('`starting_money` must be atleast `1.0`.')
         if total_picks < 1:
@@ -328,7 +331,14 @@ class Backend:
         """
         
         resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
-        return self._single_get(model=dtv.Game, resp=resp)
+        try:
+            return self._single_get(model=dtv.Game, resp=resp)
+        except ValidationError as exc: # Something has gone terribly wrong
+            # Reset values back to their defaults #TODO add more
+            if 'update_frequency' in str(exc): 
+                self.update_game(game_id, update_frequency='daily')
+                
+            raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
         """Get multiple games
@@ -376,7 +386,7 @@ class Backend:
         resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
         return self._many_get(typeadapter=dtv.Games, resp=resp)
         
-    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
+    def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update an existing game
         
         Args:
@@ -402,6 +412,13 @@ class Backend:
         if game.start_date < datetime.today().date():
             if start_date or starting_money or pick_date or exclusive_picks:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
+        
+        if update_frequency and update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
+            raise ValueError(f'Invalid update frequency {update_frequency}')
+        if starting_money and starting_money < 1.0:
+            raise ValueError('`starting_money` must be atleast `1.0`.')
+        if total_picks and total_picks < 1:
+            raise ValueError('`total_picks` must be atleast `1`.')
         
         try:
             self._update_single(
@@ -1215,7 +1232,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         return text
 
     # # GAME RELATED # #
-    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:str='daily'):
+    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
@@ -1241,6 +1258,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         except bexc.UserExistsError: # User was already there, my bad
             self.logger.info(f'User with ID {user_id} already exists.')
             pass #TODO log
+        
 
         try:  # Create game
             self.be.add_game(
