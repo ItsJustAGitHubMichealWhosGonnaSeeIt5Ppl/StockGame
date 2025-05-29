@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from typing import Optional, Type
+from pydantic import ValidationError
 
 # EXTERNAL
 from dotenv import load_dotenv
@@ -330,7 +331,14 @@ class Backend:
         """
         
         resp = self.sql.get(table='games',filters={'game_id': int(game_id)})
-        return self._single_get(model=dtv.Game, resp=resp)
+        try:
+            return self._single_get(model=dtv.Game, resp=resp)
+        except ValidationError as exc: # Something has gone terribly wrong
+            # Reset values back to their defaults #TODO add more
+            if 'update_frequency' in str(exc): 
+                self.update_game(game_id, update_frequency='daily')
+                
+            raise ValidationError(str(exc) + 'Recovery attempted') # Throw the same error
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
         """Get multiple games
