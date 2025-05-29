@@ -359,6 +359,10 @@ class Backend:
                     self.logger.debug(f'Setting status to \'open\' for game: {game_id}')
                     fixes['status'] = 'open' 
                     
+                if 'end_date' in str(exc):
+                    self.logger.debug(f'Removing end date for game: {game_id}')
+                    fixes['end_date'] = 'NULL' 
+                
                 if len(fixes) == 0:
                     raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
                 else: # Apply fixes
@@ -446,9 +450,21 @@ class Backend:
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
+        if start_date and not self._validate_date(start_date):
+            raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
+        
         if game.start_date < datetime.today().date():
             if start_date or starting_money or pick_date or exclusive_picks:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
+            
+        if end_date: # Enddate stuff
+            if not self._validate_date(end_date):
+                raise bexc.InvalidDateFormatError('Invalid `end_date` format.')
+            if game.start_date > datetime.strptime(end_date, "%Y-%m-%d").date():
+                raise ValueError('`end_date` must be after `start_date`.')
+            
+        if pick_date and not self._validate_date(pick_date):
+            raise bexc.InvalidDateFormatError('Invalid `pick_date` format.')
         
         if update_frequency and update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
             raise ValueError(f'Invalid update frequency {update_frequency}')
@@ -991,20 +1007,27 @@ class GameLogic: # Might move some of the control/running actions here
                 )
             )
         """
+        
         try:
             resp = self.be.sql.get(table='stocks', filters=query)
             active_stocks = self.be._many_get(typeadapter=dtv.Stocks, resp=resp)
         except LookupError:
             return # No stocks
 
-        tickers = [tkr.ticker for tkr in active_stocks]
-        if len(tickers) > 0:
-            prices = yf.Tickers(tickers).tickers
-            for ticker, price in prices.items(): # update pricing
-                if price.info['quoteType'] != 'EQUITY': #TODO decide what should happen if someone manages this
+        #tickers = [tkr.ticker for tkr in active_stocks]
+        if len(active_stocks) > 0:
+            market_open = self._is_market_hours()
+            for ticker in active_stocks:
+                basic_info = yf.Ticker(ticker.ticker).fast_info # Hopefully speed this up
+                if basic_info['quote_type'] != 'EQUITY': #TODO decide what should happen if someone manages this
                     self.logger.error(f'Ticker {ticker} is not tradeable! Skipping')
                     continue
-                price = price.info['regularMarketPrice'] 
+                
+                if market_open:
+                    price = basic_info['last_price'] 
+                else:
+                    price = basic_info['regular_market_previous_close'] 
+                    
                 try:
                     self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=_iso8601()) # Update pricing
                 except Exception as e:
@@ -1673,6 +1696,8 @@ if __name__ == "__main__":
     test_users = [111, 222, 333, 444, 555, 666]
     test_stocks = ['MSFT', 'SNAP', 'GME', 'COST', 'NVDA', 'MSTR', 'CSCO', 'IBM', 'GE', 'BKNG']
     test_stocks2 = ['MSFT', 'SNAP', 'UBER', 'COST', 'AMD', 'ADBE', 'CSCO', 'IBM', 'GE', 'PEP']
+    
+    
     game = Frontend(database_name=DB_NAME, owner_user_id=OWNER) # Create frontend 
     game.gl.find_stock(ticker='COST')
     game.gl.update_all()
