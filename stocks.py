@@ -127,8 +127,10 @@ class Backend:
                 raise bexc.DoesntExistError(table=table, item=item_id)
             else:
                 raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
+    
+    def _validation_recovery(self, table:str, error:ValidationError, resp:Status): # Try to recover from errors 
+        pass
         
-            
     # # USER ACTIONS # #
     def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
@@ -347,7 +349,11 @@ class Backend:
                 
                 if 'name' in str(exc):
                     self.logger.debug(f'Shortening name to 35 characters for game: {game_id}')
-                    fixes['name'] = resp.result[0]['name'][:35].strip('`\\/[]()') # name string at 35 characters and get rid of shit
+                    name = re.sub(r'[\(\)\[\]/`\\/{}]', '', resp.result[0]['name']) # Clean the name more
+                    if tobsi_loop != 0: # We've been here before, add the game ID to the name
+                        fixes['name'] = str(str(game_id) + name)[:35] # name string at 35 characters and get rid of shit.  If it fails, remove an extra character
+                    else:
+                        fixes['name'] = name[:35] # name string at 35 characters and get rid of shit.  If it fails, remove an extra character
                 
                 if 'status' in str(exc):
                     self.logger.debug(f'Setting status to \'open\' for game: {game_id}')
@@ -356,8 +362,10 @@ class Backend:
                 if len(fixes) == 0:
                     raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
                 else: # Apply fixes
-                    self.sql.update(table='games', filters={'game_id': game_id}, items=fixes)
-                
+                    apply = self.sql.update(table='games', filters={'game_id': game_id}, items=fixes)
+                    if apply.status !='success': 
+                        self.logger.error(f'Fix to game: {game_id} failed.  More info: {apply}')
+
         raise ValidationError('Failed to recover from a validation error loop.')
     
     def get_many_games(self, name:Optional[str]=None, owner_id:Optional[int]=None, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False)-> tuple[dtv.Game]: # List all games
@@ -403,8 +411,17 @@ class Backend:
         if include_ended:
             statuses.append('"ended"')
         
-        resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
-        return self._many_get(typeadapter=dtv.Games, resp=resp)
+        repair= 0
+        e = ''
+        while repair < 2: # Try this twice
+            resp = self.sql.get(table='games', filters=(query.format(statuses='' +','.join(statuses), privacy='' +','.join(privacy)), values))
+            repair +=1
+            try:
+                return self._many_get(typeadapter=dtv.Games, resp=resp)
+            except ValidationError as e: # Something bad happened
+                self.repair_games() # Repair games and loop again
+        
+        raise Exception('Failed to repair games', e)
         
     def update_game(self, game_id:int, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
         """Update an existing game
@@ -475,6 +492,13 @@ class Backend:
         
         self._delete_single(table='games', id_column='game_id', item_id=game_id)
     
+    def repair_games(self):
+        # Repair games in database
+        resp = self.sql.get(table='games', columns=['game_id']) # Get ALL games
+        if resp.status == 'success': # Found games
+            assert isinstance(resp.result, tuple)
+            for game in resp.result: # Go through games and try to fix them
+                self.get_game(game['game_id']) 
     
     # # STOCK ACTIONS # #
     def add_stock(self, ticker:str, exchange:str, company_name:str):
@@ -1235,20 +1259,16 @@ class Frontend: # This will be where a bot (like discord) interacts
             str: Game name
         """
         
-        
+        self.logger.debug(f'Getting game name for game: {game_id}')
         game_info = self.be.get_game(game_id)
-        if game_info.status !='success':
-            raise LookupError('Game not found')
-        else:
-            return str(game_info.name)
+        return str(game_info.name)
     
     def clean_text(self, text:str) -> str:
         """
         Helper function to clean text input, to prevent users from injecting formatting that breaks embeds. 
         Only removes formatting that causes line breaks or links.
         """
-        text = re.sub(r'```(.*)```', '\\`\\`\\`\1\\`\\`\\`', text) # Remove code blocks
-        text = re.sub(r'\[(.*)\]\(.*\)', '\1', text) # Remove links
+        text = re.sub(r'[\(\)\[\]/`\\/{}]', '', text) # Remove stupid characters
         return text
 
     # # GAME RELATED # #
@@ -1283,7 +1303,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         try:  # Create game
             self.be.add_game(
                 user_id=user_id,
-                name=self.clean_text(name),
+                name=self.clean_text(name)[:35], # Limit to 35
                 start_date=start_date,
                 end_date=end_date,
                 starting_money=starting_money,

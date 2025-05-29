@@ -924,8 +924,8 @@ async def my_stocks(
                 stock = str(pick.stock_ticker).center(5),
                 price = share_price.center(7),
                 shares = (str(round(pick.shares, 2)) if pick.shares else 'N/A').center(6),
-                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(6),
-                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:6] if pick.change_dollars else 'N/A').center(6),
+                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(7),
+                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:7] if pick.change_dollars else 'N/A').center(7),
                 p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
             ))
 
@@ -1019,36 +1019,34 @@ async def game_info(
 
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
+#TODO max page length cant be more than 25
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
-    page_length="The length of the list per page. Defaults to 10"
+    page_length="The length of the list per page. Defaults to 9"
 )
 async def game_list(
     interaction: discord.Interaction,
-    page_length: int = 10
+    page_length: int = 9 # 9 looks nicer than 10
 ):
     embed = discord.Embed()
     try:
-        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games
-        async def get_page(page: int):
-            embed = discord.Embed(title="Currently running games", description="")
-            offset = (page - 1) * page_length
-            for game in games:
-                game_members = fe.get_all_participants(game.id)
-                embed.add_field(
-                    name=f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
-                    value='> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
-                    pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
-                    start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-                    date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-                    )
-                    )
+        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games. Does not include private games
         
-            n = Pagination.compute_total_pages(len(games), page_length)
-            embed.set_footer(text=f"Page {page} of {n} | Dates are formatted as (YYYY/MM/DD)")
-            return embed, n
-        await Pagination(interaction, get_page, ephemeral=ephemeral_test).navigate()
-    except LookupError:
+        embed = discord.Embed(title="Currently running games", description="")
+        formatted_games = [] # 
+        for game in games: # Make a field for each game
+            formatted_games.append(( 
+                f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
+                '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
+                pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+                start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+                date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else ''
+                    )
+                ) # Tuple of game info
+                ) # Formatted games
+        await Pagination(interaction, page_len=page_length, embed=embed, games=formatted_games, ephemeral=ephemeral_test).navigate()
+    
+    except LookupError as e:
         embed.title = 'No games found'
         embed.description = 'There are no public open or active games'
         embed.color = discord.Color.red()
