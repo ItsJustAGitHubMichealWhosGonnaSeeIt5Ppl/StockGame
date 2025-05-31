@@ -147,7 +147,7 @@ async def on_ready():
 )
 async def create_game_advanced(
     interaction: discord.Interaction,
-    name: str,
+    name: app_commands.Range[str, 1, name_cutoff],
     start_date: str,
     end_date: str | None = None,
     starting_money: app_commands.Range[int, 1, 1000000000000] = 10000,
@@ -622,7 +622,7 @@ async def delete_game(
 async def manage_game(
     interaction: discord.Interaction, 
     game_id: int,
-    name: str | None = None,
+    name: app_commands.Range[str, 1, name_cutoff] | None = None,
     owner: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
