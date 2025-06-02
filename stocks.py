@@ -19,8 +19,7 @@ import helpers.exceptions as bexc
 from helpers.sqlhelper import SqlHelper, _iso8601, Status
 from sqlite_creator_real import create as create_db
 
-
-load_dotenv()
+load_dotenv() 
 
 version = "???" #TODO should frontend and backend have different versions?
 
@@ -274,7 +273,8 @@ class Backend:
             Status: Game creation status.
         """
         #TODO make a Literal for update_frequency
- 
+        #TODO accept datetime for date fields
+        #TODO maybe this should return the game ID
         # Date formatting validation
         if not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
@@ -1045,7 +1045,6 @@ class GameLogic: # Might move some of the control/running actions here
 
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all games will be checked/run
-
         """
         
         try:        

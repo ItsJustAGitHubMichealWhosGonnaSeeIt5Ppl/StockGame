@@ -11,9 +11,26 @@ load_dotenv()
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
-        
-def migrate(db_name:str):
-    current_ver = '0.0.4'
+
+db_ver = "0.0.4b2" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
+def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
+    """Upgrade your database to the latest version
+
+    Args:
+        db_current_ver (str): The current database version. Defaults to current version set by script.
+        db_name (str): Database name.
+        force_upgrade (bool, optional): If True, will try to run all upgrades regardless of what version your database is. Defaults to False.
+
+    ILL DO THESE LATER
+    Raises:
+        Exception: _description_
+        Exception: _description_
+        ValueError: _description_
+        Exception: _description_
+        Exception: _description_
+    """
+    # Force upgrade will try to run EVERY migration except v001_to_v002 because I don't feel like fixing that one and you can't make me
+    current_ver = db_current_ver
     sql = SqlHelper(db_name)
     
     def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version without losing data
@@ -34,7 +51,7 @@ def migrate(db_name:str):
             print(send) # Sometimes gives error but does what its asked anyway...
         pass
 
-    def v002_to_v003(db_name:str,):
+    def v002_to_v003(db_name:str,): # OLD SYSTEM #TODO move this
         """Migrate v0.0.2 DB to v0.0.3 (see changelog)
 
         Args:
@@ -67,18 +84,20 @@ def migrate(db_name:str):
     if info.status == 'success':
         db_ver = info.result[0]['current_version']
 
-    elif info.reason == 'NO ROWS RETURNED': # The table exists, but there isn't a row
+    elif info.reason == 'NO ROWS RETURNED' or force_upgrade: # The table exists, but there isn't a row OR force migrate is set
         v002_to_v003(db_name=db_name) # Try to migrate from v 0.0.2 just in case
         sql.insert(table='database_info', items={'database_name': db_name, 'original_version': '0.0.2', 'current_version': '0.0.3', 'datetime_created': _iso8601()})
-        db_ver = '0.0.3'
+        db_ver = '0.0.3' if info.reason == 'NO ROWS RETURNED' else db_ver # DB ver should exist unless the database was forcefully migrated
     
-    else:
+    else: # IDFK how we'd even even up here
         raise ValueError(f'Failed to get information for database: {db_name}')
     
-    if db_ver == current_ver:
-        return # No changes needed
+    if db_ver == current_ver and not force_upgrade: # No changes needed
+        return 
     
-    elif db_ver == '0.0.3':
+    # Not current version, or force upgrade was on
+    elif db_ver in ['0.0.3', '0.0.4b1'] or force_upgrade: # 
+        #TODO does this need to be documented?
         #TODO add logging
         queries = ['change_dollars REAL DEFAULT NULL', 'change_percent REAL DEFAULT NULL', 'last_updated TEXT DEFAULT NULL', 'overall_wins INT DEFAULT 0']
         for query in queries:
@@ -89,24 +108,27 @@ def migrate(db_name:str):
                 continue
             
             else:
-                raise Exception('An unknown error occurred while trying to upgrade from v0.0.3 to v0.0.4', send)
-            
-        upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': '0.0.4', 'last_updated': _iso8601()})
-        if upd.status !='success':
-            raise Exception('An unknown error occurred while trying to upgrade from v0.0.3 to v0.0.4', upd)
+                raise Exception('An unexpected error occurred while trying to upgrade from v0.0.3/0.0.4b1', send)
+    
+    # Set the current version
+    upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': current_ver, 'last_updated': _iso8601()})
+    if upd.status !='success':
+        raise Exception(f'An unexpected error occurred while trying to set the database version to {current_ver}', upd)
     
 
-def create(db_name:str):
-    """Create database
+def create(db_name:str, upgrade:bool=True):
+    """Create database and upgrade older databases to the current version
     
-    Version: 0.0.4
+    Version: 0.0.4b1
 
     Args:
         db_name (str): Database name
-        
+        upgrade (bool, optional): Whether to try to upgrade older databases to the newest version.  Defaults to True.
+    
+    
     # Changelog
     
-    ## [0.0.4] - 2025-06-01
+    ## [0.0.4b1] - 2025-06-01
     
     ### Added
     - database information table to make version changes easier
@@ -142,7 +164,7 @@ def create(db_name:str):
 
     ### Removed
     """    
-    version = "0.0.4" 
+    
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
@@ -184,7 +206,10 @@ def create(db_name:str):
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
 
-    # Games table #TODO descriptions #TODO names don't need to be uni
+    # Games table 
+    # TODO descriptions 
+    # TODO names don't need to be unique
+    # TODO game ID is going to be an alphanumeric string (5 characters to start)
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -279,8 +304,9 @@ def create(db_name:str):
 
     conn.commit()
     conn.close()
-    # Run migration
-    migrate(db_name)
+    
+    # Run database upgrade
+    upgrade_db(db_current_ver=db_ver, db_name=db_name)
     
 if __name__ == "__main__":
     
