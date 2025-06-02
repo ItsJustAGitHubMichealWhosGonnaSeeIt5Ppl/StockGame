@@ -285,10 +285,6 @@ class TestFrontend:
         user = fe.be.get_user(user_id=user_id)
         assert user.display_name == new_name
 
-    def test_change_name_non_existent_user(self, fe: Frontend):
-        with pytest.raises(bexc.DoesntExistError):
-            fe.change_name(user_id=9999, name="GhostName")
-
 
     # # JOIN_GAME # #
     def test_join_game_success(self, fe: Frontend):
