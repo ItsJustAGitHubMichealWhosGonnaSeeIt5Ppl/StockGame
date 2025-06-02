@@ -1,6 +1,6 @@
 import sqlite3
 import os 
-from helpers.sqlhelper import SqlHelper
+from helpers.sqlhelper import SqlHelper, _iso8601
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,56 +11,113 @@ load_dotenv()
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
-def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version without losing data
-    """Migrate v0.0.1 DB to v0.0.2
-    
-
-    Args:
-        db_name (str): Existing database name.
-        user_source (str): Default source to set for existing users.
-    """
+        
+def migrate(db_name:str):
+    current_ver = '0.0.4'
     sql = SqlHelper(db_name)
     
-    # Create new column in user table
-    query = """ALTER TABLE users
-    ADD source TEXT"""
-    send = sql.send_query(query)
-    if send.status == 'error':
-        print(send) # Sometimes gives error but does what its asked anyway...
-    pass
+    def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version without losing data
+        """Migrate v0.0.1 DB to v0.0.2
+        
 
-def v002_to_v003(db_name:str,):
-    """Migrate v0.0.2 DB to v0.0.3 (see changelog)
+        Args:
+            db_name (str): Existing database name.
+            user_source (str): Default source to set for existing users.
+        """
+        sql = SqlHelper(db_name)
+        
+        # Create new column in user table
+        query = """ALTER TABLE users
+        ADD source TEXT"""
+        send = sql.send_query(query)
+        if send.status == 'error':
+            print(send) # Sometimes gives error but does what its asked anyway...
+        pass
 
-    Args:
-        db_name (str): Existing database name.
-    """
-    sql = SqlHelper(db_name)
-    # Create new column in user table
-    tables = ['games', 'game_participants', 'stock_picks']
-    default_queries = ["ALTER TABLE {table} ADD change_dollars TEXT DEFAULT NULL", "ALTER TABLE {table} ADD change_percent TEXT DEFAULT NULL"]
-    game_queries = ["ALTER TABLE {table} ADD datetime_updated TEXT DEFAULT NULL"] # Add this to games
-    for table in tables:
-        if table == 'games':
-            queries = default_queries.copy() + game_queries
-        else:
-            queries = default_queries
+    def v002_to_v003(db_name:str,):
+        """Migrate v0.0.2 DB to v0.0.3 (see changelog)
+
+        Args:
+            db_name (str): Existing database name.
+        """
+        sql = SqlHelper(db_name)
+        # Create new column in user table
+        tables = ['games', 'game_participants', 'stock_picks']
+        default_queries = ["ALTER TABLE {table} ADD change_dollars TEXT DEFAULT NULL", "ALTER TABLE {table} ADD change_percent TEXT DEFAULT NULL"]
+        game_queries = ["ALTER TABLE {table} ADD datetime_updated TEXT DEFAULT NULL"] # Add this to games
+        for table in tables:
+            if table == 'games':
+                queries = default_queries.copy() + game_queries
+            else:
+                queries = default_queries
+            for query in queries:
+                send = sql.send_query(query.format(table=table),mode='insert')
+                if send.status == 'error':
+                    if send.reason == 'DUPLICATE COLUMN NAME': # The column is already there, not a big deal so keep moving
+                        continue
+                    else:
+                        raise Exception('An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3', send) # Sometimes gives error but does what its asked anyway...
+
+    
+    try:
+        info = sql.get(table='database_info', filters={'database_name': db_name})
+    except Exception as e: # TODO find errors
+        raise Exception(e)
+    
+    if info.status == 'success':
+        db_ver = info.result[0]['current_version']
+
+    elif info.reason == 'NO ROWS RETURNED': # The table exists, but there isn't a row
+        v002_to_v003(db_name=db_name) # Try to migrate from v 0.0.2 just in case
+        sql.insert(table='database_info', items={'database_name': db_name, 'original_version': '0.0.2', 'current_version': '0.0.3', 'datetime_created': _iso8601()})
+        db_ver = '0.0.3'
+    
+    else:
+        raise ValueError(f'Failed to get information for database: {db_name}')
+    
+    if db_ver == current_ver:
+        return # No changes needed
+    
+    elif db_ver == '0.0.3':
+        #TODO add logging
+        queries = ['change_dollars REAL DEFAULT NULL', 'change_percent REAL DEFAULT NULL', 'last_updated TEXT DEFAULT NULL', 'overall_wins INT DEFAULT 0']
         for query in queries:
-            send = sql.send_query(query.format(table=table),mode='insert')
-            if send.status == 'error':
-                print(send) # Sometimes gives error but does what its asked anyway...
-            pass
-
+            send = sql.alter_table(table='users', mode='add', data=query)
+            if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
+                continue
+            elif send.reason == 'DUPLICATE COLUMN NAME': # Upgrade has partially been done
+                continue
+            
+            else:
+                raise Exception('An unknown error occurred while trying to upgrade from v0.0.3 to v0.0.4', send)
+            
+        upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': '0.0.4', 'last_updated': _iso8601()})
+        if upd.status !='success':
+            raise Exception('An unknown error occurred while trying to upgrade from v0.0.3 to v0.0.4', upd)
+    
 
 def create(db_name:str):
     """Create database
     
-    Version: 0.0.3
+    Version: 0.0.4
 
     Args:
         db_name (str): Database name
         
     # Changelog
+    
+    ## [0.0.4] - 2025-06-01
+    
+    ### Added
+    - database information table to make version changes easier
+    - `last_updated`, `overall_wins`, `change_dollars`, and `change_percent` to users table
+    - Database upgrade/migration system
+    
+    ### Fixed
+
+    ### Changed
+
+    ### Removed
     
     ## [0.0.3] - 2025-05-22
     
@@ -85,7 +142,7 @@ def create(db_name:str):
 
     ### Removed
     """    
-    version = "0.0.3" 
+    version = "0.0.4" 
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
@@ -100,18 +157,29 @@ def create(db_name:str):
             source TEXT NOT NULL,                       -- role source
             datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         );""")
-    
+        
     # Meta table (store things like the database version)
-    #TODO create me!
-    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS database_info (
+        database_name TEXT PRIMARY KEY,             -- Database 
+        original_version TEXT NOT NULL,             -- Orginal database version
+        current_version TEXT NOT NULL,              
+        datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL              -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        );""")
+
     # Users table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
         display_name TEXT,                          -- User display name
         source TEXT NOT NULL,                       -- User source
+        overall_wins INT DEFAULT 0,                 -- First place finishes
+        change_dollars REAL DEFAULT NULL,           -- Overall gain/loss in dollars
+        change_percent REAL DEFAULT NULL,           -- Overall gain/loss percent
         permissions INT NOT NULL DEFAULT 210,       -- Store users permissions
-        datetime_created TEXT NOT NULL           -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL              -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         );""")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
@@ -147,6 +215,7 @@ def create(db_name:str):
 
 
     # Stocks table 
+    #TODO mark stocks as active/inactive
     cursor.execute("""CREATE TABLE IF NOT EXISTS stocks (
         stock_id INTEGER PRIMARY KEY AUTOINCREMENT,
         ticker TEXT NOT NULL,           -- Stock ticker
@@ -157,6 +226,7 @@ def create(db_name:str):
         );""")
 
     # Stock price (current and historical) table
+    #TODO add price type (daily, hourly, etc)
     cursor.execute("""CREATE TABLE IF NOT EXISTS stock_prices (
         price_id INTEGER PRIMARY KEY AUTOINCREMENT,
         stock_id INTEGER NOT NULL,
@@ -209,12 +279,14 @@ def create(db_name:str):
 
     conn.commit()
     conn.close()
+    # Run migration
+    migrate(db_name)
     
 if __name__ == "__main__":
     
     DB_NAME = str(os.getenv('DB_NAME'))
     print(f'DB Name is: {DB_NAME}')
-    #v002_to_v003(DB_NAME)
     create(DB_NAME)
+    
     
     

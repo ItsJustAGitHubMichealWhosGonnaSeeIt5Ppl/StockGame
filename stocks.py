@@ -207,36 +207,38 @@ class Backend:
         else:
             return users
          
-    def update_user(self, user_id: int, source:Optional[str]=None, display_name:Optional[str]=None, permissions:Optional[int]=None):
+    def update_user(self, user_id: int, source:Optional[str]=None, display_name:Optional[str]=None, overall_wins:Optional[int]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, permissions:Optional[int]=None):
+        
         """Update an existing user
         
         Must provide atleast one arg to update in addition to the user_id
 
         Args:
             user_id (int): User ID.
-            display_name (Optional[str], optional): Display name.
-            permissions (Optional[str], optional): Permissions.
-            
+            display_name (str, optional): Display name.
+            permissions (str, optional): Permissions.
+            overall_wins (int, optional): Total game wins.
+            change_dollars (float, optional): Overall change dollars across all games (completed only).
+            change_percent (float, optional): Overall change percent across all games (completed only).
+        
         Raises:
             ValueError(Atleast one arg must be changed.): Raised if no args besides user_id are passed.
         """
         
         if not display_name and not permissions and not source: # Must have atleast once of these changed
             raise ValueError('Atleast one arg must be changed.')
-            
-        items = {
-            'display_name': display_name,
-            'permissions': permissions,
-            'source': source
-            }# TODO tag that an update occurred
         
         self._update_single(
             table="users",
             id_column='user_id',
             item_id=user_id,
             source=source,
+            overall_wins=overall_wins,
+            change_dollars=change_dollars,
+            change_percent=change_percent,
             display_name=display_name,
-            permissions=permissions
+            permissions=permissions,
+            last_updated=_iso8601()
         )
         
     def remove_user(self, user_id:int): 
@@ -1029,7 +1031,7 @@ class GameLogic: # Might move some of the control/running actions here
                     price = basic_info['regular_market_previous_close'] 
                     
                 try:
-                    self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=_iso8601()) # Update pricing
+                    self.be.add_stock_price(ticker_or_id=ticker.ticker, price=price, datetime=_iso8601()) # Update pricing
                 except Exception as e:
                     self.logger.exception(e) # Log exception
                     pass #TODO find problems if/when they appear

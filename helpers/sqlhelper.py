@@ -166,6 +166,15 @@ class SqlHelper: # Simple helper for SQL
             else:
                 reason = str(e.sqlite_errorname)  # type: ignore is custom exception
                 result = e
+        
+        except sqlite3.OperationalError as e:
+            if 'duplicate column name' in str(e.args[0]):
+                reason = 'DUPLICATE COLUMN NAME'
+                result = e.args[0]
+                
+            else:
+                reason = str(e.sqlite_errorname)  # type: ignore is custom exception
+                result = e
             
         except Exception as e:
             reason = 'OTHER ERROR'
@@ -342,3 +351,13 @@ class SqlHelper: # Simple helper for SQL
         values = [table]
         return self._run_query(query=query, values=values, mode='delete')
     
+    @open_and_close
+    def alter_table(self, table:str, data:str, mode:str):
+        query = """ALTER TABLE {table}
+        """
+        if mode.lower() == 'add':
+            query += 'ADD {data}'
+            
+        else:
+            raise ValueError(f'Invalid mode: {mode}')
+        return self._run_query(query=query.format(table=table, data=data), mode='insert')
