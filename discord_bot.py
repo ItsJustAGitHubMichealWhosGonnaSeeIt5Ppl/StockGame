@@ -1121,7 +1121,16 @@ async def update_game(
 
 
     await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-    
+
+@bot.tree.command(name="about", description="About the bot and its creators")
+async def about(
+    interaction: discord.Interaction,
+):
+    embed = discord.Embed(title="About the bot", description="StockBot is a discord bot that simulates the purchase of stocks and runs them in a gamified format. Originally built for the Lemonade Stand community. [Repository Link](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame)")
+    embed.add_field(name="Creators", value="Epicsadface: Project Leader, Coordinated Strategic Management Lead, Frontend Dev, Backend Dev, gave the idea for the about command\nnje331: Frontend Dev, Bot Dev, made really big bot commits\nPranav: Bot Dev, made the about command, strategy consultant")
+    embed.add_field(name="Special Thanks", value="dibibaguette: Gave the idea\ntobsi: Chaotic Project Tester")
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+
 @bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
 async def logs(
     interaction: discord.Interaction,
