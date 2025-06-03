@@ -511,14 +511,6 @@ async def create_game(interaction: discord.Interaction):
             exclusive_picks_yes.callback = exclusive_picks_callback
             exclusive_picks_no.callback = exclusive_picks_callback
 
-                # Set the end date modal callback
-                # end_date_modal.on_submit = end_date_modal_callback
-
-            # Set the end date yes button callback
-            # end_date_yes.callback = end_date_callback
-            # Set end date no button callback, skipping the modal
-            # end_date_no.callback = end_date_callback
-
         # Set the modal callback
         initial_wizard_modal.on_submit = initial_wizard_callback
 

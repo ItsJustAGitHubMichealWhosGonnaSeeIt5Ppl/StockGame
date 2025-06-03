@@ -8,7 +8,6 @@ from helpers.datatype_validation import StockPick
 from stocks import Frontend
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 try:
