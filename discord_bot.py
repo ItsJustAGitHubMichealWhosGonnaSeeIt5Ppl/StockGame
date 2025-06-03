@@ -142,7 +142,7 @@ async def on_ready():
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
     private_game="Whether the game is private (requires owner approval for new users)",
-    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
+    update_frequency="How often prices should update ('daily', 'hourly') #, 'minute', 'realtime')"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
@@ -376,23 +376,23 @@ async def create_game(interaction: discord.Interaction):
                             custom_id="update_frequency_hourly"
                         )
 
-                        update_frequency_minute = discord.ui.Button(
-                            label="Minute",
-                            style=discord.ButtonStyle.success,
-                            custom_id="update_frequency_minute"
-                        )
+                        # update_frequency_minute = discord.ui.Button(
+                        #     label="Minute",
+                        #     style=discord.ButtonStyle.success,
+                        #     custom_id="update_frequency_minute"
+                        # )
 
-                        update_frequency_realtime = discord.ui.Button(
-                            label="Realtime",
-                            style=discord.ButtonStyle.success,
-                            custom_id="update_frequency_realtime"
-                        )
+                        # update_frequency_realtime = discord.ui.Button(
+                        #     label="Realtime",
+                        #     style=discord.ButtonStyle.success,
+                        #     custom_id="update_frequency_realtime"
+                        # )
 
                         update_frequency_view = discord.ui.View()
                         update_frequency_view.add_item(update_frequency_daily)
                         update_frequency_view.add_item(update_frequency_hourly)
-                        update_frequency_view.add_item(update_frequency_minute)
-                        update_frequency_view.add_item(update_frequency_realtime)
+                        # update_frequency_view.add_item(update_frequency_minute)
+                        # update_frequency_view.add_item(update_frequency_realtime)
 
                         await interaction.response.edit_message(embed=update_frequency_embed, view=update_frequency_view)
 
@@ -497,8 +497,8 @@ async def create_game(interaction: discord.Interaction):
                         # Set the update frequency button callbacks
                         update_frequency_daily.callback = update_frequency_callback
                         update_frequency_hourly.callback = update_frequency_callback
-                        update_frequency_minute.callback = update_frequency_callback
-                        update_frequency_realtime.callback = update_frequency_callback
+                        # update_frequency_minute.callback = update_frequency_callback
+                        # update_frequency_realtime.callback = update_frequency_callback
                 
                     # Set the join after button callback
                     private_yes.callback = private_game_callback
@@ -609,7 +609,7 @@ async def delete_game(
     total_picks="New number of stocks each player can pick; Cannot be changed once game has started",
     draft_mode="Whether multiple users can pick the same stock; Pick date must be on or before start date; Cannot be changed once game has started",
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
-    update_frequency="How often prices should update ('daily', 'hourly', 'minute', 'realtime')"
+    update_frequency="How often prices should update ('daily', 'hourly')", #, 'minute', 'realtime')"
 )
 async def manage_game(
     interaction: discord.Interaction, 
@@ -624,7 +624,7 @@ async def manage_game(
     private_game: bool | None = None,
     draft_mode: bool | None = None,
     sell_during_game: bool | None = None,
-    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] | None = None
+    update_frequency: Literal['daily', 'hourly'] | None = None
 ):
     
     try:
