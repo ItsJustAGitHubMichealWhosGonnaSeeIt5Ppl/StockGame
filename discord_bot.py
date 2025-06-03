@@ -1134,9 +1134,9 @@ async def update_game(
 async def about(
     interaction: discord.Interaction,
 ):
-    embed = discord.Embed(title="About the bot", description="StockBot is a discord bot that simulates the purchase of stocks and runs them in a gamified format. Originally built for the Lemonade Stand community.")
-    embed.add_field(name="Repository Link", value="https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame")
-    embed.add_field(name="Creators", value="Epicsadface: Project Leader, Frontend Dev, Backend Dev\nnje331: Frontend Dev, Bot Dev\nPranav: Bot Dev\ntobsi: Chaotic Project Tester")
+    embed = discord.Embed(title="About the bot", description="StockBot is a discord bot that simulates the purchase of stocks and runs them in a gamified format. Originally built for the Lemonade Stand community. [Repository Link](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame)")
+    embed.add_field(name="Creators", value="Epicsadface: Project Leader, Coordinated Strategic Management Lead, Frontend Dev, Backend Dev, gave the idea for the about command\nnje331: Frontend Dev, Bot Dev, made really big bot commits\nPranav: Bot Dev, made the about command, strategy consultant")
+    embed.add_field(name="Special Thanks", value="dibibaguette: Gave the idea\ntobsi: Chaotic Project Tester")
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
