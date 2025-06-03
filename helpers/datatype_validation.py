@@ -28,9 +28,13 @@ class User(BaseModel):
     id: int = Field(validation_alias=AliasChoices('user_id'))
     display_name: Optional[str] = None
     source: Optional[str] = None
+    overall_wins: int
+    change_dollars: Optional[float] = None
+    change_percent: Optional[float] = None
     permissions: int = 210
     datetime_created: datetime
-
+    last_updated: Optional[datetime] = None
+    
 Users = TypeAdapter(list[User])
 
 
