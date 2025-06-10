@@ -4,11 +4,11 @@ import logging
 import os
 import re
 from typing import Optional, Type
-from pydantic import ValidationError
 
 # EXTERNAL
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
+from pydantic import ValidationError
 import pytz
 from requests import exceptions # Exceptions!
 import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
@@ -693,7 +693,7 @@ class Backend:
         items = {
             'participation_id':participant_id,
             'stock_id':stock_id,
-            'datetime_updated': _iso8601()
+            'datetime_created': _iso8601()
             }
         
         resp = self.sql.insert(table='stock_picks', items=items)
@@ -712,9 +712,8 @@ class Backend:
         Returns:
             dict: Single stock pick
         """
-        
-        resp = self.sql.get(table='stock_picks', filters={'pick_id': pick_id})
-        return self._single_get(model=dtv.StockPick, resp=resp)
+
+        return self._single_get(model=dtv.StockPick, resp=self.sql.get(table='stock_picks', filters={'pick_id': pick_id}))
     
     def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None, include_tickers:bool=False)-> tuple[dtv.StockPick]: 
         """List stock picks.  Optionally, filter by a status or participant ID

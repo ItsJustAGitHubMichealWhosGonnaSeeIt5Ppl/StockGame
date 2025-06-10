@@ -82,14 +82,17 @@ def open_and_close(func): #TODO MAKE THIS NOT AI
     return wrapper
 
 class SqlHelper: # Simple helper for SQL
-    """Helps with entering and retreiving data from an SQL database.  Runs kind of like an API, where responses come back with either a success or error message
-    """
-    def __init__(self, db_name:str):
-        """SQLlite helper tool
+    def __init__(self, db_name:str, create_backup:bool=False, backup_directory:str='backups/automatic'):
+        """SQLite helper tool
+        
+        Tool to make interacting with an SQLite database easier!  Includes optional backup 
 
         Args:
             db_name (str): Database name
+            create_backup (bool, optional): If True, a full backup of the current database will be created upon first run. The backup directory/folder can be set with `backup_directory`.  Defaults to False
+            backup_directory (str, optional):  Set the backup directory.  Only relevant if `create_backup` is True.  Defaults to `backups/automatic`.
         """
+        #TODO add backup
         self.logger = logging.getLogger('SqlHelper')
         self.logger.info('Logging for SqlHelper started')
         self.db = db_name
@@ -361,3 +364,28 @@ class SqlHelper: # Simple helper for SQL
         else:
             raise ValueError(f'Invalid mode: {mode}')
         return self._run_query(query=query.format(table=table, data=data), mode='insert')
+
+    def create_backup(self, dest_db:str, display_progress:bool=False):
+        """Manually create a backup of the current database
+
+        Args:
+            dest_db (str): Destination/name for the backup.  Accepts path.
+            display_progress (bool, optional): Whether to display(print) the progress of the backup.  Defaults to False.
+        """
+        # Backup main DB
+        
+        
+        def info(status:int, todo:int, total:int):
+            pass
+            print(f'Status: {status} | Copied {total - todo} of {total}')
+            
+        # Connect/create DBs
+        src = sqlite3.connect(self.db)
+        dest = sqlite3.connect(dest_db)
+        
+        # Display progress conditionally (idk if this will work, in my head it does)
+        src.backup(dest, progress=info if display_progress else None) 
+        
+        # Close
+        src.close()
+        dest.close()

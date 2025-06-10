@@ -110,16 +110,28 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
             else:
                 raise Exception('An unexpected error occurred while trying to upgrade from v0.0.3/0.0.4b1', send)
     
+    elif db_ver in ['0.0.4b2'] or force_upgrade:
+        stock_picks = ['datetime_crested TEXT NOT NULL']
+        for change in stock_picks:
+            send = sql.alter_table(table='users', mode='add', data=change)
+            if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
+                continue
+            elif send.reason == 'DUPLICATE COLUMN NAME': # Upgrade has partially been done
+                continue
+            
+            else:
+                raise Exception('An unexpected error occurred while trying to upgrade from v0.0.4b2', send)
+    
     # Set the current version
     upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': current_ver, 'last_updated': _iso8601()})
     if upd.status !='success':
         raise Exception(f'An unexpected error occurred while trying to set the database version to {current_ver}', upd)
-    
+
 
 def create(db_name:str, upgrade:bool=True):
     """Create database and upgrade older databases to the current version
     
-    Version: 0.0.4b1
+    Version: 0.0.4b3
 
     Args:
         db_name (str): Database name
@@ -127,6 +139,17 @@ def create(db_name:str, upgrade:bool=True):
     
     
     # Changelog
+    
+    ## [0.0.4b3] - 2025-06-10
+    
+    ### Added
+    - `datetime_created` to stock picks
+
+    ### Fixed
+
+    ### Changed
+
+    ### Removed
     
     ## [0.0.4b1] - 2025-06-01
     
@@ -294,6 +317,7 @@ def create(db_name:str, upgrade:bool=True):
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
         status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
+        datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         datetime_updated TEXT NOT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,

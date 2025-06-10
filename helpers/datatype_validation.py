@@ -112,7 +112,7 @@ class GameParticipant(BaseModel):
     game_id: int
     name: Optional[str] = None
     status: ParticipantStatus = 'active'
-    datetime_joined: datetime # YYYY-MM-DD HH:MM:SS
+    datetime_joined: datetime # YYYY-MM-DD HH:MM:SS 
     current_value: Optional[float] = None
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
@@ -134,6 +134,7 @@ class StockPick(BaseModel):
     change_percent: Optional[float] = None
     status: PickStatus = 'pending_buy'
     stock_ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker')) # Allow ticker to be added in here.  Purely for ease of use
+    datetime_created: datetime # YYYY-MM-DD HH:MM:SS
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
 
 StockPicks = TypeAdapter(list[StockPick])
