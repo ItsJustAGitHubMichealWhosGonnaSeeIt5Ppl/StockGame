@@ -712,9 +712,22 @@ class Backend:
         Returns:
             dict: Single stock pick
         """
+        try:
+            return self._single_get(model=dtv.StockPick, resp=self.sql.get(table='stock_picks', filters={'pick_id': pick_id}))
+        except ValidationError as exc:
+            self.logger.exception(f'Pick exists, but validation failed', exc_info=exc)
+            fixes = {}
+            if 'datetime_created' in str(exc):
+                self.logger.debug('Missing pick date, setting to today')
+                fixes['datetime_created'] = _iso8601() 
+            
+            if len(fixes) == 0:
+                raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
+            else: # Apply fixes
+                apply = self.sql.update(table='stock_picks', filters={'pick_id': pick_id}, items=fixes)
+                if apply.status !='success': 
+                    self.logger.error(f'Fix to pick: {pick_id} failed.  More info: {apply}')
 
-        return self._single_get(model=dtv.StockPick, resp=self.sql.get(table='stock_picks', filters={'pick_id': pick_id}))
-    
     def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None, include_tickers:bool=False)-> tuple[dtv.StockPick]: 
         """List stock picks.  Optionally, filter by a status or participant ID
         

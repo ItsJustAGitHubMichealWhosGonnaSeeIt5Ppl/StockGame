@@ -12,7 +12,7 @@ load_dotenv()
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
 
-db_ver = "0.0.4b2" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
+db_ver = "0.0.4b3" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
 def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
     """Upgrade your database to the latest version
 
@@ -111,7 +111,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                 raise Exception('An unexpected error occurred while trying to upgrade from v0.0.3/0.0.4b1', send)
     
     elif db_ver in ['0.0.4b2'] or force_upgrade:
-        stock_picks = ['datetime_crested TEXT NOT NULL']
+        stock_picks = ['datetime_crested TEXT NOT NULL', 'datetime_updated TEXT DEFAULT NULL']
         for change in stock_picks:
             send = sql.alter_table(table='users', mode='add', data=change)
             if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
@@ -202,7 +202,7 @@ def create(db_name:str, upgrade:bool=True):
             source TEXT NOT NULL,                       -- role source
             datetime_created TEXT NOT NULL,             -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         );""")
-        
+    
     # Meta table (store things like the database version)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS database_info (
@@ -252,7 +252,6 @@ def create(db_name:str, upgrade:bool=True):
         change_percent REAL DEFAULT NULL,
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
         );""")
@@ -318,7 +317,7 @@ def create(db_name:str, upgrade:bool=True):
         change_percent REAL DEFAULT NULL,
         status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-        datetime_updated TEXT NOT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        datetime_updated TEXT DEFAULT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
         FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
