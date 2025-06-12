@@ -111,7 +111,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                 raise Exception('An unexpected error occurred while trying to upgrade from v0.0.3/0.0.4b1', send)
     
     elif db_ver in ['0.0.4b2'] or force_upgrade:
-        stock_picks = ['datetime_crested TEXT NOT NULL', 'datetime_updated TEXT DEFAULT NULL']
+        stock_picks = ['datetime_crested TEXT NOT NULL DEFAULT "NONE"', 'datetime_updated TEXT DEFAULT NULL']
         for change in stock_picks:
             send = sql.alter_table(table='users', mode='add', data=change)
             if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
