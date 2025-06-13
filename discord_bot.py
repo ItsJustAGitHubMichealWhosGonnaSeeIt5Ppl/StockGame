@@ -676,6 +676,30 @@ async def manage_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
+@bot.tree.command(name="user-stats", description="Shows global statistics of a user. Shows yours by default.")
+@app_commands.describe(
+    user="The ID of the user you want to see stats for"
+)
+async def user_stats(
+    interaction: discord.Interaction,
+    user: discord.User | None
+):
+    await interaction.response.defer()
+    try:
+        discord_user: discord.User | discord.Member = user if user else interaction.user
+        user_stats = fe.get_user(discord_user.id)
+        embed = discord.Embed(title=f"{discord_user.display_name} ({discord_user.name})", description="Global Statistics")
+        embed.set_thumbnail(url=discord_user.display_avatar)
+        embed.add_field(name="Total wins:", value=user_stats.overall_wins)
+        embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
+        embed.color = discord.Color.blue()
+        await interaction.followup.send(embed=embed)
+    except LookupError:
+        embed = discord.Embed(title="User not found", description="User does not exist in our system!")
+        embed.color = discord.Color.red()
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+
+
 #TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)

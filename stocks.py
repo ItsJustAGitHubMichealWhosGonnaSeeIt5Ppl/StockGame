@@ -1240,6 +1240,17 @@ class Frontend: # This will be where a bot (like discord) interacts
         self.be.update_user(user_id=owner_user_id, permissions=288)
         self.owner_id = int(owner_user_id)
     
+    def get_user(self, user_id: int):
+        """Get a single user
+
+        Args:
+            user_id (int): User ID.
+
+        Returns:
+            dict: User information.
+        """
+        return self.be.get_user(user_id=user_id)
+
     def _user_owns_game(self, user_id:int, game_id:int): # Check if a user owns a specific game
         """Check whether a user owns a specific game
 
