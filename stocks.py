@@ -1202,7 +1202,7 @@ class GameLogic: # Might move some of the control/running actions here
             stock = yf.Ticker(ticker)
             try:
                 info = stock.info
-                if info["country"] != "United States":
+                if "country" in info and info["country"] != "United States":
                     raise ValueError("Unable to find stock") # US Stocks only
             except AttributeError: # If stock isn't valid, an attribute error should be raised
                 info = [] # Set list to 0 length so error is thrown
