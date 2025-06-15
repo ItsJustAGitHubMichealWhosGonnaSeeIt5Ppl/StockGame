@@ -1348,11 +1348,14 @@ class Frontend: # This will be where a bot (like discord) interacts
             self.logger.info(f'User with ID {user_id} already exists.')
             pass #TODO log
         
+        
 
         try:  # Create game
+            if not name.isalnum():
+                raise ValueError("Name must be alphanumeric!")
             self.be.add_game(
                 user_id=user_id,
-                name=self.clean_text(name)[:35], # Limit to 35
+                name=self.clean_text(name),
                 start_date=start_date,
                 end_date=end_date,
                 starting_money=starting_money,
