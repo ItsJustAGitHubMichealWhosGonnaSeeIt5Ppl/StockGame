@@ -51,7 +51,7 @@ intents.members = True
 # intents.dm_messages = True # for invite user command
 
 # Testing variables
-ephemeral_test = False # Set to False for testing, True for production
+ephemeral_test = True # Set to False for testing, True for production
 name_cutoff = 25 # Cut names off at 25 characters
 
 # Logger thing
@@ -693,7 +693,7 @@ async def user_stats(
         embed.add_field(name="Total wins:", value=user_stats.overall_wins)
         embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
         embed.color = discord.Color.blue()
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
     except LookupError:
         embed = discord.Embed(title="User not found", description="User does not exist in our system!")
         embed.color = discord.Color.red()
@@ -1150,9 +1150,13 @@ async def update_game(
 async def about(
     interaction: discord.Interaction,
 ):
-    embed = discord.Embed(title="About the bot", description="StockBot is a discord bot that simulates the purchase of stocks and runs them in a gamified format. Originally built for the Lemonade Stand community. [Repository Link](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame)")
-    embed.add_field(name="Creators", value="Epicsadface: Project Leader, Coordinated Strategic Management Lead, Frontend Dev, Backend Dev, gave the idea for the about command\nnje331: Frontend Dev, Bot Dev, made really big bot commits\nPranav: Bot Dev, made the about command, strategy consultant")
-    embed.add_field(name="Special Thanks", value="dibibaguette: Gave the idea\ntobsi: Chaotic Project Tester")
+    creators = "<@163784331804934144>: Project Leader, Coordinated Strategic Management Lead, Frontend Dev, Backend Dev, gave the idea for the about command" \
+    "\n<@329374393715392520>: Frontend Dev, Bot Dev, made really big bot commits" \
+    "\n<@1240817181692792934>: Bot Dev, made the about command, strategy consultant"
+
+    embed = discord.Embed(title="About the bot", description="[StockBot](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame) is a discord bot that simulates the purchase of stocks and runs them in a gamified format. Originally built for the Lemonade Stand community.")
+    embed.add_field(name="Creators", value=creators)
+    embed.add_field(name="Special Thanks", value="<@394012218729168907>: Gave the idea\n<@204414583203430400>: Chaotic Project Tester")
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
