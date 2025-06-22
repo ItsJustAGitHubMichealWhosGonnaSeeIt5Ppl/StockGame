@@ -1,12 +1,7 @@
 # DISCORD Bot
 # SOME AI USED
-# TODO add an invite user command? would be sent to DMs
 # TODO set up some sort of draft system for stocks
-# TODO should i add a command to show game info to all with join button?
-# TODO add error handling via discord
 # TODO add help command
-
-# should i rename the commands? my-games and my-stocks are a bit annoying to type
 
 # BUILT-IN
 from datetime import datetime, timedelta
@@ -23,7 +18,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 # LOCAL
-from helpers.views import Pagination
+from helpers.datatype_validation import GameLeaderboard
+from helpers.views import Pagination, LeaderboardImageGenerator, StockPortfolioImageGenerator
 import helpers.autocomplete as ac
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
@@ -129,6 +125,7 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}") #TODO should this be higher severity?
 
+
 # GAME INTERACTION RELATED
 
 # TODO can i make parameters required? if not, add (optional) to the description
@@ -190,7 +187,6 @@ async def create_game_advanced(
 
 # this code is a complete mess at the moment, trying to get it to work my way but it is taking more time than it's worth
 # THIS ITERATION IS WORKING IN THE CURRENT STATE
-# TODO edit for new parameters
 @bot.tree.command(name="create-game", description="Guided setup for stock game creation")
 async def create_game(interaction: discord.Interaction):
     # Create the initial embed
@@ -684,21 +680,24 @@ async def user_stats(
     interaction: discord.Interaction,
     user: discord.User | None
 ):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     try:
         discord_user: discord.User | discord.Member = user if user else interaction.user
+        user_title = f"{discord_user.display_name}{f' ({discord_user.name})' if discord_user.display_name != discord_user.name else ''}"
+        
         user_stats = fe.get_user(discord_user.id)
-        embed = discord.Embed(title=f"{discord_user.display_name} ({discord_user.name})", description="Global Statistics")
+
+        embed = discord.Embed(title=user_title, description="Global Statistics")
         embed.set_thumbnail(url=discord_user.display_avatar)
         embed.add_field(name="Total wins:", value=user_stats.overall_wins)
         embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
         embed.color = discord.Color.blue()
+
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
     except LookupError:
         embed = discord.Embed(title="User not found", description="User does not exist in our system!")
         embed.color = discord.Color.red()
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-
 
 #TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
@@ -712,6 +711,8 @@ async def invite_user(
     game_id: int,
     user: discord.User
 ):
+    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
+
     invite_embed = discord.Embed(
         title="Game Invite",
         description=f"You have been invited to game #{game_id} by {interaction.user.display_name}.",
@@ -777,7 +778,7 @@ async def invite_user(
             color=discord.Color.blue()
         )
     
-        await interaction.response.send_message(
+        await interaction.followup.send(
             content=f"Invite sent to {user.mention}.",
             embed=invite_response_embed,
             ephemeral=ephemeral_test
@@ -792,10 +793,20 @@ async def invite_user(
             color=discord.Color.blue()
         )
         
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=invite_response_embed,
             ephemeral=ephemeral_test
         )
+
+    except Exception as e:
+        logger.exception(f'User: {interaction.user.id} tried to invite user: {user.id} to game: {game_id}. Error: {e}')
+        error_embed = discord.Embed(
+            title="Invite Failed",
+            description=f"An unexpected error occurred while trying to invite {user.mention} to game #{game_id}.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=error_embed, ephemeral=ephemeral_test)
+
 
 # STOCK RELATED
 
@@ -810,7 +821,7 @@ async def buy_stock(
     game_id: int, 
     ticker: str
 ):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     status = 'failed' # Start with failed status
     title = 'Stock Purchase Failed'
     try:
@@ -904,9 +915,8 @@ async def remove_stock(
     await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
 # TODO Add buttons for buying/selling stocks?
-# TODO Add pagination if there are many stocks (10+)
 # TODO Add last updated date/time in footer
-@bot.tree.command(name="my-stocks", description="View your stocks in a game")
+@bot.tree.command(name="my-stocks", description="View your stocks in a game as a visual portfolio")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game"
@@ -916,133 +926,206 @@ async def my_stocks(
     game_id: int
 ):
     user_id = interaction.user.id
+    await interaction.response.defer(ephemeral=ephemeral_test)
     
-    picks_table = ['| Stock |  Price  | Shares |  Value  |  $Gain  | %Gain |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
-    # EXAMPLE LINE:            | AAPLE | $10,000 | 10,000 | $10,000 | $10,000 | 1000% |
-    status = 'failed' # Default to failed
-    title = 'Failed to get stocks'
-    description = ''
     try:
         picks = fe.my_stocks(user_id, game_id)
         
-        row_template = '| {stock} | {price} | {shares} | {value} | {d_gain} | {p_gain} |'
-        for pick in picks: #TODO Do we want to limit how many stocks show here?
-            #TODO this could be simplified if we only wanted to show the active stocks!
-            if pick.status == 'owned': # Prevent null values
-                assert pick.current_value != None
-                assert pick.shares != None
-                share_price = str('$'+ format(float(pick.current_value / pick.shares), ','))[:7] # Cut it off at 7, although this is a very bad solution long term...
-
-            else:
-                share_price = 'NA'
-                
-            picks_table.append(row_template.format(
-                stock = str(pick.stock_ticker).center(5),
-                price = share_price.center(7),
-                shares = (str(round(pick.shares, 2)) if pick.shares else 'N/A').center(6),
-                value = (str('$'+ format(round(pick.current_value, 2), ','))[:7] if pick.current_value else 'N/A').center(7),
-                d_gain = (str('$'+ format(round(pick.change_dollars, 2), ','))[:7] if pick.change_dollars else 'N/A').center(7),
-                p_gain = (str(format(round(pick.change_percent, 2))+ '%')[:5] if pick.change_percent else 'N/A').center(5),
-            ))
-
-        title = f'{interaction.user.display_name}\'s picks for game {fe._get_game_name(game_id=game_id)[:name_cutoff]}({game_id})' # Maximum name length is now 25
-        status = 'success'
+        # Prepare data for image generator
+        user_data = {
+            'display_name': interaction.user.display_name,
+            'user_id': user_id
+        }
         
-    except DoesntExistError as e: # Raised when player is not in the game
-        description=f'You are not currently participating in this game. You can try to join it using the join-game command.'
-    
-    except LookupError as e: # No stocks were even returned
-        description = f'You don\'t currently have any stocks in game: {game_id}' 
+        game_data = {
+            'name': fe._get_game_name(game_id=game_id),
+            'id': game_id
+        }
         
-    except Exception as e: # Other errors
-        description=f"There was an error while fetching your stocks.\n{e}"
-        logger.exception(f'User: {interaction.user.id} tried to list their stocks in game: {game_id}. Error: {e}')
-        description=f'An unexpected error ocurred while trying to load your stocks\nReport this! Game: {game_id}'
-    embed = simple_embed(status=status, title=title, desc=description)
-    
-    
-    if status == 'success': # add stock picks
-        if len(picks_table) > 15:
-            await Pagination(interaction=interaction, page_len=15, embed=embed, games=picks_table, mode='codeblock', ephemeral=ephemeral_test).navigate()
-        else:   
-            embed.add_field(name='Picks', value='```{stocks}```'.format(stocks='\n'.join(picks_table))) # Show only 15 stocks #TODO add pagination
-    
-    if not len(picks_table) > 15 or status != 'success': # Only run this if it failed or there are only 15 stocks
+        # Convert pick objects to dictionaries
+        stock_picks = []
+        for pick in picks:
+            stock_dict = {
+                'stock_ticker': pick.stock_ticker,
+                'status': pick.status,
+                'shares': pick.shares,
+                'current_value': pick.current_value,
+                'change_dollars': pick.change_dollars,
+                'change_percent': pick.change_percent
+            }
+            stock_picks.append(stock_dict)
+        
+        # Generate image
+        generator = StockPortfolioImageGenerator(theme='discord_dark')
+        image_buffer = generator.create_portfolio_image(user_data, game_data, stock_picks)
+        
+        # Create Discord file
+        file = discord.File(image_buffer, filename=f"portfolio_{user_id}_{game_id}.png")
+        
+        # Send image with a simple message
+        await interaction.followup.send(
+            file=file,
+            ephemeral=ephemeral_test
+        )
+        
+    except DoesntExistError:
+        embed = simple_embed(
+            status='failed', 
+            title='Not in Game',
+            desc='You are not currently participating in this game. You can try to join it using the join-game command.'
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        
+    except LookupError:
+        embed = simple_embed(
+            status='failed',
+            title='No Stocks Found', 
+            desc=f'You don\'t currently have any stocks in game: {game_id}'
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        
+    except Exception as e:
+        logger.exception(f'User: {interaction.user.id} tried to generate portfolio image for game: {game_id}. Error: {e}')
+        embed = simple_embed(
+            status='failed',
+            title='Error Generating Portfolio',
+            desc='An unexpected error occurred while generating your portfolio image'
+        )
         await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 
-# GAME INFO RELATED
+# GAME INFO RELATED-
 
-# TODO Add join game button to game info embed
-# TODO frontend: change to show only public games
 @bot.tree.command(name="game-info", description="View information about a game")
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
     show_leaderboard="Whether to display the leaderboard or not, will by default"
 )
 async def game_info(
-    interaction: discord.Interaction, 
+    interaction: discord.Interaction,
     game_id: int,
     show_leaderboard: bool = True
 ):
+    await interaction.response.defer(ephemeral=ephemeral_test)
+    
     try:
-        game_info = fe.game_info(game_id, show_leaderboard=True) #Leaderboard is required to set the members participating
-        game = game_info.game
-        assert isinstance(game_info.leaderboard, list)
-        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(owner_id=game.owner_id,
+        game_info_obj = fe.game_info(game_id, show_leaderboard=True)
+        game = game_info_obj.game
+        assert isinstance(game_info_obj.leaderboard, list)
+        
+        # Basic embed for game info
+        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(
+            owner_id=game.owner_id,
             pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
             start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-            date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-            participants=f'> **Participants:** `{len(game_info.leaderboard)}`' #members ' + str('participating' if  game['status'] != 'ended' else 'participated')
-            )
+            date_range='> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
+            participants=f'> **Participants:** `{len(game_info_obj.leaderboard)}`'
+        )
+        
         embed = discord.Embed(
-            title=f'{game.name[:name_cutoff]} ({game.id})', 
-            description=description_str,
-            )
+            title=f'{game.name} ({game.id})',
+            description=description_str
+        )
         embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
-
+        
         if not show_leaderboard:
             await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
             return
         
-        lb_limit = 10 # Amount of users to show '🏆'
-        leaderboard_info = game_info.leaderboard[:lb_limit] # Only include top 10
-        pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']  #+ [x+4 for x in range(lb_limit-3)] if emojis cause problems
+        # Limit leaderboard to top 10
+        # lb_limit = 10
+        leaderboard_info: list[GameLeaderboard] = game_info_obj.leaderboard#[:lb_limit]
         
-        ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |'] # Max codeblock line length: 56, This should be EXACTLY 56 charaters
-        newstr = '| 🏆 |    Investor    |   Holdings   |  $Gain  | %Gain |'
-        leaderboard_block = '```\n{ldrbrd_linees}\n```'
-        row_template = '| {pos} | {user} | {value} | {date} |'
-        for rank, info in enumerate(leaderboard_info):
-            try: # Try to get username
-                member = await interaction.guild.fetch_member(info.user_id) # Set display name
-                if len(member.display_name) <= 16: # Server displayname
-                    user= str(member.display_name)
-                elif len(member.global_name) <= 16: # Globbal display
-                    user= str(member.global_name)
-                elif len(member.name) <= 16: # Username
-                    user= str(member.global_name)
+        # Fetch user display names and prepare data for image
+        processed_leaderboard = []
+        for info in leaderboard_info:
+            player_data = {
+                'user_id': info.user_id,
+                'current_value': info.current_value,
+                'joined': info.joined,
+                'change_dollars': info.change_dollars,
+                'change_percent': info.change_percent
+            }
+            
+            try:
+                member = await interaction.guild.fetch_member(info.user_id)
+                if len(member.display_name) <= 16:
+                    display_name = member.display_name
+                elif len(member.global_name or "") <= 16:
+                    display_name = member.global_name
+                elif len(member.name) <= 16:
+                    display_name = member.name
                 else:
-                    user = str(member.global_name)[:15] + '~' # Name is just too long, give up
-                
-            except discord.errors.NotFound: # User doesn't exist
-                user = f'ID({info.user_id})'
-            ldrbrd_lines.append(row_template.format( # Create rows
-                pos=pos[rank],
-                user=user.center(16),
-                value= str('$'+ format(float(info.current_value), ',')).center(15),
-                date= f'{datetime.strftime(info.joined, "%Y-%m-%d")[:10]}' # Manually centering I guess
-            ))
-        embed.add_field(name="Leaderboard", value=leaderboard_block.format(ldrbrd_linees='\n'.join(ldrbrd_lines)))
-    except LookupError:
-        embed = simple_embed(status='failed', title='Failed to get info', desc=f'Game with ID {game_id} does not exist.')
+                    display_name = (member.global_name or member.name)[:15] + "~"
+                player_data['display_name'] = display_name
+            except discord.errors.NotFound:
+                player_data['display_name'] = f'ID({info.user_id})'
+            
+            processed_leaderboard.append(player_data)
         
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        # Create the leaderboard image using the new class
+        try:
+            # Prepare game data for image generation
+            game_data = {
+                'name': game.name,
+                'id': game.id,
+                'owner': game.owner_id,
+                'starting_money': game.start_money,
+                'start_date': str(game.start_date),
+                'end_date': str(game.end_date) if game.end_date else None,
+                'status': game.status
+            }
+            
+            # Add owner name to game data for the image
+            try:
+                owner_member = await interaction.guild.fetch_member(game.owner_id)
+                game_data['owner_name'] = owner_member.display_name or owner_member.global_name or owner_member.name
+            except:
+                game_data['owner_name'] = f'ID({game.owner_id})'
+            
+            generator = LeaderboardImageGenerator(theme='discord_dark')
+            image_buffer = generator.create_leaderboard_image(game_data, processed_leaderboard)
+            
+            # Create Discord file from buffer
+            file = discord.File(image_buffer, filename="leaderboard.png")
+            
+            # Send embed with image
+            embed.set_image(url="attachment://leaderboard.png")
+            await interaction.followup.send(embed=embed, file=file, ephemeral=ephemeral_test)
+            
+        except Exception as e:
+            # Fallback to text-based leaderboard if image generation fails
+            print(f"Image generation failed: {e}")
+            
+            # Your original markdown table code as fallback
+            pos = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+            ldrbrd_lines = ['| 🏆 |     Investor     |    Portfolio    |   Joined   |']
+            row_template = '| {pos} | {user} | {value} | {date} |'
+            
+            for rank, player_data in enumerate(processed_leaderboard):
+                ldrbrd_lines.append(row_template.format(
+                    pos=pos[rank] if rank < len(pos) else f'{rank+1}️⃣',
+                    user=player_data['display_name'].center(16),
+                    value=str('$' + format(float(player_data["current_value"]), ',')).center(15),
+                    date=f'{datetime.strftime(player_data["joined"], "%Y-%m-%d")[:10]}'
+                ))
+            
+            leaderboard_block = '```\n{}\n```'.format('\n'.join(ldrbrd_lines))
+            embed.add_field(name="Leaderboard", value=leaderboard_block, inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+            
+    except Exception as e:
+        # Handle case where game doesn't exist
+        embed = discord.Embed(
+            title='Failed to get info',
+            description=f'Game with ID {game_id} does not exist or an error occurred.',
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
-#TODO max page length cant be more than 25
+# TODO max page length cant be more than 25
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
     page_length="The length of the list per page. Defaults to 9"
@@ -1085,7 +1168,6 @@ async def game_list(
     if error:
         await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-
 @bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
 async def my_games(
     interaction: discord.Interaction
@@ -1123,7 +1205,7 @@ async def update_game(
     interaction: discord.Interaction, 
     # game_id: int, - NOT IMPLEMENTED IN force_update
 ):
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     embed = discord.Embed()
     try:
         fe.force_update(

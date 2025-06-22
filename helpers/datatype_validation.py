@@ -149,6 +149,8 @@ class GameLeaderboard(BaseModel):
     user_id: int
     current_value: float
     joined: datetime
+    change_dollars: float
+    change_percent: float
 
 class GameInfo(BaseModel):
     game: Game
