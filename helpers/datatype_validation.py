@@ -13,6 +13,7 @@ ParticipantStatus = Literal['pending', 'active', 'inactive']
 PickStatus = Literal['pending_buy', 'owned', 'pending_sell', 'sold']
 UpdateFrequency = Literal['daily', 'hourly', 'minute', 'realtime']
 PydanticModelType = TypeVar('PydanticModelType', bound=BaseModel)
+GameTemplateStatus = Literal['enabled', 'disabled']
 
 
 class Status(BaseModel): # Status item
@@ -41,6 +42,7 @@ Users = TypeAdapter(list[User])
 # Game
 class Game(BaseModel):
     id: int = Field(validation_alias=AliasChoices('game_id'))
+    template_id: Optional[int] = None
     name: str = Field(max_length=35, min_length=1) # Prevent blank names
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
     start_money: PositiveFloat 
@@ -67,6 +69,35 @@ class Game(BaseModel):
 
 Games = TypeAdapter(list[Game])
 
+# Game Template
+
+
+class GameTemplate(BaseModel):
+    id: int = Field(validation_alias=AliasChoices('game_id'))
+    name: str = Field(max_length=35, min_length=1, validation_alias=AliasChoices('game_name')) # Prevent blank names
+    status: GameTemplateStatus
+    owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
+    start_money: PositiveFloat 
+    pick_count: PositiveInt
+    pick_date: Optional[date] = None # YYYY-MM-DD
+    draft_mode: bool = False
+    private_game: bool = False
+    allow_selling: bool = False
+    update_frequency: UpdateFrequency = 'daily'
+    start_date: date # YYYY-MM-DD
+    create_days_in_advance: int
+    recurring_period: int
+    game_length: int
+    datetime_created: datetime # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = None # YYYY-MM-DD HH:MM:SS
+
+    @field_validator('name') 
+    def game_name(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError('Game name must not be blank.')
+        return value
+
+GameTemplates = TypeAdapter(list[GameTemplate])
 
 # Stock
 class Stock(BaseModel):

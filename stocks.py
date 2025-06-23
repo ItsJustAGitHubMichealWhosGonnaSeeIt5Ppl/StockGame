@@ -6,6 +6,7 @@ import re
 from typing import Optional, Type
 
 # EXTERNAL
+from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 from pydantic import TypeAdapter
 from pydantic import ValidationError
@@ -518,6 +519,54 @@ class Backend:
             for game in resp.result: # Go through games and try to fix them
                 self.get_game(game['game_id']) 
     
+    # # GAME TEMPLATE ACTIONS # #
+    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+        #TODO support basic variables in the game name
+        if start_date and not self._validate_date(start_date):
+            raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
+        
+        items = {
+            'game_name': name,
+            'owner_user_id': user_id,
+            'start_money': starting_money,
+            'pick_count': total_picks,
+            'draft_mode': exclusive_picks,
+            'pick_date': pick_date,
+            'private_game': private_game,
+            'allow_selling': sell_during_game,
+            'update_frequency': update_frequency.lower() if update_frequency else None, # Make sure its lowercase
+            'start_date': start_date,
+            'game_length': game_length,  # is this needed?, no but I like it.
+            'recurring_period': recurring_period,
+            'create_days_in_advance': create_days_in_advance,
+            'datetime_created': _iso8601()
+            }
+
+        resp = self.sql.insert(table='game_templates', items=items)
+        if resp.status != 'success': #TODO errors
+            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'games.name':
+                raise bexc.AlreadyExistsError(table='game_templates', duplicate=name, message='Cannot add multiple games with the same name')
+
+            raise Exception(f'Failed to add game.', resp) 
+        
+    def get_game_template(self, template_id:int):
+        #TODO docstring
+        resp = self.sql.get(table='game_template',filters={'template_id': int(template_id)})
+        return self._single_get(model=dtv.GameTemplate, resp=resp)
+    
+    def get_many_game_templates(self, status:Optional[dtv.GameTemplateStatus]) -> tuple[dtv.GameTemplate]:
+        filters = {
+            'status': status
+            }
+        
+        resp = self.sql.get(table='game_templates', filters=filters)
+        templates = self._many_get(typeadapter=dtv.GameTemplates, resp=resp)
+        return templates
+    
+    def update_game_template(self):
+        #TODO create
+        pass
+    
     # # STOCK ACTIONS # #
     def add_stock(self, ticker:str, exchange:str, company_name:str):
         """Add a stock
@@ -981,6 +1030,47 @@ class GameLogic: # Might move some of the control/running actions here
         total_offset = (0 -local_offset_hours if local_offset == 'ahead'  else +local_offset_hours) + (0 -market_offset_hours if market_offset == 'ahead'  else +market_offset_hours)
         return total_offset
     
+    def recurring_games(self): # Check and create recurring games
+        
+        today = datetime.today() # Current date
+        start_of_month = today + relativedelta(months=1, day =1) # The 1st of the next month
+        str_start_month = datetime.strftime(start_of_month, '%Y-%m-%d') # TODO just let add_game accept datetime
+        end_of_month = start_of_month + relativedelta(months=1, days=-1) #The last of the month (IDK if there is another way to get)
+        days_untl_nxt_mnth: timedelta = start_of_month - today # How many days until the next month
+        
+        templates = self.be.get_many_game_templates(status='enabled') # Game templates
+        
+        for template in templates:
+
+            if days_untl_nxt_mnth.days <= create_days_before: # Game should be created
+                exists = False 
+                self.logger.debug(f'Trying to create game "{template.name}".')
+                existing_games = be.get_many_games(name=template.name, owner_id=OWNER) # Get existing open and active games to avoid creaating the same game twice # TODO find a better way to track this
+                for game in existing_games: 
+                    if game.start_date == start_of_month and game.end_date and game.end_date == end_of_month: # TODO does this actually work
+                        self.logger.warning(f'Game "{template.name}" not created.  Found game ID({game.id}) with the same name, start date, and end date.')
+                        exists = True
+                if not exists:
+                    try:
+                        self.be.add_game(
+                            user_id=int(template.owner_id), #STOP COMPLAINING (ok it was complaining before I swear)
+                            name=template.name.format(date=datetime.strftime(start_of_month, '%b/%Y')),
+                            start_date=str_start_month,
+                            end_date=datetime.strftime(end_of_month, '%Y-%m-%d'),
+                            starting_money=template.start_money,
+                            pick_date='0',
+                            private_game=template.private_game,
+                            total_picks=template.pick_count,
+                            exclusive_picks=template.draft_mode,
+                            sell_during_game=template.allow_selling,
+                            update_frequency=template.update_frequency
+                            )
+                        self.logger.debug(f'Created game "{template.name}".')
+                    except Exception as e: #TODO errors
+                        self.logger.exception(f'Error when creating game "{template.name}".', exc_info=e)
+                        raise Exception(f'An unexpected error occurred while trying to create game "{template.name}"', e)
+            else:
+                self.logger.debug(f'Game "{template.name}" not created.  {days_untl_nxt_mnth} days until the start of next month.  Game are set to be created with {template.create_days_in_advance} days or less until the next month.')
     def update_game_statuses(self):
         """Update game statuses
         

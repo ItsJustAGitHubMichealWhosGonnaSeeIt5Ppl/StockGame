@@ -122,6 +122,10 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
             else:
                 raise Exception('An unexpected error occurred while trying to upgrade from v0.0.4b2', send)
     
+    
+    elif db_ver in ['0.0.4b3'] or force_upgrade: # Upgrade to version 0.0.5
+        pass
+        
     # Set the current version
     upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': current_ver, 'last_updated': _iso8601()})
     if upd.status !='success':
@@ -131,7 +135,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
 def create(db_name:str, upgrade:bool=True):
     """Create database and upgrade older databases to the current version
     
-    Version: 0.0.4b3
+    Version: 0.0.5
 
     Args:
         db_name (str): Database name
@@ -139,6 +143,18 @@ def create(db_name:str, upgrade:bool=True):
     
     
     # Changelog
+    
+    ## [0.0.5] - 2025-06-23
+    
+    ### Added
+    - Game templates table
+
+    ### Fixed
+
+    ### Changed
+    - Added `template_id` column to games table for tracking recurring games
+
+    ### Removed
     
     ## [0.0.4b3] - 2025-06-10
     
@@ -231,7 +247,8 @@ def create(db_name:str, upgrade:bool=True):
 
     cursor.execute("""CREATE TABLE IF NOT EXISTS game_templates (
         template_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        game_name TEXT NOT NULL UNIQUE,
+        game_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'enabled',               -- Whether to create the game or not
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
         pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
@@ -241,15 +258,11 @@ def create(db_name:str, upgrade:bool=True):
         allow_selling BOOLEAN DEFAULT 0,                      -- When enabled, users can sell mid-game
         update_frequency TEXT NOT NULL DEFAULT 'daily',       -- How often a game should be updated 'daily', 'hourly', 'minute', 'realtime' REALTIME WILL BE BUGGY
         start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD). Everything else will be calculated off of this first creation date
-        status TEXT NOT NULL DEFAULT 'open',                  -- Game status ('open', 'active', 'ended')
-        aggregate_value REAL,                                 -- Combined value of all users
-        change_dollars REAL DEFAULT NULL,
-        change_percent REAL DEFAULT NULL,
         create_days_in_advance INTEGER NOT NULL DEFAULT 0,    -- How many days before the start should it be created
         recurring_period INTEGER NOT NULL DEFAULT 1,          -- How often should the game be created (in months)
         game_length INTEGER DEFAULT 1,                        -- How many months should the game last. 0 = infinite game
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-        datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
         );""")
