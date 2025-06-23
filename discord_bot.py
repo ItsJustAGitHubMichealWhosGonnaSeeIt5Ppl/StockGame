@@ -107,6 +107,178 @@ def simple_embed(status:str, title:str, desc:Optional[str]=None):
         color= discord.Color.green() if status == 'success' else discord.Color.red()
     )
 
+# Process pending users helper
+async def process_pending_user(interaction: discord.Interaction, game_id: int, pending_users: list, current_index: int):
+    """Process a single pending user with approve/deny buttons"""
+    
+    if current_index >= len(pending_users):
+        # All users processed
+        embed = discord.Embed(
+            title="All Pending Users Processed",
+            description=f"You have processed all pending users for game #{game_id}.",
+            color=discord.Color.green()
+        )
+        await interaction.edit_original_response(embed=embed, view=None)
+        return
+    
+    current_user = pending_users[current_index]
+    user_id = current_user.user_id
+    
+    # Try to get user display name
+    try:
+        user = await interaction.client.fetch_user(user_id)
+        user_display = f"{user.display_name} ({user.name})" if user.display_name != user.name else user.name
+        user_mention = user.mention
+    except:
+        user_display = f"User ID: {user_id}"
+        user_mention = f"<@{user_id}>"
+    
+    # Create embed for current pending user
+    embed = discord.Embed(
+        title=f"Pending User Approval ({current_index + 1}/{len(pending_users)})",
+        description=f"**User:** {user_display}\n**User ID:** {user_id}\n**Game:** #{game_id}",
+        color=discord.Color.orange()
+    )
+    embed.set_footer(text=f"Processing user {current_index + 1} of {len(pending_users)}")
+    
+    # Create approve/deny buttons
+    approve_button = discord.ui.Button(
+        label="Approve",
+        style=discord.ButtonStyle.success,
+        emoji="✅"
+    )
+    
+    deny_button = discord.ui.Button(
+        label="Deny",
+        style=discord.ButtonStyle.danger,
+        emoji="❌"
+    )
+    
+    skip_button = discord.ui.Button(
+        label="Skip",
+        style=discord.ButtonStyle.secondary,
+        emoji="⏭️"
+    )
+    
+    cancel_button = discord.ui.Button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+        emoji="🚫",
+        custom_id="cancel"
+    )
+    
+    view = discord.ui.View()
+    view.add_item(approve_button)
+    view.add_item(deny_button)
+    view.add_item(skip_button)
+    view.add_item(cancel_button)
+    
+    # Button callbacks
+    async def approve_callback(button_interaction: discord.Interaction):
+        try:
+            # Approve the user
+            fe.approve_game_users(
+                user_id=interaction.user.id,
+                game_id=game_id,
+                approved_user_id=user_id
+            )
+            
+            # Try to notify the approved user
+            try:
+                game_name = fe._get_game_name(game_id=game_id)
+                approval_embed = discord.Embed(
+                    title="Game Approval",
+                    description=f"You have been approved to join the game '{game_name}' (#{game_id})!",
+                    color=discord.Color.green()
+                )
+                await user.send(embed=approval_embed)
+                notification_status = "✉️ User notified"
+            except:
+                notification_status = "⚠️ Could not notify user (DMs disabled)"
+            
+            # Show confirmation and move to next user
+            success_embed = discord.Embed(
+                title="User Approved",
+                description=f"✅ {user_display} has been approved for game #{game_id}.\n{notification_status}",
+                color=discord.Color.green()
+            )
+            await button_interaction.response.edit_message(embed=success_embed, view=None)
+            
+            # Wait a moment then process next user
+            import asyncio
+            await asyncio.sleep(1.5)
+            await process_pending_user(interaction, game_id, pending_users, current_index + 1)
+            
+        except Exception as e:
+            logger.exception(f'Failed to approve user {user_id} for game {game_id}. Error: {e}')
+            error_embed = discord.Embed(
+                title="Approval Failed",
+                description=f"❌ Failed to approve {user_display}.\nError: {e}",
+                color=discord.Color.red()
+            )
+            await button_interaction.response.edit_message(embed=error_embed, view=None)
+    
+    async def deny_callback(button_interaction: discord.Interaction):
+        try:
+            # Remove the user from pending (deny them)
+            participant_id = fe._participant_id(user_id=user_id, game_id=game_id)
+            fe.be.remove_participant(participant_id=participant_id)
+            
+            # Show confirmation and move to next user
+            deny_embed = discord.Embed(
+                title="User Denied",
+                description=f"❌ {user_display} has been denied access to game #{game_id}.",
+                color=discord.Color.red()
+            )
+            await button_interaction.response.edit_message(embed=deny_embed, view=None)
+            
+            # Wait a moment then process next user
+            import asyncio
+            await asyncio.sleep(1.5)
+            await process_pending_user(interaction, game_id, pending_users, current_index + 1)
+            
+        except Exception as e:
+            logger.exception(f'Failed to deny user {user_id} for game {game_id}. Error: {e}')
+            error_embed = discord.Embed(
+                title="Denial Failed",
+                description=f"❌ Failed to deny {user_display}.\nError: {e}",
+                color=discord.Color.red()
+            )
+            await button_interaction.response.edit_message(embed=error_embed, view=None)
+    
+    async def skip_callback(button_interaction: discord.Interaction):
+        skip_embed = discord.Embed(
+            title="User Skipped",
+            description=f"⏭️ Skipped {user_display}. They will remain pending.",
+            color=discord.Color.blue()
+        )
+        await button_interaction.response.edit_message(embed=skip_embed, view=None)
+        
+        # Wait a moment then process next user
+        import asyncio
+        await asyncio.sleep(1.5)
+        await process_pending_user(interaction, game_id, pending_users, current_index + 1)
+    
+    async def cancel_callback(button_interaction: discord.Interaction):
+        cancel_embed = discord.Embed(
+            title="Process Cancelled",
+            description=f"Pending user management cancelled. Remaining users are still pending.",
+            color=discord.Color.orange()
+        )
+        await button_interaction.response.edit_message(embed=cancel_embed, view=None)
+    
+    # Set callbacks
+    approve_button.callback = approve_callback
+    deny_button.callback = deny_callback
+    skip_button.callback = skip_callback
+    cancel_button.callback = cancel_callback
+    
+    # Send or edit the message
+    if current_index == 0:
+        await interaction.edit_original_response(embed=embed, view=view)
+    else:
+        await interaction.edit_original_response(embed=embed, view=view)
+
 bot = commands.Bot(command_prefix="$", intents=intents)
 logger.info(f'Connecting with DB: {DB_NAME}')
 fe = Frontend(database_name=DB_NAME, owner_user_id=int(OWNER), source='discord') # Frontend
@@ -807,6 +979,52 @@ async def invite_user(
         )
         await interaction.followup.send(embed=error_embed, ephemeral=ephemeral_test)
 
+@bot.tree.command(name="manage-pending", description="Approve or deny pending users for your private game")
+@app_commands.autocomplete(game_id=ac.owner_games_autocomplete)
+@app_commands.describe(
+    game_id="ID of the game to manage pending users for"
+)
+async def manage_pending(
+    interaction: discord.Interaction,
+    game_id: int
+):
+    await interaction.response.defer(ephemeral=ephemeral_test)
+    
+    try:
+        # Get pending users for the game
+        pending_users = fe.pending_game_users(
+            user_id=interaction.user.id,
+            game_id=game_id
+        )
+        
+        if not pending_users:
+            embed = discord.Embed(
+                title="No Pending Users",
+                description=f"There are no pending users for game #{game_id}.",
+                color=discord.Color.blue()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+            return
+        
+        # Start the approval process with the first pending user
+        await process_pending_user(interaction, game_id, list(pending_users), 0)
+        
+    except PermissionError:
+        embed = discord.Embed(
+            title="Permission Denied",
+            description="You don't have permission to manage pending users for this game.",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+    except Exception as e:
+        logger.exception(f'User: {interaction.user.id} failed to get pending users for game {game_id}. Error: {e}')
+        embed = discord.Embed(
+            title="Error",
+            description=f"An unexpected error occurred while getting pending users.\n{e}",
+            color=discord.Color.red()
+        )
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+ 
 
 # STOCK RELATED
 

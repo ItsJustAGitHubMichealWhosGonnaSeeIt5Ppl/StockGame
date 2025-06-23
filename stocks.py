@@ -916,7 +916,8 @@ class Backend:
             participant_id (int): Participant ID.
         """
         
-        self._delete_single(table='game_participants', id_column='participant_id', item_id=participant_id)
+        # is this participant_id or participation_id?
+        self._delete_single(table='game_participants', id_column='participation_id', item_id=participant_id)
         
   
 class GameLogic: # Might move some of the control/running actions here
