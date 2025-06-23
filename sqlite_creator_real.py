@@ -229,12 +229,37 @@ def create(db_name:str, upgrade:bool=True):
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
 
+    cursor.execute("""CREATE TABLE IF NOT EXISTS game_templates (
+        template_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_name TEXT NOT NULL UNIQUE,
+        owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
+        start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
+        pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
+        pick_date TEXT DEFAULT NULL,                          -- Date that picks must be in by.  If NULL, players can join at anytime
+        draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game.  Pick date must be on or before start date to allow this
+        private_game BOOLEAN DEFAULT 0,                       -- When enabled, players must be approved to join.
+        allow_selling BOOLEAN DEFAULT 0,                      -- When enabled, users can sell mid-game
+        update_frequency TEXT NOT NULL DEFAULT 'daily',       -- How often a game should be updated 'daily', 'hourly', 'minute', 'realtime' REALTIME WILL BE BUGGY
+        start_date TEXT NOT NULL,                             -- Game start date ISO8601 (YYYY-MM-DD). Everything else will be calculated off of this first creation date
+        status TEXT NOT NULL DEFAULT 'open',                  -- Game status ('open', 'active', 'ended')
+        aggregate_value REAL,                                 -- Combined value of all users
+        change_dollars REAL DEFAULT NULL,
+        change_percent REAL DEFAULT NULL,
+        create_days_in_advance INTEGER NOT NULL DEFAULT 0,    -- How many days before the start should it be created
+        recurring_period INTEGER NOT NULL DEFAULT 1,          -- How often should the game be created (in months)
+        game_length INTEGER DEFAULT 1,                        -- How many months should the game last. 0 = infinite game
+        datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        
+        FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
+        );""")
     # Games table 
     # TODO descriptions 
     # TODO names don't need to be unique
     # TODO game ID is going to be an alphanumeric string (5 characters to start)
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id DEFAULT NULL,                             -- Track games created from template
         name TEXT NOT NULL UNIQUE,
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
@@ -253,6 +278,7 @@ def create(db_name:str, upgrade:bool=True):
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
+        FOREIGN KEY (template_id) REFERENCES game_templates (template_id)
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
         );""")
     # GAME STATUS OPTIONS
