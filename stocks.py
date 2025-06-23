@@ -1,5 +1,5 @@
 # BUILT-IN
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import logging
 import os
 import re
@@ -252,7 +252,7 @@ class Backend:
     
     
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -277,6 +277,22 @@ class Backend:
         #TODO accept datetime for date fields
         #TODO maybe this should return the game ID
         # Date formatting validation
+        
+        if isinstance(start_date, date): # TODO this might crash idk
+            try:
+                start_date = start_date.strftime('%Y-%m-%d') # Convert date
+            except Exception as e:
+                #TODO find valid errors here
+                raise e
+            
+        if isinstance(end_date, date): # TODO this might crash idk
+            try:
+                start_date = end_date.strftime('%Y-%m-%d') # Convert date
+            except Exception as e:
+                #TODO find valid errors here
+                raise e
+            
+            
         if not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
         if end_date: # Enddate stuff
@@ -1041,24 +1057,23 @@ class GameLogic: # Might move some of the control/running actions here
         templates = self.be.get_many_game_templates(status='enabled') # Game templates
         
         for template in templates:
-
-            if days_untl_nxt_mnth.days <= create_days_before: # Game should be created
-                exists = False 
-                self.logger.debug(f'Trying to create game "{template.name}".')
-                existing_games = be.get_many_games(name=template.name, owner_id=OWNER) # Get existing open and active games to avoid creaating the same game twice # TODO find a better way to track this
-                for game in existing_games: 
-                    if game.start_date == start_of_month and game.end_date and game.end_date == end_of_month: # TODO does this actually work
-                        self.logger.warning(f'Game "{template.name}" not created.  Found game ID({game.id}) with the same name, start date, and end date.')
-                        exists = True
+            
+            exists = False 
+            self.logger.debug(f'Trying to create game "{template.name}".')
+            existing_games = len(self.be.get_many_games(name=template.name, owner_id=OWNER)) # Get existing open and active games to avoid creaating the same game twice # TODO get these by template ID instead
+            next_start_date = template.start_date + relativedelta(months=existing_games + 1) # This is when the next game should be created
+            if (next_start_date - relativedelta(days=template.create_days_in_advance)) <= today: # Game should be created.
+            
+            
                 if not exists:
                     try:
                         self.be.add_game(
                             user_id=int(template.owner_id), #STOP COMPLAINING (ok it was complaining before I swear)
                             name=template.name.format(date=datetime.strftime(start_of_month, '%b/%Y')),
-                            start_date=str_start_month,
-                            end_date=datetime.strftime(end_of_month, '%Y-%m-%d'),
+                            start_date=next_start_date,
+                            end_date=next_start_date + relativedelta(months=template.game_length) if template.game_length != 0 else None,
                             starting_money=template.start_money,
-                            pick_date='0',
+                            pick_date= template.pick_date + relativedelta(months=template.game_length + existing_games)if template.pick_date else None,
                             private_game=template.private_game,
                             total_picks=template.pick_count,
                             exclusive_picks=template.draft_mode,
