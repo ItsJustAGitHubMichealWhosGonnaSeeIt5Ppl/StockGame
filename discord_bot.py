@@ -685,6 +685,124 @@ async def create_game(interaction: discord.Interaction):
     # Set the button callback
     game_creation_wizard_start.callback = game_creation_wizard_start_callback    
 
+@bot.tree.command(name="create-recurring-game", description="Create a recurring game template (Moderator Only)")
+@app_commands.describe(
+    name="Name of the game template",
+    start_date="Start date (YYYY-MM-DD)",
+    recurring_period="Months between recurring games (optional, default: 1)",
+    game_length="How many months should the game last. 0 = infinite game (optional, default: 1)", 
+    create_days_in_advance="How many days before start_date to create the game (optional, default: 7)",
+    starting_money="Starting money for players (optional, default: 10000)",
+    pick_date="Pick deadline in days before start of month. Negative numbers are after start of month. Empty for no pick date (optional)",
+    private_game="Make the game private (optional, default: False)",
+    total_picks="Maximum number of picks per player (optional, default: 10)",
+    exclusive_picks="Enable draft mode - each stock can only be picked once (optional, default: False)",
+    # sell_during_game="Allow selling stocks during the game (optional, default: False)",
+    update_frequency="How often to update game data ('daily', 'hourly') (optional, default: daily)"
+)
+async def create_recurring_game(
+    interaction: discord.Interaction,
+    name: app_commands.Range[str, 1, name_cutoff],
+    start_date: str,
+    recurring_period: app_commands.Range[int, 1, 12] = 1,
+    game_length: int = 1,
+    create_days_in_advance: app_commands.Range[int, 0, 30] = 7,
+    starting_money: app_commands.Range[int, 1, 1000000000000] = 10000,
+    pick_date: int | None = None,
+    private_game: bool = False,
+    total_picks: app_commands.Range[int, 1, 1000] = 10,
+    exclusive_picks: bool = False,
+    # sell_during_game: bool = False,
+    update_frequency: Literal['daily', 'hourly'] = "daily"
+):
+        """Create a recurring game template"""
+        
+        # Defer the response since backend operations might take time
+        await interaction.response.defer(ephemeral=ephemeral_test)
+        
+        sell_during_game: bool = False
+
+        try:            
+            # Validate update frequency
+            valid_frequencies = ['daily', 'hourly', 'weekly']
+            if update_frequency.lower() not in valid_frequencies:
+                await interaction.followup.send(
+                    f"❌ Invalid update frequency. Must be one of: {', '.join(valid_frequencies)}", 
+                    ephemeral=ephemeral_test
+                )
+                return
+
+
+            # Validate pick date number
+            if pick_date is not None:
+                if pick_date < -30 or pick_date > 30:
+                    await interaction.followup.send(
+                        "❌ Pick date must be between -30 and 30 days relative to the start of the month.",
+                        ephemeral=ephemeral_test
+                    )
+                    return
+
+
+            # Get user ID
+            user_id = interaction.user.id
+            
+            # Create the game template using backend
+            fe.be.add_game_template(
+                user_id=user_id,
+                name=name,
+                start_date=start_date,
+                create_days_in_advance=create_days_in_advance,
+                recurring_period=recurring_period,
+                game_length=game_length,
+                starting_money=starting_money,
+                pick_date=pick_date,
+                private_game=private_game,
+                total_picks=total_picks,
+                exclusive_picks=exclusive_picks,
+                sell_during_game=sell_during_game,
+                update_frequency=update_frequency
+            )
+            
+            # Create success embed
+            embed = discord.Embed(
+                title="✅ Recurring Game Template Created!",
+                description=f"Successfully created recurring game template: **{name}**",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            
+            # Add game details to embed
+            embed.add_field(name="📅 Start Date", value=start_date, inline=True)
+            embed.add_field(name="🔄 Recurring Every", value=f"{recurring_period} months", inline=True)
+            embed.add_field(name="⏱️ Game Length", value=(f"{game_length} months" if game_length != 0 else "infinite"), inline=True)
+            embed.add_field(name="💰 Starting Money", value=f"${starting_money:,.2f}", inline=True)
+            embed.add_field(name="📊 Total Picks", value=str(total_picks), inline=True)
+            embed.add_field(name="🔒 Private", value="Yes" if private_game else "No", inline=True)
+            
+            if pick_date:
+                pick_date_text: str = f"{pick_date} days before the 1st" if pick_date >= 1 else f"{pick_date * -1} days after the 1st"
+                embed.add_field(name="📝 Pick Deadline", value=pick_date_text, inline=True)
+            
+            embed.add_field(name="🎯 Exclusive Picks", value="Yes" if exclusive_picks else "No", inline=True)
+            # embed.add_field(name="💸 Selling Allowed", value="Yes" if sell_during_game else "No", inline=True)
+            embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
+            embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
+            
+            embed.set_footer(text=f"Created by {interaction.user.display_name}")
+            
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+            
+        except Exception as e:
+            # Handle specific backend errors
+            error_message = "❌ Failed to create recurring game template."
+            
+            if "InvalidDateFormatError" in str(type(e)):
+                error_message = "❌ Invalid date format. Please use YYYY-MM-DD format."
+            else:
+                error_message += f" Error: {str(e)}"
+            
+            await interaction.followup.send(error_message, ephemeral=ephemeral_test)
+
 # TODO Handle more specific errors when implemented (private game, invalid game id, etc)
 @bot.tree.command(name="join-game", description="Join an existing stock game")
 @app_commands.describe(
@@ -844,33 +962,6 @@ async def manage_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="user-stats", description="Shows global statistics of a user. Shows yours by default.")
-@app_commands.describe(
-    user="The ID of the user you want to see stats for"
-)
-async def user_stats(
-    interaction: discord.Interaction,
-    user: discord.User | None
-):
-    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
-    try:
-        discord_user: discord.User | discord.Member = user if user else interaction.user
-        user_title = f"{discord_user.display_name}{f' ({discord_user.name})' if discord_user.display_name != discord_user.name else ''}"
-        
-        user_stats = fe.get_user(discord_user.id)
-
-        embed = discord.Embed(title=user_title, description="Global Statistics")
-        embed.set_thumbnail(url=discord_user.display_avatar)
-        embed.add_field(name="Total wins:", value=user_stats.overall_wins)
-        embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
-        embed.color = discord.Color.blue()
-
-        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-    except LookupError:
-        embed = discord.Embed(title="User not found", description="User does not exist in our system!")
-        embed.color = discord.Color.red()
-        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-
 #TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
@@ -1024,7 +1115,113 @@ async def manage_pending(
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
- 
+  
+@bot.tree.command(name="list-game-templates", description="List your game templates (Moderator Only)")
+@app_commands.describe(
+    show_all="Show all templates (default: False, only shows first 10)"
+)
+async def list_game_templates(
+    interaction: discord.Interaction,
+    show_all: bool = False
+):
+    """List game templates for the user"""
+    try:
+        # Get templates from backend - assuming it has a method to get by user
+        templates = fe.be.get_many_game_templates(status=None)  # Adjust this based on your backend
+        
+        # Filter by user if needed (depends on your backend implementation)
+        user_templates = [t for t in templates if t.owner_id == interaction.user.id]
+        
+        if not user_templates:
+            embed = discord.Embed(
+                title="No Game Templates Found",
+                description="You haven't created any recurring game templates yet.",
+                color=discord.Color.orange()
+            )
+        else:
+            embed = discord.Embed(
+                title="Your Game Templates",
+                description=f"Found {len(user_templates)} template(s)",
+                color=discord.Color.blue()
+            )
+            
+            # Add templates to embed
+            if not show_all:
+                user_templates = user_templates[:10]
+            for template in user_templates:
+                # Format pick date display
+                pick_date_text = "No deadline"
+                if template.pick_date is not None:
+                    if template.pick_date >= 1:
+                        pick_date_text = f"{template.pick_date} days before 1st"
+                    else:
+                        pick_date_text = f"{abs(template.pick_date)} days after 1st"
+                
+                # Format game length
+                game_length_text = "Infinite" if template.game_length == 0 else f"{template.game_length} months"
+                
+                embed.add_field(
+                    name=f"📋 {template.name}",
+                    value=(
+                        f"🔄 Every {template.recurring_period} months\n"
+                        f"📅 Start: {template.start_date}\n"
+                        f"⏱️ Length: {game_length_text}\n"
+                        f"⏰ Create: {template.create_days_in_advance} days early\n"
+                        f"💰 Starting: ${template.start_money:,}\n"
+                        f"📝 Pick deadline: {pick_date_text}\n"
+                        f"🔒 Private: {'Yes' if template.private_game else 'No'}\n"
+                        f"📊 Total picks: {template.pick_count}\n"
+                        f"🎯 Exclusive: {'Yes' if template.draft_mode else 'No'}\n"
+                        f"💸 Selling: {'Yes' if template.allow_selling else 'No'}\n"
+                        f"🔄 Updates: {template.update_frequency.title()}"
+                    ),
+                    inline=True
+                )
+           
+            if len(user_templates) > 10 or show_all:
+                embed.set_footer(text=f"Showing first 10 of {len(user_templates)} templates")
+        
+    except Exception as e:
+        embed = discord.Embed(
+            title="Failed to List Game Templates",
+            description=str(e),
+            color=discord.Color.red()
+        )
+        logger.exception(f'User: {interaction.user.id} failed to list game templates. Error: {e}')
+    
+    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+
+@bot.tree.command(name="update", description="Update the all game stock prices (Moderator Only)")
+@app_commands.describe(
+    # game_id="ID of the game to update", - NOT IMPLEMENTED IN force_update
+)
+async def update_game(
+    interaction: discord.Interaction, 
+    # game_id: int, - NOT IMPLEMENTED IN force_update
+):
+    await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
+    embed = discord.Embed()
+    try:
+        fe.force_update(
+            user_id=interaction.user.id,
+            # game_id=game_id, # NOT IMPLEMENTED IN force_update
+            enforce_permissions=True
+        )
+        embed.title = "Success"
+        embed.description = f"All games have been successfully updated"
+        embed.color = discord.Color.green()
+    except PermissionError:
+        embed.title = "Failed"
+        embed.description = "You do not have permission to update this game"
+        embed.color = discord.Color.red()
+    except Exception as e:
+        embed.title = "Failed"
+        embed.description = f"There was an error while executing this command:\n{e}"
+        embed.color = discord.Color.red()
+
+
+    await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+
 
 # STOCK RELATED
 
@@ -1415,37 +1612,34 @@ async def my_games(
     # Send the response
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="update", description="(Moderator Only) Update the all game stock prices")
+@bot.tree.command(name="user-stats", description="Shows global statistics of a user. Shows yours by default.")
 @app_commands.describe(
-    # game_id="ID of the game to update", - NOT IMPLEMENTED IN force_update
+    user="The ID of the user you want to see stats for"
 )
-async def update_game(
-    interaction: discord.Interaction, 
-    # game_id: int, - NOT IMPLEMENTED IN force_update
+async def user_stats(
+    interaction: discord.Interaction,
+    user: discord.User | None
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
-    embed = discord.Embed()
     try:
-        fe.force_update(
-            user_id=interaction.user.id,
-            # game_id=game_id, # NOT IMPLEMENTED IN force_update
-            enforce_permissions=True
-        )
-        embed.title = "Success"
-        embed.description = f"All games have been successfully updated"
-        embed.color = discord.Color.green()
-    except PermissionError:
-        embed.title = "Failed"
-        embed.description = "You do not have permission to update this game"
+        discord_user: discord.User | discord.Member = user if user else interaction.user
+        user_title = f"{discord_user.display_name}{f' ({discord_user.name})' if discord_user.display_name != discord_user.name else ''}"
+        
+        user_stats = fe.get_user(discord_user.id)
+
+        embed = discord.Embed(title=user_title, description="Global Statistics")
+        embed.set_thumbnail(url=discord_user.display_avatar)
+        embed.add_field(name="Total wins:", value=user_stats.overall_wins)
+        embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
+        embed.color = discord.Color.blue()
+
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+    except LookupError:
+        embed = discord.Embed(title="User not found", description="User does not exist in our system!")
         embed.color = discord.Color.red()
-    except Exception as e:
-        embed.title = "Failed"
-        embed.description = f"There was an error while executing this command:\n{e}"
-        embed.color = discord.Color.red()
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
 
-
-    await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-
+# ABOUT, LOGS AND HELP COMMANDS
 @bot.tree.command(name="about", description="About the bot and its creators")
 async def about(
     interaction: discord.Interaction,
@@ -1475,6 +1669,49 @@ async def logs(
         status = 'failed'
         logs = 'Must be admin to get logs'
         await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=logs), ephemeral=True)
+
+@bot.tree.command(name="help", description="Get help with StockBot")
+async def help(interaction: discord.Interaction):
+    title = "Stock Game Bot - Help"
+    help_text = """
+## Available Commands
+All commands include built-in hints and help when you run them!
+
+### Game Management
+- `/create-game` - Guided setup for stock game creation
+- `/create-game-advanced` - Create a new stock game without a wizard
+- `/manage-game` - Manage an existing stock game
+- `/delete-game` - For admins to delete games if needed
+- `/invite` - Invite a user to a game
+- `/manage-pending` - Approve or deny pending users for your private game
+
+### Playing Games
+- `/join-game` - Join an existing stock game
+- `/buy-stock` - Buy a stock in a game
+- `/remove-stock` - Remove a stock from your picks
+- `/my-stocks` - View your stocks in a game as a visual portfolio
+
+### Information & Stats
+- `/game-info` - View information about a game
+- `/game-list` - View a list of all games
+- `/my-games` - View your games and their status
+- `/user-stats` - Shows global statistics of a user. Shows yours by default
+- `/about` - About the bot and its creators
+
+### Moderator Commands
+- `/create-recurring-game` - Create a recurring game template (Moderator only)
+- `/list-recurring-games` - List your recurring game templates (Moderator only)
+- `/update` - Update the all game stock prices (Moderator only)
+- `/logs` - For admins to get logs (Moderator only)
+
+## How to Play
+1. **Join a game** using `/join-game` or create your own with `/create-game`
+2. **Buy stocks** using `/buy-stock` 
+3. **Watch the leaderboard** and see how your picks perform!
+
+## Need Help?
+Use `/help` to see this message again, or contact a moderator if you encounter any issues!"""
+    await interaction.response.send_message(embed=simple_embed(status='success', title=title, desc=help_text), ephemeral=ephemeral_test)
 
 # Run the bot using the token
 if TOKEN:

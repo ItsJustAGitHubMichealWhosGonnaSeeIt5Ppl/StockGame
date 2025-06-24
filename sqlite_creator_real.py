@@ -252,7 +252,7 @@ def create(db_name:str, upgrade:bool=True):
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
         pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
-        pick_date TEXT DEFAULT NULL,                          -- Date that picks must be in by.  If NULL, players can join at anytime
+        pick_date INTEGER DEFAULT NULL,                       -- Days before or after start of month that picks must be in by. Negative values for after start of month. If NULL, players can join at anytime
         draft_mode BOOLEAN DEFAULT 0,                         -- When enabled, each stock can only be picked once per game.  Pick date must be on or before start date to allow this
         private_game BOOLEAN DEFAULT 0,                       -- When enabled, players must be approved to join.
         allow_selling BOOLEAN DEFAULT 0,                      -- When enabled, users can sell mid-game
@@ -273,7 +273,7 @@ def create(db_name:str, upgrade:bool=True):
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id INTEGER PRIMARY KEY AUTOINCREMENT,
         template_id DEFAULT NULL,                             -- Track games created from template
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
         pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
@@ -374,6 +374,7 @@ if __name__ == "__main__":
     
     DB_NAME = str(os.getenv('DB_NAME'))
     print(f'DB Name is: {DB_NAME}')
+    # upgrade_db(DB_NAME, force_upgrade=True) # Force upgrade to latest version
     create(DB_NAME)
     
     

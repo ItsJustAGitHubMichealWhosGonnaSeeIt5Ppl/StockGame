@@ -536,7 +536,7 @@ class Backend:
                 self.get_game(game['game_id']) 
     
     # # GAME TEMPLATE ACTIONS # #
-    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         #TODO support basic variables in the game name
         if start_date and not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
@@ -560,7 +560,7 @@ class Backend:
 
         resp = self.sql.insert(table='game_templates', items=items)
         if resp.status != 'success': #TODO errors
-            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'games.name':
+            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'game_templates.game_name':
                 raise bexc.AlreadyExistsError(table='game_templates', duplicate=name, message='Cannot add multiple games with the same name')
 
             raise Exception(f'Failed to add game.', resp) 
@@ -758,7 +758,8 @@ class Backend:
         items = {
             'participation_id':participant_id,
             'stock_id':stock_id,
-            'datetime_created': _iso8601()
+            'datetime_created': _iso8601(),
+            'datetime_updated': _iso8601()
             }
         
         resp = self.sql.insert(table='stock_picks', items=items)
@@ -1086,6 +1087,7 @@ class GameLogic: # Might move some of the control/running actions here
                         raise Exception(f'An unexpected error occurred while trying to create game "{template.name}"', e)
             else:
                 self.logger.debug(f'Game "{template.name}" not created.  {days_untl_nxt_mnth} days until the start of next month.  Game are set to be created with {template.create_days_in_advance} days or less until the next month.')
+    
     def update_game_statuses(self):
         """Update game statuses
         
