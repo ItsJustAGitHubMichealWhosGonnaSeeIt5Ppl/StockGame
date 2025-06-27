@@ -126,13 +126,18 @@ class SqlHelper: # Simple helper for SQL
         return Status(status=status, reason=reason, result=result, more_info=more_info)
         
     def _run_query(self, query:str, values:Optional[list]=None, mode: str ='get')-> Status:
-        if mode not in ['insert', 'update', 'delete', 'get', 'raw-get']:
+        if mode not in ['insert', 'insert_multi', 'update', 'delete', 'get', 'raw-get']:
             raise ValueError(f'Invalid mode {mode}.')
         status = 'error' # Assume the request was no good to start
         more_info = None
         result = None
         try:
-            if values:
+            if mode == 'insert_multi': 
+                if not values:
+                    raise ValueError('values required for multiple insert') # TODO maybe make this a status instead of a true error idk
+                resp = self.cur.executemany(query, values)
+            
+            elif values:
                 resp = self.cur.execute(query, values)
             else: # Run without values, prevents error
                 resp = self.cur.execute(query)
@@ -274,6 +279,25 @@ class SqlHelper: # Simple helper for SQL
         sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
         
         return self._run_query(sql_query, values, mode='insert')
+    
+    @open_and_close
+    def _insert_many(self, table:str, columns:list, rows:tuple | list): # Insert multiple rows
+        raise ValueError('DOES NOT WORK!!!!!!!!!!')
+        #TODO finish this
+        sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
+        
+        
+        keys, v, questionmarks = self._sql_items(rows[0]) # Use first row to get column names
+        values = list() # This will store tuples of each of the rows to be inserted
+        for row in rows:
+            k, value, q = self._sql_items(row) # Don't need the keys or the values
+            values.append(tuple(value))
+            if k != keys:
+                pass
+        sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
+        
+        #return self._run_query(sql_query, values, mode='insert_multi')
+        
         
         
     @open_and_close    
@@ -360,9 +384,13 @@ class SqlHelper: # Simple helper for SQL
         """
         if mode.lower() == 'add':
             query += 'ADD {data}'
+        
+        elif mode.lower() == 'rename':
+            query += 'RENAME {data}'
             
         else:
             raise ValueError(f'Invalid mode: {mode}')
+        
         return self._run_query(query=query.format(table=table, data=data), mode='insert')
 
     def create_backup(self, dest_db:str, display_progress:bool=False):

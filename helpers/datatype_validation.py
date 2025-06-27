@@ -38,10 +38,9 @@ class User(BaseModel):
     
 Users = TypeAdapter(list[User])
 
-
 # Game
 class Game(BaseModel):
-    id: int = Field(validation_alias=AliasChoices('game_id'))
+    id: str| int = Field(validation_alias=AliasChoices('game_id')) # After v0.0.5 game IDs should be strings
     template_id: Optional[int] = None
     name: str = Field(max_length=35, min_length=1) # Prevent blank names
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
@@ -59,7 +58,7 @@ class Game(BaseModel):
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
     @field_validator('name') 
     def game_name(cls, value):
@@ -70,8 +69,6 @@ class Game(BaseModel):
 Games = TypeAdapter(list[Game])
 
 # Game Template
-
-
 class GameTemplate(BaseModel):
     id: int = Field(validation_alias=AliasChoices('template_id'))
     name: str = Field(max_length=35, min_length=1, validation_alias=AliasChoices('game_name')) # Prevent blank names
@@ -147,7 +144,7 @@ class GameParticipant(BaseModel):
     current_value: Optional[float] = None
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
     
 GameParticipants = TypeAdapter(list[GameParticipant])
 
@@ -166,7 +163,7 @@ class StockPick(BaseModel):
     status: PickStatus = 'pending_buy'
     stock_ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker')) # Allow ticker to be added in here.  Purely for ease of use
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
 StockPicks = TypeAdapter(list[StockPick])
 

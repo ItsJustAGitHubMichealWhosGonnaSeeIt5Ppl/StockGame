@@ -12,7 +12,7 @@ load_dotenv()
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
 
-db_ver = "0.0.4b3" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
+db_ver = "0.1.0" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
 def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
     """Upgrade your database to the latest version
 
@@ -81,6 +81,19 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
     except Exception as e: # TODO find errors
         raise Exception(e)
     
+    def make_changes(changes:dict):
+        """Simple function to apply changes for a version
+
+        Args:
+            changes (dict): Changes.  Format: {'<table>': {'<add/rename>': ['<column>']}}
+
+        """
+        
+        for table, change_type in changes.items():
+            pass
+        #TODO IDFK what im doing man :(
+        
+    
     if info.status == 'success':
         db_ver = info.result[0]['current_version']
 
@@ -95,37 +108,52 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
     if db_ver == current_ver and not force_upgrade: # No changes needed
         return 
     
-    # Not current version, or force upgrade was on
-    elif db_ver in ['0.0.3', '0.0.4b1'] or force_upgrade: # 
-        #TODO does this need to be documented?
-        #TODO add logging
-        queries = ['change_dollars REAL DEFAULT NULL', 'change_percent REAL DEFAULT NULL', 'last_updated TEXT DEFAULT NULL', 'overall_wins INT DEFAULT 0']
-        for query in queries:
-            send = sql.alter_table(table='users', mode='add', data=query)
-            if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
-                continue
-            elif send.reason == 'DUPLICATE COLUMN NAME': # Upgrade has partially been done
-                continue
-            
-            else:
-                raise Exception('An unexpected error occurred while trying to upgrade from v0.0.3/0.0.4b1', send)
-    
-    elif db_ver in ['0.0.4b2'] or force_upgrade:
-        stock_picks = ['datetime_crested TEXT NOT NULL DEFAULT "NONE"', 'datetime_updated TEXT DEFAULT NULL']
-        for change in stock_picks:
-            send = sql.alter_table(table='users', mode='add', data=change)
-            if send.reason == 'NO ROWS EFFECTED': # It does this even if it did add the rows so its dumb Ig
-                continue
-            elif send.reason == 'DUPLICATE COLUMN NAME': # Upgrade has partially been done
-                continue
-            
-            else:
-                raise Exception('An unexpected error occurred while trying to upgrade from v0.0.4b2', send)
-    
-    
-    elif db_ver in ['0.0.4b3'] or force_upgrade: # Upgrade to version 0.0.5
-        pass
+    # Consolidated all of the changes to here since itll be easier that way
+    if db_ver in ['0.0.3', '0.0.4b1', '0.0.4b2', '0.0.4b3', '0.0.5'] or force_upgrade: # Upgrade to version 0.1.0 (MAJOR CHANGE) 
+        os.rename(db_name, f'pre_005_{db_name}') # Rename the current database
+        old_db = SqlHelper(f'pre_005_{db_name}') # Attach to old DB
+        create(db_name=db_name, upgrade=False) # Recreate
+        old_tables = { # This will hold all the old DBs, probably not a great way to do it but fuck it
+            'database_info': old_db.get(table='database_info'),
+            'users': old_db.get(table='users'),
+            'game_templates': old_db.get(table='game_templates'),
+            'games': old_db.get(table='games'),
+            'stocks': old_db.get(table='stocks'),
+            'stock_prices': old_db.get(table='stock_prices'),
+            'game_participants': old_db.get(table='game_participants'),
+            'stock_picks': old_db.get('stock_picks')
+        }
+        def revert(): # Revert changes
+            os.remove(db_name) # Remove failed db
+            os.rename(f'pre_005_{db_name}', db_name) # Revert db
         
+        for table, status in old_tables.items():
+            if status.status != 'success' and status.reason != 'NO ROWS RETURNED': # Confirm we actually got a response
+                revert()
+                raise ValueError(f'Failed to retreive {table}. Reason: {status.reason}. reverting changes')
+            if status.result == None: # No items skip it
+                continue
+            assert isinstance(status.result, tuple)
+            rows:tuple = status.result
+            rows_to_add = list()
+            for row in rows:
+                if 'datetime_updated' in row: 
+                    row['last_updated'] = row.pop('datetime_updated') # Rename
+                    
+                if 'datetime_crested' in row: # IDK when I did this lol
+                    row['datetime_created'] = row.pop('datetime_crested') # Rename
+                
+                if table == 'users' and row['source'] == None: # Some users don't have a source
+                    row['source'] = 'Unknown'
+                
+                if table == 'stock_picks' and 'datetime_created' not in row: # Was added in v0.0.4b3
+                    row['datetime_created'] = row['datetime_updated'] if row['datetime_updated'] in row else row['last_updated']# This is probably right
+                
+                ins = sql.insert(table=table, items=row)
+                if ins.status !='success':
+                    revert()
+                    raise ValueError(f'Failed to add row to {table}. Reason: {ins.reason}. Row: {row}. Reverting changes')
+         
     # Set the current version
     upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': current_ver, 'last_updated': _iso8601()})
     if upd.status !='success':
@@ -135,14 +163,30 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
 def create(db_name:str, upgrade:bool=True):
     """Create database and upgrade older databases to the current version
     
-    Version: 0.0.5
+    Version: 0.1.0
 
     Args:
         db_name (str): Database name
         upgrade (bool, optional): Whether to try to upgrade older databases to the newest version.  Defaults to True.
     
-    
+
     # Changelog
+    This tries to comply with Semantic versioning with varying success...
+    
+    ## [0.1.0] - 2025-06-27
+    This version requires the database to be recreated. A copy of the original DB will be made.
+    
+    ### Added
+    - `template_name`, `template_description`, `game_description` to game_templates table
+
+    ### Fixed
+    - Upgrade tool
+
+    ### Changed
+    - `game_id` type from INT to TEXT in games table
+    - `datetime_updated` to `last_updated` in games, game participants, and stock_picks table
+
+    ### Removed
     
     ## [0.0.5] - 2025-06-23
     
@@ -232,7 +276,7 @@ def create(db_name:str, upgrade:bool=True):
     # Users table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,  -- Unique ID (EG: Discord user ID)
+        user_id INTEGER PRIMARY KEY,                -- Unique ID (EG: Discord user ID)
         display_name TEXT,                          -- User display name
         source TEXT NOT NULL,                       -- User source
         overall_wins INT DEFAULT 0,                 -- First place finishes
@@ -244,10 +288,15 @@ def create(db_name:str, upgrade:bool=True):
         );""")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_registered_user_ids ON users(user_id);") # All user IDs
-
+    
+    
+    # TEMPLATES
     cursor.execute("""CREATE TABLE IF NOT EXISTS game_templates (
         template_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_name TEXT NOT NULL,
+        template_description TEXT DEFAULT NULL,
         game_name TEXT NOT NULL,
+        game_description TEXT DEFAULT NULL,
         status TEXT NOT NULL DEFAULT 'enabled',               -- Whether to create the game or not
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
@@ -266,14 +315,13 @@ def create(db_name:str, upgrade:bool=True):
         
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
         );""")
+    
     # Games table 
-    # TODO descriptions 
-    # TODO names don't need to be unique
-    # TODO game ID is going to be an alphanumeric string (5 characters to start)
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
-        game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        game_id TEXT PRIMARY KEY,
         template_id DEFAULT NULL,                             -- Track games created from template
         name TEXT NOT NULL,
+        description TEXT DEFAULT NULL,
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
         pick_count INTEGER NOT NULL CHECK(pick_count > 0),    -- Set amount of stocks each user will pick (Ensure positive number of stocks)
@@ -289,7 +337,7 @@ def create(db_name:str, upgrade:bool=True):
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-        datetime_updated TEXT DEFAULT NULL,                   -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (template_id) REFERENCES game_templates (template_id)
         FOREIGN KEY (owner_user_id) REFERENCES users (user_id)
@@ -336,7 +384,7 @@ def create(db_name:str, upgrade:bool=True):
         current_value REAL DEFAULT NULL,        -- Current portfolio value
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
-        datetime_updated TEXT DEFAULT NULL,     -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL,         -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
         FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
@@ -356,7 +404,7 @@ def create(db_name:str, upgrade:bool=True):
         change_percent REAL DEFAULT NULL,
         status TEXT DEFAULT 'pending_buy',            -- Status of pick. Options: 'pending_buy', 'owned', 'pending_sell', 'sold'
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
-        datetime_updated TEXT DEFAULT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        last_updated TEXT DEFAULT NULL,                    -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (participation_id) REFERENCES game_participants (participation_id) ON DELETE CASCADE,
         FOREIGN KEY (stock_id) REFERENCES stocks (stock_id) ON DELETE RESTRICT, -- Don't delete a stock if picks exist? Or CASCADE? Depends on desired behavior. RESTRICT is safer.
@@ -368,7 +416,8 @@ def create(db_name:str, upgrade:bool=True):
     conn.close()
     
     # Run database upgrade
-    upgrade_db(db_current_ver=db_ver, db_name=db_name)
+    if upgrade:
+        upgrade_db(db_current_ver=db_ver, db_name=db_name)
     
 if __name__ == "__main__":
     
