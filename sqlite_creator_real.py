@@ -147,7 +147,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                     row['source'] = 'Unknown'
                 
                 if table == 'stock_picks' and 'datetime_created' not in row: # Was added in v0.0.4b3
-                    row['datetime_created'] = row['datetime_updated'] if row['datetime_updated'] in row else row['last_updated']# This is probably right
+                    row['datetime_created'] = row['datetime_updated'] if 'datetime_updated' in row else row['last_updated']# This is probably right
                 
                 ins = sql.insert(table=table, items=row)
                 if ins.status !='success':

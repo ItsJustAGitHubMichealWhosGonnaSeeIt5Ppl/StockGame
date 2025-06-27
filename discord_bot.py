@@ -108,7 +108,7 @@ def simple_embed(status:str, title:str, desc:Optional[str]=None):
     )
 
 # Process pending users helper
-async def process_pending_user(interaction: discord.Interaction, game_id: int, pending_users: list, current_index: int):
+async def process_pending_user(interaction: discord.Interaction, game_id: str, pending_users: list, current_index: int):
     """Process a single pending user with approve/deny buttons"""
     
     if current_index >= len(pending_users):
@@ -811,7 +811,7 @@ async def create_recurring_game(
 )
 async def join_game(
     interaction: discord.Interaction, 
-    game_id: int,
+    game_id: str,
     name: str | None = None
 ):
     
@@ -856,7 +856,7 @@ async def join_game(
 )
 async def delete_game(
     interaction: discord.Interaction,
-    game_id: int,
+    game_id: str,
 ):
     embed = discord.Embed()
     try:
@@ -899,7 +899,7 @@ async def delete_game(
 )
 async def manage_game(
     interaction: discord.Interaction, 
-    game_id: int,
+    game_id: str,
     name: app_commands.Range[str, 1, name_cutoff] | None = None,
     owner: int | None = None,
     start_date: str | None = None,
@@ -971,7 +971,7 @@ async def manage_game(
 )
 async def invite_user(
     interaction: discord.Interaction, 
-    game_id: int,
+    game_id: str,
     user: discord.User
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
@@ -1077,7 +1077,7 @@ async def invite_user(
 )
 async def manage_pending(
     interaction: discord.Interaction,
-    game_id: int
+    game_id: str
 ):
     await interaction.response.defer(ephemeral=ephemeral_test)
     
@@ -1197,7 +1197,7 @@ async def list_game_templates(
 )
 async def update_game(
     interaction: discord.Interaction, 
-    # game_id: int, - NOT IMPLEMENTED IN force_update
+    # game_id: str, - NOT IMPLEMENTED IN force_update
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     embed = discord.Embed()
@@ -1233,7 +1233,7 @@ async def update_game(
 )
 async def buy_stock(
     interaction: discord.Interaction, 
-    game_id: int, 
+    game_id: str, 
     ticker: str
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
@@ -1306,7 +1306,7 @@ async def buy_stock(
 )
 async def remove_stock(
     interaction: discord.Interaction, 
-    game_id: int, 
+    game_id: str, 
     ticker: str
 ):
    
@@ -1338,7 +1338,7 @@ async def remove_stock(
 )
 async def my_stocks(
     interaction: discord.Interaction,
-    game_id: int
+    game_id: str
 ):
     user_id = interaction.user.id
     await interaction.response.defer(ephemeral=ephemeral_test)
@@ -1418,7 +1418,7 @@ async def my_stocks(
 )
 async def game_info(
     interaction: discord.Interaction,
-    game_id: int,
+    game_id: str,
     show_leaderboard: bool = True
 ):
     await interaction.response.defer(ephemeral=ephemeral_test)

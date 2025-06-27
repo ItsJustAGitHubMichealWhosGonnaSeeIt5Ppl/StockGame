@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta, date
 import logging
 import os
+import random
+import string
 import re
 from typing import Optional, Type
 
@@ -251,6 +253,15 @@ class Backend:
         self._delete_single(table="users", id_column='user_id', item_id=user_id)
     
     
+    def generate_alnum_id(self) -> str:
+        chars = chars = string.ascii_uppercase + string.digits
+        id = ''.join(random.choices(chars, k=5))
+        try:
+            self.get_game(id)
+            return self.generate_alnum_id()
+        except LookupError:
+            return id
+
     # # GAME ACTIONS # #
     def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         """Add a new game
@@ -319,8 +330,11 @@ class Backend:
         if total_picks < 1:
             raise ValueError('`total_picks` must be atleast `1`.')
         
+        game_id = self.generate_alnum_id()
+
         items = {
             'name': name,
+            'game_id': game_id,
             'owner_user_id': user_id,
             'start_money': starting_money,
             'pick_count': total_picks,
