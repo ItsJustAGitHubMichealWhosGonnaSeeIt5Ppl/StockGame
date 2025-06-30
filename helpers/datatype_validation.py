@@ -13,6 +13,7 @@ ParticipantStatus = Literal['pending', 'active', 'inactive']
 PickStatus = Literal['pending_buy', 'owned', 'pending_sell', 'sold']
 UpdateFrequency = Literal['daily', 'hourly', 'minute', 'realtime']
 PydanticModelType = TypeVar('PydanticModelType', bound=BaseModel)
+GameTemplateStatus = Literal['enabled', 'disabled']
 
 
 class Status(BaseModel): # Status item
@@ -28,15 +29,19 @@ class User(BaseModel):
     id: int = Field(validation_alias=AliasChoices('user_id'))
     display_name: Optional[str] = None
     source: Optional[str] = None
+    overall_wins: int
+    change_dollars: Optional[float] = None
+    change_percent: Optional[float] = None
     permissions: int = 210
     datetime_created: datetime
-
+    last_updated: Optional[datetime] = None
+    
 Users = TypeAdapter(list[User])
-
 
 # Game
 class Game(BaseModel):
-    id: int = Field(validation_alias=AliasChoices('game_id'))
+    id: str | int = Field(validation_alias=AliasChoices('game_id')) # After v0.0.5 game IDs should be strings
+    template_id: Optional[int] = None
     name: str = Field(max_length=35, min_length=1) # Prevent blank names
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
     start_money: PositiveFloat 
@@ -53,7 +58,7 @@ class Game(BaseModel):
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
     @field_validator('name') 
     def game_name(cls, value):
@@ -63,6 +68,33 @@ class Game(BaseModel):
 
 Games = TypeAdapter(list[Game])
 
+# Game Template
+class GameTemplate(BaseModel):
+    id: int = Field(validation_alias=AliasChoices('template_id'))
+    name: str = Field(max_length=35, min_length=1, validation_alias=AliasChoices('game_name')) # Prevent blank names
+    status: GameTemplateStatus
+    owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
+    start_money: PositiveFloat 
+    pick_count: PositiveInt
+    pick_date: int # Optional[date] = None # YYYY-MM-DD
+    draft_mode: bool = False
+    private_game: bool = False
+    allow_selling: bool = False
+    update_frequency: UpdateFrequency = 'daily'
+    start_date: date # YYYY-MM-DD
+    create_days_in_advance: int
+    recurring_period: int
+    game_length: int
+    datetime_created: datetime # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = None # YYYY-MM-DD HH:MM:SS
+
+    @field_validator('name') 
+    def game_name(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError('Game name must not be blank.')
+        return value
+
+GameTemplates = TypeAdapter(list[GameTemplate])
 
 # Stock
 class Stock(BaseModel):
@@ -105,14 +137,14 @@ StockPrices = TypeAdapter(list[StockPrice])
 class GameParticipant(BaseModel):
     id: int = Field(validation_alias=AliasChoices('participation_id'))
     user_id: int
-    game_id: int
+    game_id: int | str
     name: Optional[str] = None
     status: ParticipantStatus = 'active'
-    datetime_joined: datetime # YYYY-MM-DD HH:MM:SS
+    datetime_joined: datetime # YYYY-MM-DD HH:MM:SS 
     current_value: Optional[float] = None
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
     
 GameParticipants = TypeAdapter(list[GameParticipant])
 
@@ -130,7 +162,8 @@ class StockPick(BaseModel):
     change_percent: Optional[float] = None
     status: PickStatus = 'pending_buy'
     stock_ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker')) # Allow ticker to be added in here.  Purely for ease of use
-    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated')) # YYYY-MM-DD HH:MM:SS
+    datetime_created: datetime # YYYY-MM-DD HH:MM:SS
+    last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
 StockPicks = TypeAdapter(list[StockPick])
 
@@ -144,6 +177,9 @@ class GameLeaderboard(BaseModel):
     user_id: int
     current_value: float
     joined: datetime
+    change_dollars: float
+    change_percent: float
+    last_updated: datetime | None = None
 
 class GameInfo(BaseModel):
     game: Game

@@ -7,5 +7,5 @@
 
 source .env
 
-python3 update_games.py # Update all running games
+python3 scripts/update_games.py # Update all running games
 

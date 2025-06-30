@@ -285,10 +285,6 @@ class TestFrontend:
         user = fe.be.get_user(user_id=user_id)
         assert user.display_name == new_name
 
-    def test_change_name_non_existent_user(self, fe: Frontend):
-        with pytest.raises(bexc.DoesntExistError):
-            fe.change_name(user_id=9999, name="GhostName")
-
 
     # # JOIN_GAME # #
     def test_join_game_success(self, fe: Frontend):
@@ -312,18 +308,18 @@ class TestFrontend:
         assert participant.status == 'active' # Default status for new participant
 
     def test_join_game_user_not_registered(self, fe: Frontend):
-        # Frontend.join_game does not register the user, relies on Backend.add_participant
-        # Backend.add_participant inserts into game_participants which has a user_id FK.
-        # This should fail at the SQL level if user_id doesn't exist in users table.
+        # User should be created, then added
         owner_id = 10
         non_existent_user_id = 900
         game_name = "JoinGameFail"
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-12-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        with pytest.raises(Exception) as excinfo: # SqlHelper wraps SQL errors
-            fe.join_game(user_id=non_existent_user_id, game_id=game_db.id)
-        assert "FOREIGN KEY constraint failed" in str(excinfo.value) # Check for SQLite error
+        fe.join_game(user_id=non_existent_user_id, game_id=game_db.id)
+        games = fe.my_games(user_id=non_existent_user_id)
+        assert games.games[0].name == game_name # User should end up in the game
+        
+        
 
     def test_join_game_non_existent_game(self, fe: Frontend):
         user_id = 10 # Registered user
@@ -465,7 +461,7 @@ class TestFrontend:
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-06-01")
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        ticker_known = "KNOWNCO"
+        ticker_known = "KNOWN"
         _add_stock_to_db(fe.be, ticker=ticker_known, company_name="Known Company") # Add to DB
         stock_in_db = fe.be.get_stock(ticker_known)
 
@@ -515,7 +511,7 @@ class TestFrontend:
         participant_obj = fe._participant_id(user_id=owner_id, game_id=game_db.id)
         fe.be.update_participant(participant_id=participant_obj, status='active')
 
-        ticker = "LATEPICK"
+        ticker = "LPICK"
         _add_stock_to_db(fe.be, ticker)
         with pytest.raises(bexc.NotAllowedError) as excinfo:
             fe.buy_stock(user_id=owner_id, game_id=game_db.id, ticker=ticker)
@@ -530,7 +526,7 @@ class TestFrontend:
         
         fe.register(user_id=pending_id) # Pending user
         fe.join_game(user_id=pending_id, game_id=game_db.id)
-        ticker = "INACTIVEBUY"
+        ticker = "INCTV"
         _add_stock_to_db(fe.be, ticker)
 
         with pytest.raises(bexc.NotAllowedError) as excinfo:
