@@ -491,7 +491,7 @@ async def create_game(interaction: discord.Interaction):
                     # Create a response embed for join after start
                     private_embed = discord.Embed(
                         title="Do you want your game to be private?",
-                        description="If you select 'Yes', the game ID will be hidden in the game-list command. If you select 'No', it will be visible. All private games require owner approval for new users to join. **Owners will have to run the /pending-users command to approve or deny new users.**",
+                        description="If you select 'Yes', the game ID will be hidden in the game-list command. If you select 'No', it will be visible. All private games require owner approval for new users to join. **Owners will have to run the /manage-pending command to approve or deny new users.**",
                         color=discord.Color.blue()
                     )
 
