@@ -300,7 +300,6 @@ async def on_ready():
 
 # GAME INTERACTION RELATED
 
-# TODO can i make parameters required? if not, add (optional) to the description
 @bot.tree.command(name="create-game-advanced", description="Create a new stock game without a wizard")
 @app_commands.describe(
     name="Name of the game",
@@ -1195,7 +1194,7 @@ async def list_game_templates(
 @app_commands.describe(
     # game_id="ID of the game to update", - NOT IMPLEMENTED IN force_update
 )
-async def update_game(
+async def update(
     interaction: discord.Interaction, 
     # game_id: str, - NOT IMPLEMENTED IN force_update
 ):
@@ -1366,7 +1365,8 @@ async def my_stocks(
                 'shares': pick.shares,
                 'current_value': pick.current_value,
                 'change_dollars': pick.change_dollars,
-                'change_percent': pick.change_percent
+                'change_percent': pick.change_percent,
+                'last_updated': pick.last_updated
             }
             stock_picks.append(stock_dict)
         
@@ -1412,6 +1412,7 @@ async def my_stocks(
 # GAME INFO RELATED-
 
 @bot.tree.command(name="game-info", description="View information about a game")
+@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
     show_leaderboard="Whether to display the leaderboard or not, will by default"
@@ -1429,12 +1430,13 @@ async def game_info(
         assert isinstance(game_info_obj.leaderboard, list)
         
         # Basic embed for game info
-        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}\n{participants}'.format(
+        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{date_range}\n{participants}'.format(
             owner_id=game.owner_id,
             pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
             start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+            pick_count=f'> **Pick Count:** `{game.pick_count}`',
             date_range='> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-            participants=f'> **Participants:** `{len(game_info_obj.leaderboard)}`'
+            participants=f'> **Participants:** `{len(game_info_obj.leaderboard)}`',
         )
         
         embed = discord.Embed(
@@ -1459,7 +1461,8 @@ async def game_info(
                 'current_value': info.current_value,
                 'joined': info.joined,
                 'change_dollars': info.change_dollars,
-                'change_percent': info.change_percent
+                'change_percent': info.change_percent,
+                'last_updated': info.last_updated
             }
             
             try:
@@ -1606,6 +1609,7 @@ async def my_games(
         embed.set_footer(text=f"Use /game-info <game_id> for more details")
 
     except Exception as e:
+        logger.exception(f'User: {interaction.user.id} tried to get their games. Error: {e}')
         embed.description = "No games found"
         embed.color = discord.Color.red()
     

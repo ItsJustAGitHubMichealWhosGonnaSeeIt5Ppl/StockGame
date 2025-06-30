@@ -40,7 +40,7 @@ Users = TypeAdapter(list[User])
 
 # Game
 class Game(BaseModel):
-    id: str| int = Field(validation_alias=AliasChoices('game_id')) # After v0.0.5 game IDs should be strings
+    id: str | int = Field(validation_alias=AliasChoices('game_id')) # After v0.0.5 game IDs should be strings
     template_id: Optional[int] = None
     name: str = Field(max_length=35, min_length=1) # Prevent blank names
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
@@ -137,7 +137,7 @@ StockPrices = TypeAdapter(list[StockPrice])
 class GameParticipant(BaseModel):
     id: int = Field(validation_alias=AliasChoices('participation_id'))
     user_id: int
-    game_id: int
+    game_id: int | str
     name: Optional[str] = None
     status: ParticipantStatus = 'active'
     datetime_joined: datetime # YYYY-MM-DD HH:MM:SS 
@@ -179,6 +179,7 @@ class GameLeaderboard(BaseModel):
     joined: datetime
     change_dollars: float
     change_percent: float
+    last_updated: datetime | None = None
 
 class GameInfo(BaseModel):
     game: Game

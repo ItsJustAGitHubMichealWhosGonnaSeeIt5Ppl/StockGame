@@ -1549,6 +1549,7 @@ class Frontend: # This will be where a bot (like discord) interacts
                         'joined': player.datetime_joined,
                         'change_dollars': round(player.change_dollars, 2) if player.change_dollars else 0, # Round to two decimal places
                         'change_percent': round(player.change_percent, 2) if player.change_percent else 0, # Round to two decimal places
+                        'last_updated': player.last_updated
                     }) # Should keep order
             except LookupError: # No players in game
                 self.logger.info(f'No players are currently in game: {game_id}')
@@ -1618,7 +1619,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         #TODO should this alow filtering for inactive games, etc.?
         self.register(user_id) # Must try to register user
         try:
-            players = self.be.get_many_participants(user_id=int(user_id))
+            players = self.be.get_many_participants(user_id=user_id)
         except LookupError:
             raise LookupError('Player is not in any games.')
         games = {

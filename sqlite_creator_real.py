@@ -11,6 +11,44 @@ load_dotenv()
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
+expected_columns = {
+    'database_info': {'db_version', 'datetime_created', 'last_updated'},
+    'users': {
+        'user_id', 'display_name', 'source', 'permissions',
+        'change_dollars', 'change_percent', 'last_updated',
+        'overall_wins', 'datetime_created'
+    },
+    'game_templates': {
+        'template_id', 'game_name', 'status', 'owner_user_id',
+        'start_money', 'pick_count', 'pick_date', 'draft_mode',
+        'private_game', 'allow_selling', 'update_frequency',
+        'start_date', 'create_days_in_advance', 'recurring_period',
+        'game_length', 'datetime_created', 'last_updated'
+    },
+    'games': {
+        'game_id', 'template_id', 'status', 'start_money', 'pick_count',
+        'pick_date', 'draft_mode', 'private_game', 'allow_selling',
+        'update_frequency', 'start_date', 'game_length', 'owner_user_id',
+        'datetime_created', 'last_updated'
+    },
+    'stocks': {'ticker', 'name', 'datetime_created', 'last_updated'},
+    'stock_prices': {
+        'ticker', 'datetime', 'price', 'market_cap',
+        'pe_ratio', 'dividend_yield', 'datetime_created', 'last_updated'
+    },
+    'game_participants': {
+        'game_id', 'user_id', 'cash', 'net_worth', 'return_percent',
+        'datetime_created', 'last_updated'
+    },
+    'stock_picks': {
+        'game_id', 'user_id', 'ticker', 'quantity',
+        'avg_buy_price', 'datetime_created', 'last_updated'
+    },
+    'database_info': {
+        'database_name', 'original_version', 'current_version',
+        'datetime_created', 'last_updated'
+    }
+}
 
 db_ver = "0.1.0" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
 def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
@@ -73,7 +111,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                     if send.reason == 'DUPLICATE COLUMN NAME': # The column is already there, not a big deal so keep moving
                         continue
                     else:
-                        raise Exception('An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3', send) # Sometimes gives error but does what its asked anyway...
+                        raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n{e}', send) # Sometimes gives error but does what its asked anyway...
 
     
     try:
@@ -137,11 +175,19 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
             rows:tuple = status.result
             rows_to_add = list()
             for row in rows:
+                allowed_keys = expected_columns.get(table, set())
+                unexpected = [key for key in row.keys() if key not in allowed_keys]
+                if unexpected:
+                    raise ValueError(
+                        f"Unexpected columns in table '{table}': {unexpected}"
+              )
+
+                
                 if 'datetime_updated' in row: 
                     row['last_updated'] = row.pop('datetime_updated') # Rename
                     
-                if 'datetime_crested' in row: # IDK when I did this lol
-                    row['datetime_created'] = row.pop('datetime_crested') # Rename
+                # if 'datetime_created' in row: # IDK when I did this lol
+                #     row['datetime_created'] = row.pop('datetime_created') # Rename
                 
                 if table == 'users' and row['source'] == None: # Some users don't have a source
                     row['source'] = 'Unknown'
