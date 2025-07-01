@@ -109,8 +109,8 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
     
     # Consolidated all of the changes to here since itll be easier that way
     if db_ver in ['0.0.3', '0.0.4b1', '0.0.4b2', '0.0.4b3', '0.0.5'] or force_upgrade: # Upgrade to version 0.1.0 (MAJOR CHANGE) 
-        os.rename(db_name, f'pre_005_{db_name}') # Rename the current database
-        old_db = SqlHelper(f'pre_005_{db_name}') # Attach to old DB
+        os.rename(db_name, f'{db_name.replace(".db", "_pre_005.db")}') # Rename the current database
+        old_db = SqlHelper(f'{db_name.replace(".db", "_pre_005.db")}') # Attach to old DB
         create(db_name=db_name, upgrade=False) # Recreate
         old_tables = { # This will hold all the old DBs, probably not a great way to do it but fuck it
             'database_info': old_db.get(table='database_info'),
@@ -124,7 +124,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
         }
         def revert(): # Revert changes
             os.remove(db_name) # Remove failed db
-            os.rename(f'pre_005_{db_name}', db_name) # Revert db
+            os.rename(f'{db_name.replace(".db", "_pre_005.db")}', db_name) # Revert db
         
         for table, status in old_tables.items():
             if status.status != 'success' and status.reason != 'NO ROWS RETURNED': # Confirm we actually got a response
