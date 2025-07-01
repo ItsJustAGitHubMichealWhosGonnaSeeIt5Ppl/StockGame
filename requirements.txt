@@ -4,4 +4,3 @@ yfinance==0.2.61
 pydantic==2.11.5
 pytz==2025.2
 python-dateutil==2.9.0.post0
-Pillow==11.2.1
