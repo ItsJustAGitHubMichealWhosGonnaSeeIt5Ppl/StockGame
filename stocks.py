@@ -263,7 +263,7 @@ class Backend:
             return id
 
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -284,14 +284,20 @@ class Backend:
         Returns:
             Status: Game creation status.
         """
-        #TODO make a Literal for update_frequency
-        #TODO accept datetime for date fields
+        
         #TODO maybe this should return the game ID
         # Date formatting validation
         
         if isinstance(start_date, date): # TODO this might crash idk
             try:
                 start_date = start_date.strftime('%Y-%m-%d') # Convert date
+            except Exception as e:
+                #TODO find valid errors here
+                raise e
+        
+        if isinstance(pick_date, date): # TODO this might crash idk
+            try:
+                pick_date = pick_date.strftime('%Y-%m-%d') # Convert date
             except Exception as e:
                 #TODO find valid errors here
                 raise e
@@ -302,15 +308,16 @@ class Backend:
             except Exception as e:
                 #TODO find valid errors here
                 raise e
+        
+        if end_date: # Enddate stuff
+            if not self._validate_date(end_date): # It will be a string here
+                raise bexc.InvalidDateFormatError('Invalid `end_date` format.')
+            if datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
+                raise ValueError('`end_date` must be after `start_date`.')
             
             
         if not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
-        if end_date: # Enddate stuff
-            if not self._validate_date(end_date):
-                raise bexc.InvalidDateFormatError('Invalid `end_date` format.')
-            if datetime.strptime(start_date, "%Y-%m-%d").date() > datetime.strptime(end_date, "%Y-%m-%d").date():
-                raise ValueError('`end_date` must be after `start_date`.')
             
         if pick_date and not self._validate_date(pick_date):
             raise bexc.InvalidDateFormatError('Invalid `pick_date` format.')
@@ -323,7 +330,7 @@ class Backend:
                 raise ValueError('`start_date` must be after `pick_date` when `exclusive_picks` is enabled.')
     
         # Misc
-        if update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
+        if update_frequency not in dtv.UpdateFrequency: #TODO can this use dtv.UpdateFrequency?
             raise ValueError(f'Invalid update frequency {update_frequency}')
         if starting_money < 1.0:
             raise ValueError('`starting_money` must be atleast `1.0`.')
@@ -1088,7 +1095,7 @@ class GameLogic: # Might move some of the control/running actions here
                             start_date=next_start_date,
                             end_date=next_start_date + relativedelta(months=template.game_length) if template.game_length != 0 else None,
                             starting_money=template.start_money,
-                            pick_date= template.pick_date + relativedelta(months=template.game_length + existing_games) if template.pick_date else None,
+                            pick_date= next_start_date + relativedelta(days=template.pick_date) if template.pick_date != 0 else None
                             private_game=template.private_game,
                             total_picks=template.pick_count,
                             exclusive_picks=template.draft_mode,
@@ -1340,6 +1347,7 @@ class GameLogic: # Might move some of the control/running actions here
             else:
                 raise ValueError(f'Failed to add `ticker` {ticker}.')
         pass
+
 
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
