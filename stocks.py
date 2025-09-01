@@ -1095,7 +1095,7 @@ class GameLogic: # Might move some of the control/running actions here
                             start_date=next_start_date,
                             end_date=next_start_date + relativedelta(months=template.game_length) if template.game_length != 0 else None,
                             starting_money=template.start_money,
-                            pick_date= next_start_date + relativedelta(days=template.pick_date) if template.pick_date != 0 else None
+                            pick_date= next_start_date + relativedelta(days=template.pick_date) if template.pick_date != 0 else None,
                             private_game=template.private_game,
                             total_picks=template.pick_count,
                             exclusive_picks=template.draft_mode,
