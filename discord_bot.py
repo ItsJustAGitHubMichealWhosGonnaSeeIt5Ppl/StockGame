@@ -49,6 +49,7 @@ intents.members = True
 # Testing variables
 ephemeral_test = True # Set to False for testing, True for production
 name_cutoff = 25 # Cut names off at 25 characters
+dev_role_id = 1412173045350666271
 
 # Logger thing
 now = datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
@@ -85,7 +86,7 @@ def has_permission(user:discord.member.Member):
         bool: True if allowed
     """
     
-    return user.guild_permissions.administrator
+    return user.guild_permissions.administrator or dev_role_id in [role.id for role in user.roles]
 
 def simple_embed(status:str, title:str, desc:Optional[str]=None):
     """Create a simple discord embed object
