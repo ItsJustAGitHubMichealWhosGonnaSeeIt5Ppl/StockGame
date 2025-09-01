@@ -866,7 +866,7 @@ async def delete_game(
         embed.color = discord.Color.green()
     except PermissionError:
         if isinstance(interaction.user, discord.member.Member) and has_permission(user=interaction.user):
-            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=False)
+            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=True)
             embed.title = "Success"
             embed.description = f"Game with the id {game_id} has been successfully deleted"
             embed.color = discord.Color.green()
