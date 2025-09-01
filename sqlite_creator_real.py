@@ -72,7 +72,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                     if send.reason == 'DUPLICATE COLUMN NAME': # The column is already there, not a big deal so keep moving
                         continue
                     else:
-                        raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n{e}', send) # Sometimes gives error but does what its asked anyway...
+                        raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n', send) # Sometimes gives error but does what its asked anyway...
 
     
     try:
