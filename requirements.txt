@@ -1,4 +1,4 @@
-discord.py==2.5.2
+discord.py==2.6.3
 python-dotenv==1.1.0
 yfinance==0.2.61
 pydantic==2.11.5
