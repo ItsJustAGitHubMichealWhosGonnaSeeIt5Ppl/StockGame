@@ -5,7 +5,7 @@ import os
 import random
 import string
 import re
-from typing import Optional, Type
+from typing import Optional, Type, get_args
 
 # EXTERNAL
 from dateutil.relativedelta import relativedelta
@@ -39,10 +39,12 @@ class Backend:
         Args:
             db_name (str): Database name.
         """
+        
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockBackend')
         self.sql = SqlHelper(db_name)
         self.logger.info('Initiated new Backend instance.')
+        
 
     # # INTERNAL # #
     def _single_get(self, model:Type[dtv.PydanticModelType], resp:Status)-> dtv.PydanticModelType: # Handle single gets
@@ -330,7 +332,7 @@ class Backend:
                 raise ValueError('`start_date` must be after `pick_date` when `exclusive_picks` is enabled.')
     
         # Misc
-        if update_frequency not in dtv.UpdateFrequency: #TODO can this use dtv.UpdateFrequency?
+        if update_frequency not in get_args(dtv.UpdateFrequency): #TODO can this use dtv.UpdateFrequency?
             raise ValueError(f'Invalid update frequency {update_frequency}')
         if starting_money < 1.0:
             raise ValueError('`starting_money` must be atleast `1.0`.')
@@ -1016,12 +1018,18 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             db_name (str): Database name.
         """
+        from curl_cffi.requests import Session
+        import certifi
+        import pycurl
+
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockGameLogic')
         self.be = Backend(db_name)
         self.market_open_est = datetime.strptime(market_open_est,"%H:%M")
         self.market_close_est = datetime.strptime(market_close_est,"%H:%M")
         self.est_offset = self._market_time_offset()
+        self._yf_session = Session()
+        self._yf_session.curl.setopt(pycurl.CAINFO, certifi.where())
     
     def _is_market_hours(self): # Only considers hours
         """Check whether the time is inside our outside of market hours.  Does not consider weekends, etc.
@@ -1328,7 +1336,7 @@ class GameLogic: # Might move some of the control/running actions here
             self.be.get_stock(ticker_or_id=ticker)
             
         except LookupError: # Stock doesnt exist, add
-            stock = yf.Ticker(ticker)
+            stock = yf.Ticker(ticker, session=self._yf_session)
             try:
                 info = stock.info
                 if "country" in info and info["country"] != "United States":
