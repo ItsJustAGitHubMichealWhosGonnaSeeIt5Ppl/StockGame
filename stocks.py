@@ -1018,9 +1018,6 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             db_name (str): Database name.
         """
-        from curl_cffi.requests import Session
-        import certifi
-        import pycurl
 
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockGameLogic')
@@ -1028,8 +1025,6 @@ class GameLogic: # Might move some of the control/running actions here
         self.market_open_est = datetime.strptime(market_open_est,"%H:%M")
         self.market_close_est = datetime.strptime(market_close_est,"%H:%M")
         self.est_offset = self._market_time_offset()
-        self._yf_session = Session()
-        self._yf_session.curl.setopt(pycurl.CAINFO, certifi.where())
     
     def _is_market_hours(self): # Only considers hours
         """Check whether the time is inside our outside of market hours.  Does not consider weekends, etc.
@@ -1336,7 +1331,7 @@ class GameLogic: # Might move some of the control/running actions here
             self.be.get_stock(ticker_or_id=ticker)
             
         except LookupError: # Stock doesnt exist, add
-            stock = yf.Ticker(ticker, session=self._yf_session)
+            stock = yf.Ticker(ticker)
             try:
                 info = stock.info
                 if "country" in info and info["country"] != "United States":
