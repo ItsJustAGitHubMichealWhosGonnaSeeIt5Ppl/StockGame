@@ -5,7 +5,7 @@ import os
 import random
 import string
 import re
-from typing import Optional, Type
+from typing import Optional, Type, get_args
 
 # EXTERNAL
 from dateutil.relativedelta import relativedelta
@@ -39,10 +39,12 @@ class Backend:
         Args:
             db_name (str): Database name.
         """
+        
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockBackend')
         self.sql = SqlHelper(db_name)
         self.logger.info('Initiated new Backend instance.')
+        
 
     # # INTERNAL # #
     def _single_get(self, model:Type[dtv.PydanticModelType], resp:Status)-> dtv.PydanticModelType: # Handle single gets
@@ -330,7 +332,7 @@ class Backend:
                 raise ValueError('`start_date` must be after `pick_date` when `exclusive_picks` is enabled.')
     
         # Misc
-        if update_frequency not in dtv.UpdateFrequency: #TODO can this use dtv.UpdateFrequency?
+        if update_frequency not in get_args(dtv.UpdateFrequency): #TODO can this use dtv.UpdateFrequency?
             raise ValueError(f'Invalid update frequency {update_frequency}')
         if starting_money < 1.0:
             raise ValueError('`starting_money` must be atleast `1.0`.')
@@ -1016,6 +1018,7 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             db_name (str): Database name.
         """
+
         create_db(db_name) # Try to create DB
         self.logger = logging.getLogger('StockGameLogic')
         self.be = Backend(db_name)
