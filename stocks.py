@@ -1484,8 +1484,9 @@ class Frontend: # This will be where a bot (like discord) interacts
         
 
         try:  # Create game
-            if not name.isalnum():
-                raise ValueError("Name must be alphanumeric!")
+            # Allow alphanumeric characters and spaces
+            if not all(c.isalnum() or c.isspace() for c in name):
+                raise ValueError("Name must be alphanumeric (spaces allowed)!")
             self.be.add_game(
                 user_id=user_id,
                 name=self.clean_text(name),
@@ -1749,7 +1750,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         self.register(user_id) # Must try to register user
         if (user_id != self.owner_id) and enforce_permissions:
-            raise PermissionError(f'User {user_id} is not allowed to manage game {game_id}')
+            raise PermissionError(f'User <@{user_id}> is not allowed to manage game {game_id}')
 
         
         self.gl.update_all(game_id=game_id, force=True) # 

@@ -311,7 +311,7 @@ async def on_ready():
     total_picks="Number of stocks each player can pick",
     exclusive_picks="Whether stocks can only be picked once",
     private_game="Whether the game is private (requires owner approval for new users)",
-    update_frequency="How often prices should update ('daily', 'hourly') #, 'minute', 'realtime')"
+    update_frequency="How often prices should update ('daily', 'hourly')" #, 'minute', 'realtime')"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
@@ -324,7 +324,7 @@ async def create_game_advanced(
     exclusive_picks: bool = False,
     private_game: bool = False,
     pick_date: str | None = None,
-    update_frequency: Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
+    update_frequency: Literal['daily', 'hourly'] = "daily", #Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
     # sell_during_game: bool = False
 ):
     # Create game using frontend and return
@@ -1204,7 +1204,6 @@ async def update(
     try:
         fe.force_update(
             user_id=interaction.user.id,
-            # game_id=game_id, # NOT IMPLEMENTED IN force_update
             enforce_permissions=True
         )
         embed.title = "Success"
@@ -1218,7 +1217,6 @@ async def update(
         embed.title = "Failed"
         embed.description = f"There was an error while executing this command:\n{e}"
         embed.color = discord.Color.red()
-
 
     await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
 
@@ -1345,6 +1343,7 @@ async def my_stocks(
     
     try:
         picks = fe.my_stocks(user_id, game_id)
+        info = fe.game_info(game_id)
         
         # Prepare data for image generator
         user_data = {
@@ -1373,7 +1372,7 @@ async def my_stocks(
         
         # Generate image
         generator = StockPortfolioImageGenerator(theme='discord_dark')
-        image_buffer = generator.create_portfolio_image(user_data, game_data, stock_picks)
+        image_buffer = generator.create_portfolio_image(user_data, game_data, stock_picks, info)
         
         # Create Discord file
         file = discord.File(image_buffer, filename=f"portfolio_{user_id}_{game_id}.png")
@@ -1390,7 +1389,7 @@ async def my_stocks(
             title='Not in Game',
             desc='You are not currently participating in this game. You can try to join it using the join-game command.'
         )
-        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
         
     except LookupError:
         embed = simple_embed(
@@ -1398,7 +1397,7 @@ async def my_stocks(
             title='No Stocks Found', 
             desc=f'You don\'t currently have any stocks in game: {game_id}'
         )
-        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
         
     except Exception as e:
         logger.exception(f'User: {interaction.user.id} tried to generate portfolio image for game: {game_id}. Error: {e}')
@@ -1407,7 +1406,7 @@ async def my_stocks(
             title='Error Generating Portfolio',
             desc='An unexpected error occurred while generating your portfolio image'
         )
-        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
 
 
 # GAME INFO RELATED-
@@ -1686,14 +1685,14 @@ All commands include built-in hints and help when you run them!
 - `/create-game` - Guided setup for stock game creation
 - `/create-game-advanced` - Create a new stock game without a wizard
 - `/manage-game` - Manage an existing stock game
-- `/delete-game` - For admins to delete games if needed
+- `/delete-game` - For owners and admins to delete games
 - `/invite` - Invite a user to a game
 - `/manage-pending` - Approve or deny pending users for your private game
 
 ### Playing Games
 - `/join-game` - Join an existing stock game
 - `/buy-stock` - Buy a stock in a game
-- `/remove-stock` - Remove a stock from your picks
+- `/remove-stock` - Remove a pending stock from your picks
 - `/my-stocks` - View your stocks in a game as a visual portfolio
 
 ### Information & Stats
