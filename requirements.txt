@@ -1,7 +1,10 @@
 discord.py==2.5.2
 python-dotenv==1.1.0
-yfinance
+yfinance==1.5.2
 pydantic==2.12.3
 pytz==2025.2
 python-dateutil==2.9.0.post0
 Pillow==11.2.1
+pandas==3.0.5
+beautifulsoup4==4.15.0
+requests==2.34.2

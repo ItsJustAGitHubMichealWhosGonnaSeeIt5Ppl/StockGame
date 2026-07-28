@@ -14,8 +14,7 @@ date_format = '%b/%Y' # If showing date, set the format (use datetime.strftime f
 # Players will be able to join after the game starts (pick date is not set) 
 
 
-# # # # DANGER ZONE - ONLY CHANGE IF YOU KNOW WHAT YOU'RE DOING # # # #
-## IMPORTS
+## IMPORTS
 # BUILT-IN
 from datetime import datetime, timedelta
 import logging
@@ -23,48 +22,60 @@ import os
 
 # EXTERNAL
 from dateutil.relativedelta import relativedelta
+from dotenv import load_dotenv
 
 # INTERNAL
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(current_dir))
 from stocks import Backend
-# Logging setup
-logger = logging.getLogger('RecurringGames')
-# Environment vars, hope they set them lol
-#TODO check if they set them (lol)
-try:
-    DB_NAME = str(os.getenv('DB_NAME'))
-    OWNER = int(os.getenv("OWNER"))
+
+def main():
+    load_dotenv()
+    # Logging setup
+    logger = logging.getLogger('RecurringGames')
+    # Environment vars
+    db_name = os.getenv('DB_NAME')
+    owner = os.getenv('OWNER')
+    if not db_name or not owner:
+        raise RuntimeError('DB_NAME and OWNER must be set.')
+    try:
+        OWNER = int(owner)
+    except ValueError as exc:
+        raise RuntimeError('OWNER must be a numeric user ID.') from exc
+    DB_NAME = db_name
     logger.debug(f'DB name: {DB_NAME} | Owner ID: {OWNER}')
-except Exception as e: #TODO errors
-    logger.exception('Error when getting environment variables', exc_info=e)
-    raise Exception(f'An unexpected error occurred while getting enviroment variables', e)
-be = Backend(db_name=DB_NAME) # Create backend thing
+    be = Backend(db_name=DB_NAME)
 
-# Date stuff
-today = datetime.today() # Current date
-start_of_month = today + relativedelta(months=1, day =1) # The 1st of the month
-str_start_month = datetime.strftime(start_of_month, '%Y-%m-%d') # TODO just let add_game accept datetime
-end_of_month = start_of_month + relativedelta(months=1, days=-1) #The last of the month (IDK if there is another way to get)
-days_untl_nxt_mnth: timedelta = start_of_month - today # How many days until the next month
+    # Date stuff
+    today = datetime.today()
+    start_of_month = today + relativedelta(months=1, day=1)
+    str_start_month = datetime.strftime(start_of_month, '%Y-%m-%d')
+    end_of_month = start_of_month + relativedelta(months=1, days=-1)
+    days_untl_nxt_mnth: timedelta = start_of_month - today
 
-if days_untl_nxt_mnth.days <= create_days_before: # Game should be created
-    exists = False 
-    logger.debug(f'Trying to create game "{name}".')
-    existing_games = be.get_many_games(name=name, owner_id=OWNER) # Get existing open and active games to avoid creaating the same game twice # TODO find a better way to track this
-    for game in existing_games: 
-        if game.start_date == start_of_month and game.end_date and game.end_date == end_of_month: # TODO does this actually work
-            logger.warning(f'Game "{name}" not created.  Found game ID({game.id}) with the same name, start date, and end date.')
-            exists = True
-    if not exists:
-        try:
-            be.add_game(
-                user_id=int(OWNER), #STOP COMPLAINING (ok it was complaining before I swear)
-                name=name.format(date=datetime.strftime(start_of_month, date_format)),
-                start_date=str_start_month,
-                end_date=datetime.strftime(end_of_month, '%Y-%m-%d')
-                )
-            logger.debug(f'Created game "{name}".')
-        except Exception as e: #TODO errors
-            logger.exception(f'Error when creating game "{name}".', exc_info=e)
-            raise Exception(f'An unexpected error occurred while trying to create game "{name}"', e)
-else:
-    logger.debug(f'Game "{name}" not created.  {days_untl_nxt_mnth} days until the start of next month.  Game are set to be created with {create_days_before} days or less until the next month.')
+    if days_untl_nxt_mnth.days <= create_days_before:
+        exists = False
+        logger.debug(f'Trying to create game "{name}".')
+        existing_games = be.get_many_games(name=name, owner_id=OWNER)
+        for game in existing_games:
+            if game.start_date == start_of_month and game.end_date and game.end_date == end_of_month:
+                logger.warning(f'Game "{name}" not created.  Found game ID({game.id}) with the same name, start date, and end date.')
+                exists = True
+        if not exists:
+            try:
+                be.add_game(
+                    user_id=int(OWNER),
+                    name=name.format(date=datetime.strftime(start_of_month, date_format)),
+                    start_date=str_start_month,
+                    end_date=datetime.strftime(end_of_month, '%Y-%m-%d')
+                    )
+                logger.debug(f'Created game "{name}".')
+            except Exception as e:
+                logger.exception(f'Error when creating game "{name}".', exc_info=e)
+                raise Exception(f'An unexpected error occurred while trying to create game "{name}"', e)
+    else:
+        logger.debug(f'Game "{name}" not created.  {days_untl_nxt_mnth} days until the start of next month.  Game are set to be created with {create_days_before} days or less until the next month.')
+
+if __name__ == "__main__":
+    main()

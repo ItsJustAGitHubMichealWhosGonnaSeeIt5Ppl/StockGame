@@ -1,5 +1,7 @@
 import sqlite3
 import os 
+from pathlib import Path
+import shutil
 from helpers.sqlhelper import SqlHelper, _iso8601
 from dotenv import load_dotenv
 
@@ -13,156 +15,100 @@ load_dotenv()
 
 db_ver = "0.1.0" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
 def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
-    """Upgrade your database to the latest version
+    """Rebuild an older schema into the current schema and keep a backup.
 
-    Args:
-        db_current_ver (str): The current database version. Defaults to current version set by script.
-        db_name (str): Database name.
-        force_upgrade (bool, optional): If True, will try to run all upgrades regardless of what version your database is. Defaults to False.
-
-    ILL DO THESE LATER
-    Raises:
-        Exception: _description_
-        Exception: _description_
-        ValueError: _description_
-        Exception: _description_
-        Exception: _description_
+    The source database is never moved or deleted until the rebuilt temporary
+    database has copied all rows and passed SQLite's foreign-key check.
     """
-    # Force upgrade will try to run EVERY migration except v001_to_v002 because I don't feel like fixing that one and you can't make me
-    current_ver = db_current_ver
-    sql = SqlHelper(db_name)
-    
-    def v001_to_v002(db_name:str, user_source:str): # Help migrate to new DB version without losing data
-        """Migrate v0.0.1 DB to v0.0.2
-        
-
-        Args:
-            db_name (str): Existing database name.
-            user_source (str): Default source to set for existing users.
-        """
-        sql = SqlHelper(db_name)
-        
-        # Create new column in user table
-        query = """ALTER TABLE users
-        ADD source TEXT"""
-        send = sql.send_query(query)
-        if send.status == 'error':
-            print(send) # Sometimes gives error but does what its asked anyway...
-        pass
-
-    def v002_to_v003(db_name:str,): # OLD SYSTEM #TODO move this
-        """Migrate v0.0.2 DB to v0.0.3 (see changelog)
-
-        Args:
-            db_name (str): Existing database name.
-        """
-        sql = SqlHelper(db_name)
-        # Create new column in user table
-        tables = ['games', 'game_participants', 'stock_picks']
-        default_queries = ["ALTER TABLE {table} ADD change_dollars TEXT DEFAULT NULL", "ALTER TABLE {table} ADD change_percent TEXT DEFAULT NULL"]
-        game_queries = ["ALTER TABLE {table} ADD datetime_updated TEXT DEFAULT NULL"] # Add this to games
-        for table in tables:
-            if table == 'games':
-                queries = default_queries.copy() + game_queries
-            else:
-                queries = default_queries
-            for query in queries:
-                send = sql.send_query(query.format(table=table),mode='insert')
-                if send.status == 'error':
-                    if send.reason == 'DUPLICATE COLUMN NAME': # The column is already there, not a big deal so keep moving
-                        continue
-                    elif send.reason == 'NO ROWS RETURNED' or send.reason == 'NO ROWS EFFECTED':
-                        total = sql.get(table="table")
-                        if total.reason == 'NO ROWS RETURNED': # Should fix issues if something that has no lines is attempted to be upgraded
-                            continue
-                        else:
-                            raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n', send)
-                    else:
-                        raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n', send) # Sometimes gives error but does what its asked anyway...
-
-    
+    target_version = db_current_ver
+    source_path = Path(db_name)
+    source = sqlite3.connect(source_path)
+    source.row_factory = sqlite3.Row
     try:
-        info = sql.get(table='database_info', filters={'database_name': db_name})
-    except Exception as e: # TODO find errors
-        raise Exception(e)
-    
-    def make_changes(changes:dict):
-        """Simple function to apply changes for a version
+        has_info = source.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='database_info'"
+        ).fetchone()
+        info_row = None
+        if has_info:
+            info_row = source.execute(
+                "SELECT original_version, current_version FROM database_info LIMIT 1"
+            ).fetchone()
+        current_version = info_row['current_version'] if info_row else '0.0.2'
+        original_version = info_row['original_version'] if info_row else current_version
+        if current_version == target_version and not force_upgrade:
+            return None
 
-        Args:
-            changes (dict): Changes.  Format: {'<table>': {'<add/rename>': ['<column>']}}
-
-        """
-        
-        for table, change_type in changes.items():
-            pass
-        #TODO IDFK what im doing man :(
-        
-    
-    if info.status == 'success':
-        db_ver = info.result[0]['current_version']
-
-    elif info.reason == 'NO ROWS RETURNED' or force_upgrade: # The table exists, but there isn't a row OR force migrate is set
-        v002_to_v003(db_name=db_name) # Try to migrate from v 0.0.2 just in case
-        sql.insert(table='database_info', items={'database_name': db_name, 'original_version': '0.0.2', 'current_version': '0.0.3', 'datetime_created': _iso8601()})
-        db_ver = '0.0.3' if info.reason == 'NO ROWS RETURNED' else db_ver # DB ver should exist unless the database was forcefully migrated
-    
-    else: # IDFK how we'd even even up here
-        raise ValueError(f'Failed to get information for database: {db_name}')
-    
-    if db_ver == current_ver and not force_upgrade: # No changes needed
-        return 
-    
-    # Consolidated all of the changes to here since itll be easier that way
-    if db_ver in ['0.0.3', '0.0.4b1', '0.0.4b2', '0.0.4b3', '0.0.5'] or force_upgrade: # Upgrade to version 0.1.0 (MAJOR CHANGE) 
-        os.rename(db_name, f'{db_name.replace(".db", "_pre_005.db")}') # Rename the current database
-        old_db = SqlHelper(f'{db_name.replace(".db", "_pre_005.db")}') # Attach to old DB
-        create(db_name=db_name, upgrade=False) # Recreate
-        old_tables = { # This will hold all the old DBs, probably not a great way to do it but fuck it
-            'database_info': old_db.get(table='database_info'),
-            'users': old_db.get(table='users'),
-            'game_templates': old_db.get(table='game_templates'),
-            'games': old_db.get(table='games'),
-            'stocks': old_db.get(table='stocks'),
-            'stock_prices': old_db.get(table='stock_prices'),
-            'game_participants': old_db.get(table='game_participants'),
-            'stock_picks': old_db.get('stock_picks')
-        }
-        def revert(): # Revert changes
-            os.remove(db_name) # Remove failed db
-            os.rename(f'{db_name.replace(".db", "_pre_005.db")}', db_name) # Revert db
-        
-        for table, status in old_tables.items():
-            if status.status != 'success' and status.reason != 'NO ROWS RETURNED': # Confirm we actually got a response
-                revert()
-                raise ValueError(f'Failed to retreive {table}. Reason: {status.reason}. reverting changes')
-            if status.result == None: # No items skip it
+        temp_path = source_path.with_name(source_path.name + '.upgrade.tmp')
+        if temp_path.exists():
+            temp_path.unlink()
+        create(str(temp_path), upgrade=False)
+        destination = sqlite3.connect(temp_path)
+        destination.execute('PRAGMA foreign_keys = OFF')
+        table_order = (
+            'users', 'game_templates', 'games', 'stocks', 'stock_prices',
+            'game_participants', 'stock_picks',
+        )
+        now = _iso8601()
+        for table in table_order:
+            exists = source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if not exists:
                 continue
-            assert isinstance(status.result, tuple)
-            rows:tuple = status.result
-            rows_to_add = list()
-            for row in rows:                
-                if 'datetime_updated' in row: 
-                    row['last_updated'] = row.pop('datetime_updated') # Rename
-                    
-                if 'datetime_created' in row: # IDK when I did this lol
-                    row['datetime_created'] = row.pop('datetime_created') # Rename
-                
-                if table == 'users' and row['source'] == None: # Some users don't have a source
+            destination_columns = {
+                row[1] for row in destination.execute(f'PRAGMA table_info("{table}")')
+            }
+            for source_row in source.execute(f'SELECT * FROM "{table}"'):
+                row = dict(source_row)
+                if 'datetime_updated' in row and 'last_updated' not in row:
+                    row['last_updated'] = row.pop('datetime_updated')
+                if table == 'users' and not row.get('source'):
                     row['source'] = 'Unknown'
-                
-                if table == 'stock_picks' and 'datetime_created' not in row: # Was added in v0.0.4b3
-                    row['datetime_created'] = row['datetime_updated'] if 'datetime_updated' in row else row['last_updated']# This is probably right
-                
-                ins = sql.insert(table=table, items=row)
-                if ins.status !='success':
-                    revert()
-                    raise ValueError(f'Failed to add row to {table}. Reason: {ins.reason}. Row: {row}. Reverting changes')
-         
-    # Set the current version
-    upd = sql.update(table='database_info', filters={'database_name': db_name}, items={'current_version': current_ver, 'last_updated': _iso8601()})
-    if upd.status !='success':
-        raise Exception(f'An unexpected error occurred while trying to set the database version to {current_ver}', upd)
+                if table == 'game_templates':
+                    row.setdefault('template_name', row.get('game_name') or 'Recurring game')
+                    row.setdefault('game_name', row.get('template_name') or 'Recurring game')
+                if table == 'stock_picks' and not row.get('datetime_created'):
+                    row['datetime_created'] = row.get('last_updated') or now
+                row.setdefault('datetime_created', now)
+                filtered = {key: value for key, value in row.items() if key in destination_columns}
+                columns = list(filtered)
+                placeholders = ','.join('?' for _ in columns)
+                quoted_columns = ','.join(f'"{column}"' for column in columns)
+                destination.execute(
+                    f'INSERT INTO "{table}" ({quoted_columns}) VALUES ({placeholders})',
+                    [filtered[column] for column in columns],
+                )
+
+        destination.execute('DELETE FROM database_info')
+        destination.execute(
+            """INSERT INTO database_info
+               (database_name, original_version, current_version, datetime_created, last_updated)
+               VALUES (?, ?, ?, ?, ?)""",
+            (str(source_path), original_version, target_version, now, now),
+        )
+        destination.commit()
+        destination.execute('PRAGMA foreign_keys = ON')
+        violations = destination.execute('PRAGMA foreign_key_check').fetchall()
+        if violations:
+            raise ValueError(f'Foreign-key violations after database upgrade: {violations}')
+        destination.close()
+    except Exception:
+        if 'destination' in locals():
+            destination.close()
+        if 'temp_path' in locals() and temp_path.exists():
+            temp_path.unlink()
+        raise
+    finally:
+        source.close()
+
+    backup_path = source_path.with_name(source_path.name + '.pre-010.bak')
+    counter = 1
+    while backup_path.exists():
+        backup_path = source_path.with_name(source_path.name + f'.pre-010.{counter}.bak')
+        counter += 1
+    shutil.copy2(source_path, backup_path)
+    os.replace(temp_path, source_path)
+    return str(backup_path)
 
 
 def create(db_name:str, upgrade:bool=True):
@@ -253,6 +199,17 @@ def create(db_name:str, upgrade:bool=True):
     ### Removed
     """    
     
+    preexisting_tables: set[str] = set()
+    if os.path.exists(db_name) and os.path.getsize(db_name) > 0:
+        inspection = sqlite3.connect(db_name)
+        preexisting_tables = {
+            row[0]
+            for row in inspection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        inspection.close()
+
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
     cursor.execute("PRAGMA foreign_keys = ON;") # Enable foreign key constraint enforcement (important for data integrity (According to Gemini))
@@ -325,7 +282,7 @@ def create(db_name:str, upgrade:bool=True):
     cursor.execute("""CREATE TABLE IF NOT EXISTS games (
         game_id TEXT PRIMARY KEY,
         template_id DEFAULT NULL,                             -- Track games created from template
-        name TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
         description TEXT DEFAULT NULL,
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 
         start_money REAL NOT NULL CHECK(start_money > 0),     -- Set starting money, value is in USD (Ensure positive starting amount)
@@ -361,7 +318,7 @@ def create(db_name:str, upgrade:bool=True):
         exchange TEXT NOT NULL,         -- Stock exchange that it is listed on should alwaws be lowercase
         company_name TEXT,              -- Optional?
         
-        UNIQUE (ticker, exchange)
+        UNIQUE (ticker)
         );""")
 
     # Stock price (current and historical) table
@@ -382,7 +339,7 @@ def create(db_name:str, upgrade:bool=True):
     cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
         participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
-        game_id INTEGER NOT NULL,
+        game_id TEXT NOT NULL,
         name TEXT,                              -- Optional 'team' name
         status TEXT DEFAULT 'active',           -- A participant (player) status.  Can be 'pending', 'active', 'inactive'.  Pending will be used if a player tries to join a private game
         datetime_joined TEXT NOT NULL,          -- ISO8601 (YYYY-MM-DD HH:MM:SS)
@@ -424,7 +381,8 @@ def create(db_name:str, upgrade:bool=True):
     sql = SqlHelper(db_name)
     info = sql.get(table="database_info")
     if info.status == 'error' and info.reason == "NO ROWS RETURNED": # likely brand new
-        upd = sql.insert(table='database_info', items={'database_name': db_name, 'original_version': db_ver, 'current_version': db_ver, 'datetime_created': _iso8601()})
+        initial_version = '0.0.2' if preexisting_tables else db_ver
+        sql.insert(table='database_info', items={'database_name': db_name, 'original_version': initial_version, 'current_version': initial_version, 'datetime_created': _iso8601()})
         
     if upgrade: # Run database upgrade
         upgrade_db(db_current_ver=db_ver, db_name=db_name)
@@ -437,6 +395,3 @@ if __name__ == "__main__":
     print(f'DB Name is: {DB_NAME}')
     # upgrade_db(DB_NAME, force_upgrade=True) # Force upgrade to latest version
     create(DB_NAME)
-    
-    
-    

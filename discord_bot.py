@@ -1,20 +1,20 @@
 # DISCORD Bot
 # SOME AI USED
-# TODO set up some sort of draft system for stocks
-# TODO add help command
+# Draft exclusivity is enforced by the backend; Discord exposes it during game creation.
 
 # BUILT-IN
 from datetime import datetime, timedelta
+import asyncio
 import logging
 import os
 import sys
-from typing import Literal, Optional # 3.13 +
+from typing import Any, Literal, Mapping, Optional, cast # 3.13 +
 
 # EXTERNAL
 import discord
 from discord import app_commands
 from discord.ui import Button, View
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 # LOCAL
@@ -27,15 +27,15 @@ from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsE
 
 load_dotenv()
 
+TOKEN = os.getenv('DISCORD_TOKEN')
+DB_NAME = os.getenv('DB_NAME')
+OWNER = os.getenv('OWNER')
+if not TOKEN or not DB_NAME or not OWNER:
+    raise RuntimeError('Missing one or more required environment variables: DISCORD_TOKEN, DB_NAME, OWNER.')
 try:
-    TOKEN = os.getenv('DISCORD_TOKEN')
-    assert isinstance(TOKEN, str)
-    DB_NAME = os.getenv('DB_NAME')
-    assert isinstance(DB_NAME, str)
-    OWNER = os.getenv("OWNER") # Set owner ID from env
-    assert isinstance(OWNER, str)
-except AssertionError as e:
-    raise AssertionError('Missing one or more enviroment variables.')
+    OWNER_ID = int(OWNER)
+except ValueError as exc:
+    raise RuntimeError('OWNER must be a numeric Discord user ID.') from exc
     
 
 # Set up intents with all necessary permissions
@@ -88,6 +88,12 @@ def has_permission(user:discord.member.Member):
     
     return user.guild_permissions.administrator or dev_role_id in [role.id for role in user.roles]
 
+def is_moderator(interaction: discord.Interaction) -> bool:
+    """Return whether the interaction author may run moderator commands."""
+    if interaction.user.id == OWNER_ID:
+        return True
+    return isinstance(interaction.user, discord.Member) and has_permission(interaction.user)
+
 def simple_embed(status:str, title:str, desc:Optional[str]=None):
     """Create a simple discord embed object
     
@@ -107,6 +113,11 @@ def simple_embed(status:str, title:str, desc:Optional[str]=None):
         description = desc,
         color= discord.Color.green() if status == 'success' else discord.Color.red()
     )
+
+def interaction_custom_id(interaction: discord.Interaction) -> str:
+    data = cast(Mapping[str, Any], interaction.data or {})
+    value = data.get('custom_id')
+    return value if isinstance(value, str) else ''
 
 # Process pending users helper
 async def process_pending_user(interaction: discord.Interaction, game_id: str, pending_users: list, current_index: int):
@@ -175,7 +186,18 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
     view.add_item(cancel_button)
     
     # Button callbacks
+    async def reject_other_clicker(button_interaction: discord.Interaction) -> bool:
+        if button_interaction.user.id == interaction.user.id:
+            return False
+        await button_interaction.response.send_message(
+            "Only the moderator who started this review can use these controls.",
+            ephemeral=True,
+        )
+        return True
+
     async def approve_callback(button_interaction: discord.Interaction):
+        if await reject_other_clicker(button_interaction):
+            return
         try:
             # Approve the user
             fe.approve_game_users(
@@ -214,12 +236,14 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
             logger.exception(f'Failed to approve user {user_id} for game {game_id}. Error: {e}')
             error_embed = discord.Embed(
                 title="Approval Failed",
-                description=f"❌ Failed to approve {user_display}.\nError: {e}",
+                description=f"❌ Failed to approve {user_display}. Please try again or contact a moderator.",
                 color=discord.Color.red()
             )
             await button_interaction.response.edit_message(embed=error_embed, view=None)
     
     async def deny_callback(button_interaction: discord.Interaction):
+        if await reject_other_clicker(button_interaction):
+            return
         try:
             # Remove the user from pending (deny them)
             participant_id = fe._participant_id(user_id=user_id, game_id=game_id)
@@ -242,12 +266,14 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
             logger.exception(f'Failed to deny user {user_id} for game {game_id}. Error: {e}')
             error_embed = discord.Embed(
                 title="Denial Failed",
-                description=f"❌ Failed to deny {user_display}.\nError: {e}",
+                description=f"❌ Failed to deny {user_display}. Please try again or contact a moderator.",
                 color=discord.Color.red()
             )
             await button_interaction.response.edit_message(embed=error_embed, view=None)
     
     async def skip_callback(button_interaction: discord.Interaction):
+        if await reject_other_clicker(button_interaction):
+            return
         skip_embed = discord.Embed(
             title="User Skipped",
             description=f"⏭️ Skipped {user_display}. They will remain pending.",
@@ -261,6 +287,8 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
         await process_pending_user(interaction, game_id, pending_users, current_index + 1)
     
     async def cancel_callback(button_interaction: discord.Interaction):
+        if await reject_other_clicker(button_interaction):
+            return
         cancel_embed = discord.Embed(
             title="Process Cancelled",
             description=f"Pending user management cancelled. Remaining users are still pending.",
@@ -269,10 +297,10 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
         await button_interaction.response.edit_message(embed=cancel_embed, view=None)
     
     # Set callbacks
-    approve_button.callback = approve_callback
-    deny_button.callback = deny_callback
-    skip_button.callback = skip_callback
-    cancel_button.callback = cancel_callback
+    approve_button.callback = approve_callback  # type: ignore[assignment]
+    deny_button.callback = deny_callback  # type: ignore[assignment]
+    skip_button.callback = skip_callback  # type: ignore[assignment]
+    cancel_button.callback = cancel_callback  # type: ignore[assignment]
     
     # Send or edit the message
     if current_index == 0:
@@ -282,13 +310,31 @@ async def process_pending_user(interaction: discord.Interaction, game_id: str, p
 
 bot = commands.Bot(command_prefix="$", intents=intents)
 logger.info(f'Connecting with DB: {DB_NAME}')
-fe = Frontend(database_name=DB_NAME, owner_user_id=int(OWNER), source='discord') # Frontend
+fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER_ID, source='discord') # Frontend
+ac.init_autocomplete(fe)  # Inject the shared Frontend instance into autocomplete module
+
+@tasks.loop(hours=1)
+async def scheduled_game_update():
+    """Refresh recurring games, statuses, prices, portfolios, and totals."""
+    try:
+        await asyncio.to_thread(fe.gl.update_all)
+    except Exception:
+        logger.exception('Scheduled game update failed.')
+
+@scheduled_game_update.before_loop
+async def wait_for_scheduled_update():
+    await bot.wait_until_ready()
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
+    if bot.user is None:
+        logger.error('Ready event fired without an authenticated bot user.')
+        return
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
+    if not scheduled_game_update.is_running():
+        scheduled_game_update.start()
     try:
         # Sync commands globally
         synced = await bot.tree.sync()
@@ -340,7 +386,7 @@ async def create_game_advanced(
             private_game= private_game,
             pick_date=pick_date,
             update_frequency=update_frequency
-            #sell_during_game=False, - NOT IMPLEMENTED
+            # sell_during_game is configured through the guided flow/manage command.
         )
         
         embed = discord.Embed(
@@ -349,9 +395,10 @@ async def create_game_advanced(
             color=discord.Color.green()
         )
     except Exception as e: #TODO find specific errors!
+        logger.exception("Game creation failed", exc_info=e)
         embed = discord.Embed(
         title="Game Creation Failed",
-        description=e,
+        description="Unable to create the game. Check the supplied values and try again.",
         color=discord.Color.red()
         )
      
@@ -467,7 +514,7 @@ async def create_game(interaction: discord.Interaction):
             # Define what happens when the exclusive picks button is clicked
             async def exclusive_picks_callback(interaction: discord.Interaction):
                 # Check which button was clicked
-                if interaction.data["custom_id"] == "exclusive_picks_yes":
+                if interaction_custom_id(interaction) == "exclusive_picks_yes":
                     game_exclusive_picks = True
                 else:
                     game_exclusive_picks = False
@@ -519,7 +566,7 @@ async def create_game(interaction: discord.Interaction):
                     # Define what happens when the join after start button is clicked
                     async def private_game_callback(interaction: discord.Interaction):                            
                         # Check which button was clicked
-                        if interaction.data["custom_id"] == "private_yes":
+                        if interaction_custom_id(interaction) == "private_yes":
                             private_game = True
                         else:
                             private_game = False
@@ -566,11 +613,12 @@ async def create_game(interaction: discord.Interaction):
 
                         async def update_frequency_callback(interaction: discord.Interaction):
                             # Check which button was clicked
-                            if interaction.data["custom_id"] == "update_frequency_daily":
+                            custom_id = interaction_custom_id(interaction)
+                            if custom_id == "update_frequency_daily":
                                 game_update_frequency = "daily"
-                            elif interaction.data["custom_id"] == "update_frequency_hourly":
+                            elif custom_id == "update_frequency_hourly":
                                 game_update_frequency = "hourly"
-                            elif interaction.data["custom_id"] == "update_frequency_minute":
+                            elif custom_id == "update_frequency_minute":
                                 game_update_frequency = "minute"
                             else:
                                 game_update_frequency = "realtime"
@@ -636,14 +684,14 @@ async def create_game(interaction: discord.Interaction):
                                 except ValueError as e:
                                     creation_status_embed = discord.Embed(
                                         title="Game Creation Failed",
-                                        description=e,
+                                        description=str(e),
                                         color=discord.Color.red()
                                     )
                                 
                                 except InvalidDateFormatError as e: # This handles invalid dates
                                     creation_status_embed = discord.Embed(
                                         title="Game Creation Failed",
-                                        description=e,
+                                        description=str(e),
                                         color=discord.Color.red()
                                     )
                                 
@@ -719,12 +767,16 @@ async def create_recurring_game(
         
         # Defer the response since backend operations might take time
         await interaction.response.defer(ephemeral=ephemeral_test)
+
+        if not is_moderator(interaction):
+            await interaction.followup.send("You do not have permission to create recurring games.", ephemeral=True)
+            return
         
         sell_during_game: bool = False
 
         try:            
             # Validate update frequency
-            valid_frequencies = ['daily', 'hourly', 'weekly']
+            valid_frequencies = ['daily', 'hourly']
             if update_frequency.lower() not in valid_frequencies:
                 await interaction.followup.send(
                     f"❌ Invalid update frequency. Must be one of: {', '.join(valid_frequencies)}", 
@@ -794,13 +846,8 @@ async def create_recurring_game(
             
         except Exception as e:
             # Handle specific backend errors
-            error_message = "❌ Failed to create recurring game template."
-            
-            if "InvalidDateFormatError" in str(type(e)):
-                error_message = "❌ Invalid date format. Please use YYYY-MM-DD format."
-            else:
-                error_message += f" Error: {str(e)}"
-            
+            error_message = "❌ Failed to create recurring game template. Please try again or contact a moderator."
+
             await interaction.followup.send(error_message, ephemeral=ephemeral_test)
 
 # TODO Handle more specific errors when implemented (private game, invalid game id, etc)
@@ -842,7 +889,7 @@ async def join_game(
             
     except Exception as e:
         logger.exception(f'User: {interaction.user.id} failed to join game {game_id}.  Error: {e}')
-        description = f'An unexpected error ocurred. Please report this! {game_id}.\n{e}'
+        description = f'An unexpected error ocurred when joining game {game_id}. Please try again or contact a moderator.'
 
     if status == 'failed':
         title = "Game Join Failed"
@@ -860,23 +907,21 @@ async def delete_game(
 ):
     embed = discord.Embed()
     try:
-        fe.remove_game(user_id=interaction.user.id, game_id=game_id) # Permission check is done in frontend
+        # Check if user is game owner (backend will enforce) or has moderator/admin override
+        if has_permission(user=interaction.user) if isinstance(interaction.user, discord.member.Member) else False:
+            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=False)
+        else:
+            fe.remove_game(user_id=interaction.user.id, game_id=game_id)
         embed.title = "Success"
         embed.description = f"Game with the id {game_id} has been successfully deleted"
         embed.color = discord.Color.green()
     except PermissionError:
-        if isinstance(interaction.user, discord.member.Member) and has_permission(user=interaction.user):
-            fe.remove_game(user_id=interaction.user.id, game_id=game_id, enforce_permissions=True)
-            embed.title = "Success"
-            embed.description = f"Game with the id {game_id} has been successfully deleted"
-            embed.color = discord.Color.green()
-        else:
-            embed.title = "Failed"
-            embed.description = "You do not have permission to delete this game"
-            embed.color = discord.Color.red()
+        embed.title = "Failed"
+        embed.description = "You do not have permission to delete this game"
+        embed.color = discord.Color.red()
     except Exception as e:
         embed.title = "Failed"
-        embed.description = f"There was an error while executing this command:\n{e}"
+        embed.description = f"There was an error while executing this command. Please try again."
         embed.color = discord.Color.red()
     
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
@@ -950,13 +995,14 @@ async def manage_game(
     except ValueError as e: # Should catch issues
         embed = discord.Embed(
             title="Game Update Failed",
-            description=e,
+            description=str(e),
             color=discord.Color.red()
         )
     except Exception as e:
+        logger.exception("Game update failed", exc_info=e)
         embed = discord.Embed(
             title="Game Update Failed",
-            description=e,
+            description="Unable to update the game. Please try again or contact a moderator.",
             color=discord.Color.red()
         )
 
@@ -1000,9 +1046,16 @@ async def invite_user(
     view.add_item(accept_button)    
     view.add_item(decline_button)
 
-    async def accept_invite_callback(interaction: discord.Interaction):
+    async def accept_invite_callback(button_interaction: discord.Interaction):
+        # Validate that the clicker is the invited user
+        if button_interaction.user.id != user.id:
+            await button_interaction.response.send_message(
+                "This invite was not meant for you.", ephemeral=True
+            )
+            return
+
         # Add user to the game
-        
+
         try:
             fe.join_game(
                 user_id=user.id,
@@ -1014,16 +1067,19 @@ async def invite_user(
                 description=f"You have joined game #{game_id}.",
                 color=discord.Color.green()
             )
-        except Exception as e:
+        except Exception:
             accept_embed = discord.Embed(
                 title="Game Join Failed",
-                description=f"Could not join game #{game_id}.\n{e}",
+                description=f"Could not join game #{game_id}. Please try again or contact a moderator.",
                 color=discord.Color.red()
             )
 
-        await interaction.response.edit_message(embed=accept_embed, view=None)
+        await button_interaction.response.edit_message(embed=accept_embed, view=None)
 
     async def decline_invite_callback(interaction: discord.Interaction):
+        if interaction.user.id != user.id:
+            await interaction.response.send_message("This invite was not meant for you.", ephemeral=True)
+            return
         decline_embed = discord.Embed(
             title="Invite Declined",
             description=f"You have declined the invite to game #{game_id}.",
@@ -1031,7 +1087,7 @@ async def invite_user(
         )
         await interaction.response.edit_message(embed=decline_embed, view=None)
 
-    accept_button.callback = accept_invite_callback
+    accept_button.callback = accept_invite_callback  # type: ignore[assignment]
     decline_button.callback = decline_invite_callback
 
     try:
@@ -1111,7 +1167,7 @@ async def manage_pending(
         logger.exception(f'User: {interaction.user.id} failed to get pending users for game {game_id}. Error: {e}')
         embed = discord.Embed(
             title="Error",
-            description=f"An unexpected error occurred while getting pending users.\n{e}",
+            description=f"An unexpected error occurred while getting pending users. Please try again or contact a moderator.",
             color=discord.Color.red()
         )
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
@@ -1125,6 +1181,9 @@ async def list_game_templates(
     show_all: bool = False
 ):
     """List game templates for the user"""
+    if not is_moderator(interaction):
+        await interaction.response.send_message("You do not have permission to list recurring games.", ephemeral=True)
+        return
     try:
         # Get templates from backend - assuming it has a method to get by user
         templates = fe.be.get_many_game_templates(status=None)  # Adjust this based on your backend
@@ -1184,7 +1243,7 @@ async def list_game_templates(
     except Exception as e:
         embed = discord.Embed(
             title="Failed to List Game Templates",
-            description=str(e),
+            description="Unable to list game templates. Please try again or contact a moderator.",
             color=discord.Color.red()
         )
         logger.exception(f'User: {interaction.user.id} failed to list game templates. Error: {e}')
@@ -1193,18 +1252,25 @@ async def list_game_templates(
 
 @bot.tree.command(name="update", description="Update the all game stock prices (Moderator Only)")
 @app_commands.describe(
-    # game_id="ID of the game to update", - NOT IMPLEMENTED IN force_update
+    # A future command option may expose targeted updates; the backend supports it.
 )
 async def update(
     interaction: discord.Interaction, 
-    # game_id: str, - NOT IMPLEMENTED IN force_update
+    # game_id: str,
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     embed = discord.Embed()
+    if not is_moderator(interaction):
+        embed.title = "Failed"
+        embed.description = "You do not have permission to update games"
+        embed.color = discord.Color.red()
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+        return
     try:
-        fe.force_update(
+        await asyncio.to_thread(
+            fe.force_update,
             user_id=interaction.user.id,
-            enforce_permissions=True
+            enforce_permissions=False,
         )
         embed.title = "Success"
         embed.description = f"All games have been successfully updated"
@@ -1215,7 +1281,7 @@ async def update(
         embed.color = discord.Color.red()
     except Exception as e:
         embed.title = "Failed"
-        embed.description = f"There was an error while executing this command:\n{e}"
+        embed.description = f"There was an error while executing this command. Please try again or contact a moderator."
         embed.color = discord.Color.red()
 
     await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
@@ -1239,10 +1305,11 @@ async def buy_stock(
     title = 'Stock Purchase Failed'
     try:
         ticker = ticker.upper()
-        fe.buy_stock(
+        await asyncio.to_thread(
+            fe.buy_stock,
             user_id=interaction.user.id,
             game_id=game_id,
-            ticker=ticker
+            ticker=ticker,
         )
         title = 'Stock Purchased'
         description = f'You have successfully bought {ticker} in game: {game_id}.'
@@ -1260,7 +1327,7 @@ async def buy_stock(
         
         else:
             logger.exception(f'Uncaught value error user: {interaction.user.id} tried to buy stock with ticker: {ticker}', exc_info=exc)
-            'An error ocurred while finding your stock.'
+            description = 'An error ocurred while finding your stock.'
     
     except LookupError:
         description = f'No game with ID {game_id} found.'
@@ -1307,13 +1374,14 @@ async def remove_stock(
     game_id: str, 
     ticker: str
 ):
-   
+    await interaction.response.defer(ephemeral=ephemeral_test)
     status = 'failed'
     try:
-        fe.remove_pick(
+        await asyncio.to_thread(
+            fe.remove_pick,
             user_id=interaction.user.id,
             game_id=game_id,
-            ticker=ticker
+            ticker=ticker,
         )
         status = 'success'
         title="Stock Removal Successful"
@@ -1323,9 +1391,9 @@ async def remove_stock(
     except Exception as e:
         status = 'failed'
         title="Stock Removal Failed"
-        description=f"Could not remove {ticker} from your picks in game: {game_id}.\n{e}"
+        description=f"Could not remove {ticker} from your picks in game: {game_id}."
 
-    await interaction.response.send_message(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
+    await interaction.followup.send(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
 # TODO Add buttons for buying/selling stocks?
 # TODO Add last updated date/time in footer
@@ -1425,9 +1493,9 @@ async def game_info(
     await interaction.response.defer(ephemeral=ephemeral_test)
     
     try:
-        game_info_obj = fe.game_info(game_id, show_leaderboard=True)
+        game_info_obj = fe.game_info(game_id, show_leaderboard=show_leaderboard)
         game = game_info_obj.game
-        assert isinstance(game_info_obj.leaderboard, list)
+        leaderboard = game_info_obj.leaderboard or []
         
         # Basic embed for game info
         description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{date_range}\n{participants}'.format(
@@ -1436,7 +1504,7 @@ async def game_info(
             start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
             pick_count=f'> **Pick Count:** `{game.pick_count}`',
             date_range='> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-            participants=f'> **Participants:** `{len(game_info_obj.leaderboard)}`',
+            participants=f'> **Participants:** `{len(leaderboard)}`' if show_leaderboard else '> **Participants:** hidden',
         )
         
         embed = discord.Embed(
@@ -1446,12 +1514,12 @@ async def game_info(
         embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
         
         if not show_leaderboard:
-            await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
             return
         
         # Limit leaderboard to top 10
         # lb_limit = 10
-        leaderboard_info: list[GameLeaderboard] = game_info_obj.leaderboard#[:lb_limit]
+        leaderboard_info: list[GameLeaderboard] = leaderboard
         
         # Fetch user display names and prepare data for image
         processed_leaderboard = []
@@ -1466,7 +1534,9 @@ async def game_info(
             }
             
             try:
-                member = await interaction.guild.fetch_member(info.user_id)
+                member = await interaction.guild.fetch_member(info.user_id) if interaction.guild else None
+                if member is None:
+                    raise LookupError('Member unavailable outside a guild')
                 if len(member.display_name) <= 16:
                     display_name = member.display_name
                 elif len(member.global_name or "") <= 16:
@@ -1476,7 +1546,7 @@ async def game_info(
                 else:
                     display_name = (member.global_name or member.name)[:15] + "~"
                 player_data['display_name'] = display_name
-            except discord.errors.NotFound:
+            except (discord.errors.NotFound, LookupError):
                 player_data['display_name'] = f'ID({info.user_id})'
             
             processed_leaderboard.append(player_data)
@@ -1496,6 +1566,8 @@ async def game_info(
             
             # Add owner name to game data for the image
             try:
+                if interaction.guild is None:
+                    raise LookupError('Command used outside a guild')
                 owner_member = await interaction.guild.fetch_member(game.owner_id)
                 game_data['owner_name'] = owner_member.display_name or owner_member.global_name or owner_member.name
             except:
@@ -1530,7 +1602,7 @@ async def game_info(
             
             leaderboard_block = '```\n{}\n```'.format('\n'.join(ldrbrd_lines))
             embed.add_field(name="Leaderboard", value=leaderboard_block, inline=False)
-            await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
             
     except Exception as e:
         # Handle case where game doesn't exist
@@ -1539,7 +1611,7 @@ async def game_info(
             description=f'Game with ID {game_id} does not exist or an error occurred.',
             color=0xff0000
         )
-        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
 
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
@@ -1550,7 +1622,7 @@ async def game_info(
 )
 async def game_list(
     interaction: discord.Interaction,
-    page_length: int = 9 # 9 looks nicer than 10
+    page_length: app_commands.Range[int, 1, 25] = 9 # 9 looks nicer than 10
 ):
     embed = discord.Embed()
     error = False
@@ -1662,7 +1734,7 @@ async def logs(
     interaction: discord.Interaction,
 ):
     
-    if has_permission(interaction.user): # Check if user is an admin
+    if is_moderator(interaction): # Check if user is an admin
         title = "Logs"
         status = 'success'
         logfile = discord.File(fp=f'logs/stock_game{now}.log', filename='log-latest.log')
@@ -1718,14 +1790,15 @@ Use `/help` to see this message again, or contact a moderator if you encounter a
     await interaction.response.send_message(embed=simple_embed(status='success', title=title, desc=help_text), ephemeral=ephemeral_test)
 
 # Run the bot using the token
-if TOKEN:
-    try:
-        bot.run(TOKEN)
-    except discord.errors.LoginFailure:
-        logger.exception("Login Failed: Improper token has been passed.")
-    except discord.errors.PrivilegedIntentsRequired:
-        logger.exception("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
-    except Exception as e:
-        logger.exception(f"An error occurred while running the bot: {e}")
-else:
-    logger.error("DISCORD_TOKEN environment variable not found.  Set DISCORD_TOKEN environment variable before running.")
+if __name__ == '__main__':
+    if TOKEN:
+        try:
+            bot.run(TOKEN)
+        except discord.errors.LoginFailure:
+            logger.exception("Login Failed: Improper token has been passed.")
+        except discord.errors.PrivilegedIntentsRequired:
+            logger.exception("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
+        except Exception as e:
+            logger.exception(f"An error occurred while running the bot: {e}")
+    else:
+        logger.error("DISCORD_TOKEN environment variable not found.  Set DISCORD_TOKEN environment variable before running.")

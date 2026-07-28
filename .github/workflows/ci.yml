@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install system dependencies (fonts for Pillow)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-dejavu-core fonts-liberation
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Compile Python sources
+        run: python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers scripts tests
+
+      - name: Run type checks
+        run: python -m pyright
+
+      - name: Run full test suite
+        run: python -m pytest -q

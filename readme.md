@@ -22,7 +22,7 @@ DEVELOPMENT BRANCH
 ## First Time Setup
 
 ### Prerequisites
-- Python 3.x installed
+- Python 3.13 installed
 - pip (Python package installer)
 - A Discord bot token (get from [Discord Developer Portal](https://discord.com/developers/applications))
 
@@ -38,12 +38,22 @@ DEVELOPMENT BRANCH
    - discord.py (Discord bot library)
    - python-dotenv (Environment variable management)
    - yfinance (Yahoo Finance API for stock data)
+   - pydantic (Data validation)
+   - pytz (Timezone support)
+   - python-dateutil (Date utilities)
+   - Pillow (Image generation / leaderboards)
+   - pandas, beautifulsoup4, lxml, requests (Stock-data fetching)
+
+   Contributors should install the development dependencies instead:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
 
 3. Create a `.env` file in the root directory with your Discord bot token and your personal database name (ending in .db):
    ```
    DISCORD_TOKEN="your_discord_bot_token_here"
    DB_NAME="test.db"
-   OWNER="testowner123"
+    OWNER="123456789012345678"
    ```
 
 4. Set up the database:
@@ -99,15 +109,37 @@ DEVELOPMENT BRANCH
 
 ### Running the Bot
 
+#### Python (local)
+
 1. Run the Discord bot:
    ```bash
    python discord_bot.py
    ```
 
+#### Docker
+
+1. Build the image:
+   ```bash
+   docker build -t stockgame .
+   ```
+
+2. Run the container (mount your `.env` and database file):
+   ```bash
+   docker run -d --env-file .env -v $(pwd)/data:/app/data stockgame
+   ```
+   The bot will look for `DB_NAME` inside `.env`; make sure your database path is relative to `/app` or mounted accordingly.
+
 Before running the bot, ensure:
 - Your `.env` file has the correct Discord token
 - The database has been set up
 - You've invited the bot to your test Discord server with the necessary permissions
+
+Run the local quality checks with:
+```bash
+python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers scripts tests
+python -m pyright
+python -m pytest -q
+```
 
 ## Contributors
 - [EpicSadFace](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl)

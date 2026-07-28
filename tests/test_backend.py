@@ -1,6 +1,6 @@
 import pytest
 from stocks import Backend 
-from datetime import datetime
+from datetime import date, datetime
 import helpers.exceptions as bexc
 
 # This will be the fixed timestamp used by the mocked _iso8601
@@ -185,13 +185,15 @@ class TestBackend:
             total_picks=int(total_picks), 
         )
         game = be.get_many_games(owner_id=user_id, name=name)[0]
-        assert game.id == 1 # First game should get ID 1
-        assert game.name == name # First game should get ID 1
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
-        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
-        assert game.start_money == starting_money 
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date()
+        assert game.start_money == starting_money
         assert game.pick_count == total_picks
-        
+
     def test_add_game_infinite_success(self, be: Backend):
         """Test successfully adding a new game with no end date."""
         user_id = 101
@@ -209,12 +211,14 @@ class TestBackend:
             total_picks=int(total_picks), 
         )
         game = be.get_many_games(owner_id=user_id, name=name)[0]
-        assert game.id == 1 # First game should get ID 1
-        assert game.name == name # First game should get ID 1
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
-        assert game.start_money == starting_money # First game should get ID 1
-        assert game.pick_count == total_picks # First game should get ID 1
-    
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
+        assert game.start_money == starting_money
+        assert game.pick_count == total_picks
+
     def test_add_game_duplicate_name(self, be: Backend):
         """Test successfully adding a new game."""
         user_id = 101
@@ -234,13 +238,15 @@ class TestBackend:
             total_picks=int(total_picks), 
         ) 
         game = be.get_many_games(owner_id=user_id, name=name)[0] # Confirm first game works
-        assert game.id == 1 # First game should get ID 1
-        assert game.name == name # First game should get ID 1
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
-        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
-        assert game.start_money == starting_money # First game should get ID 1
-        assert game.pick_count == total_picks # First game should get ID 1
-        
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date()
+        assert game.start_money == starting_money
+        assert game.pick_count == total_picks
+
         with pytest.raises(bexc.AlreadyExistsError):
             be.add_game(
                 user_id=int(user_id),
@@ -250,7 +256,23 @@ class TestBackend:
                 starting_money=float(starting_money), 
                 total_picks=int(total_picks), 
             )
-            
+
+    def test_add_game_date_objects_keep_start_and_end(self, be: Backend):
+        """Date objects must retain distinct start and end values."""
+        user_id = 101
+        be.add_user(user_id=user_id, source='discord')
+
+        be.add_game(
+            user_id=user_id,
+            name='date-object-game',
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 2, 1),
+        )
+
+        game = be.get_many_games(name='date-object-game', owner_id=user_id)[0]
+        assert game.start_date == date(2026, 1, 1)
+        assert game.end_date == date(2026, 2, 1)
+
     def test_remove_game_sucess(self, be: Backend):
         user_id = 101
         name = 'testgame'
@@ -287,10 +309,10 @@ class TestBackend:
         game = be.get_many_games(owner_id=user_id, name=name)[0]
         assert game.name == name # Check that the game actually got created
         assert game.owner_id == user_id
-        fake_game = int(game.id+1)
+        fake_game = 'ZZZZZ'
 
         with pytest.raises(bexc.DoesntExistError) as exc:
-            be.remove_game(fake_game) 
+            be.remove_game(fake_game)
         assert exc.value.item == fake_game
     
     # # STOCKS # #
@@ -327,6 +349,12 @@ class TestBackend:
                 exchange=exchange,
                 company_name=company_name
             )
+
+    def test_add_stock_rejects_duplicate_ticker_on_another_exchange(self, be: Backend):
+        be.add_stock(ticker='DUPL', exchange='NASDAQ', company_name='Duplicate Inc.')
+
+        with pytest.raises(ValueError, match='already exists'):
+            be.add_stock(ticker='DUPL', exchange='NYSE', company_name='Duplicate Inc.')
         
     # # STOCK PRICES # #
     def test_add_stock_price_ticker_success(self, be: Backend): # Add by ticker
@@ -379,5 +407,3 @@ class TestBackend:
                 price=s_price,
                 datetime=d_datetime 
             )
-
-        

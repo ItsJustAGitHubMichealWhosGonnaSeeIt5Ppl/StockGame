@@ -3,7 +3,7 @@
 
 import discord
 import datetime
-from typing import Callable, Optional, List, Dict, Any, Optional, Union, TYPE_CHECKING
+from typing import Callable, Optional, List, Dict, Any, Union, TYPE_CHECKING, cast
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
@@ -39,10 +39,11 @@ class Pagination(discord.ui.View):
         emb = self.embed.copy()
         if self.mode == 'field':
             for game in self.games[self.page_len * self.index: self.page_len * (self.index +1)]: # Get only the subset of games we're after
-                
-                    emb.add_field(name=game[0],value=game[1]) # Fill out the embed!
+                if not isinstance(game, tuple):
+                    raise TypeError('Field pagination requires (name, value) tuples.')
+                emb.add_field(name=game[0],value=game[1]) # Fill out the embed!
         else: # Codeblock mode
-            codeblock_lines = self.games[self.page_len * self.index: self.page_len * (self.index +1)]
+            codeblock_lines = [str(line) for line in self.games[self.page_len * self.index: self.page_len * (self.index +1)]]
             emb.add_field(name='', value='```{lines}```'.format(lines='\n'.join(codeblock_lines)))
                 
         return emb
@@ -61,26 +62,29 @@ class Pagination(discord.ui.View):
         await interaction.response.edit_message(embed=emb, view=self)
 
     def update_buttons(self):
+        previous = cast(discord.ui.Button, self.children[0])
+        next_button = cast(discord.ui.Button, self.children[1])
+        end_button = cast(discord.ui.Button, self.children[2])
         if self.index > self.total_pages // 2:
-            self.children[2].emoji = "⏮️"
+            end_button.emoji = "⏮️"
         else:
-            self.children[2].emoji = "⏭️"
+            end_button.emoji = "⏭️"
             
-        self.children[0].disabled = self.index == 0
-        self.children[1].disabled = self.index +1 == self.total_pages
+        previous.disabled = self.index == 0
+        next_button.disabled = self.index +1 == self.total_pages
 
     @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.blurple)
-    async def previous(self, interaction: discord.Interaction, button: discord.Button):
+    async def previous(self, interaction: discord.Interaction, button):
         self.index -= 1
         await self.edit_page(interaction)
 
     @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.blurple)
-    async def next(self, interaction: discord.Interaction, button: discord.Button):
+    async def next(self, interaction: discord.Interaction, button):
         self.index += 1
         await self.edit_page(interaction)
 
     @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.blurple)
-    async def end(self, interaction: discord.Interaction, button: discord.Button):
+    async def end(self, interaction: discord.Interaction, button):
         if self.index <= self.total_pages//2:
             self.index = self.total_pages -1
         else:
@@ -255,16 +259,16 @@ class LeaderboardImageGenerator:
         
         return buffer
     
-    def _draw_centered_text(self, draw: ImageDraw.Draw, text: str, y: int, font, color) -> int:
+    def _draw_centered_text(self, draw: ImageDraw.ImageDraw, text: str, y: int, font, color) -> int:
         """Draw centered text and return new y position."""
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         x = (self.width - text_width) // 2
         draw.text((x, y), text, fill=color, font=font)
-        return y + text_height + 10
+        return int(y + text_height + 10)
     
-    def _draw_leaderboard_header(self, draw: ImageDraw.Draw, y_offset: int) -> int:
+    def _draw_leaderboard_header(self, draw: ImageDraw.ImageDraw, y_offset: int) -> int:
         """Draw leaderboard header."""
         header_rect = [0, y_offset, self.width, y_offset + 40]
         draw.rectangle(header_rect, fill=self.colors['header'])
@@ -284,7 +288,7 @@ class LeaderboardImageGenerator:
         
         return y_offset + 40
     
-    def _draw_leaderboard_rows(self, draw: ImageDraw.Draw, leaderboard_data: List[Dict], y_offset: int) -> int:
+    def _draw_leaderboard_rows(self, draw: ImageDraw.ImageDraw, leaderboard_data: List[Dict], y_offset: int) -> int:
         """Draw leaderboard rows."""
         pos_indicators = [f'{i}.' for i in range(1, len(leaderboard_data) + 1)]
         
@@ -346,7 +350,7 @@ class LeaderboardImageGenerator:
         else:
             return self.colors['text']
     
-    def _draw_footer(self, draw: ImageDraw.Draw, height: int, last_updated: Optional[datetime.datetime] = None):
+    def _draw_footer(self, draw: ImageDraw.ImageDraw, height: int, last_updated: Optional[datetime.datetime] = None):
         """Draw footer text."""
         draw.text((20, height - 25), "Last Updated: " +
                   (last_updated.strftime("%Y-%m-%d %H:%M:%S") if last_updated else "Generated by StockBot"),
@@ -559,16 +563,16 @@ class StockPortfolioImageGenerator:
         
         return buffer
     
-    def _draw_centered_text(self, draw: ImageDraw.Draw, text: str, y: int, font, color) -> int:
+    def _draw_centered_text(self, draw: ImageDraw.ImageDraw, text: str, y: int, font, color) -> int:
         """Draw centered text and return new y position."""
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         x = (self.width - text_width) // 2
         draw.text((x, y), text, fill=color, font=font)
-        return y + text_height + 10
+        return int(y + text_height + 10)
     
-    def _draw_portfolio_summary(self, draw: ImageDraw.Draw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
+    def _draw_portfolio_summary(self, draw: ImageDraw.ImageDraw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
         """Draw portfolio summary section."""
         owned_stocks = all_stocks['owned']
         pending_stocks = all_stocks['pending']
@@ -620,7 +624,7 @@ class StockPortfolioImageGenerator:
         
         return y_offset + 110
     
-    def _draw_stock_header(self, draw: ImageDraw.Draw, y_offset: int) -> int:
+    def _draw_stock_header(self, draw: ImageDraw.ImageDraw, y_offset: int) -> int:
         """Draw stock table header."""
         header_rect = [20, y_offset, self.width - 20, y_offset + 35]
         draw.rectangle(header_rect, fill=self.colors['header'])
@@ -640,7 +644,7 @@ class StockPortfolioImageGenerator:
         
         return y_offset + 35
     
-    def _draw_stock_rows(self, draw: ImageDraw.Draw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
+    def _draw_stock_rows(self, draw: ImageDraw.ImageDraw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
         """Draw stock rows."""
         owned_stocks = all_stocks['owned']
         pending_stocks = all_stocks['pending']
@@ -757,7 +761,7 @@ class StockPortfolioImageGenerator:
         
         return y_offset
     
-    def _draw_footer(self, draw: ImageDraw.Draw, height: int, footer_y: int, last_updated: Optional[datetime.datetime] = None):
+    def _draw_footer(self, draw: ImageDraw.ImageDraw, height: int, footer_y: int, last_updated: Optional[datetime.datetime] = None):
         """Draw footer text."""
         draw.text((20, footer_y), "Last Updated: " +
                   (last_updated.strftime("%Y-%m-%d %H:%M:%S") if last_updated else "Generated by StockBot"), 
@@ -768,6 +772,7 @@ class StockPortfolioImageGenerator:
 def create_portfolio_image(user_data: Dict[str, Any],
                           game_data: Dict[str, Any], 
                           stock_picks: List[Dict[str, Any]],
+                          info: Any = None,
                           theme: str = 'discord_dark') -> BytesIO:
     """
     Convenience function to create a stock portfolio image.
@@ -776,10 +781,11 @@ def create_portfolio_image(user_data: Dict[str, Any],
         user_data: User information dictionary
         game_data: Game information dictionary  
         stock_picks: List of stock pick dictionaries
+        info: GameInfo or compatible object with .game.start_money / .game.pick_count
         theme: Color theme to use
         
     Returns:
         BytesIO buffer containing the PNG image
     """
     generator = StockPortfolioImageGenerator(theme=theme)
-    return generator.create_portfolio_image(user_data, game_data, stock_picks)
+    return generator.create_portfolio_image(user_data, game_data, stock_picks, info=info)

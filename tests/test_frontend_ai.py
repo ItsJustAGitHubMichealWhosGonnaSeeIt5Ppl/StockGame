@@ -32,16 +32,21 @@ class TestFrontend:
             start_date=start_date,
         )
 
-        game = fe.be.get_game(game_id=1)
-        assert game.id == 1 
-        assert game.name == game_name 
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        games_found = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)
+        assert len(games_found) == 1
+        game = games_found[0]
+
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == game_name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
         assert game.end_date is None
         assert game.pick_date is None
-        assert game.start_money == 10000.00 # Default 
-        assert game.pick_count == 10 
-        assert game.draft_mode == False 
-        assert game.allow_selling == False # Default 
+        assert game.start_money == 10000.00 # Default
+        assert game.pick_count == 10
+        assert game.draft_mode == False
+        assert game.allow_selling == False # Default
         assert game.update_frequency == 'daily' # Default 
  
 
@@ -106,15 +111,17 @@ class TestFrontend:
         assert len(games_found) == 1
         game = games_found[0]
 
-        assert game.id == 1 
-        assert game.name == game_name 
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
-        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
-        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date() 
-        assert game.start_money == starting_money 
-        assert game.pick_count == total_picks 
-        assert game.draft_mode == exclusive_picks 
-        assert game.allow_selling == sell_during_game 
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == game_name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date()
+        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date()
+        assert game.start_money == starting_money
+        assert game.pick_count == total_picks
+        assert game.draft_mode == exclusive_picks
+        assert game.allow_selling == sell_during_game
         assert game.update_frequency == update_frequency 
 
     # # LIST_GAMES # #
@@ -275,6 +282,28 @@ class TestFrontend:
         user = fe.be.get_user(user_id=11)
         assert user.display_name is None # Original registration had no username
 
+    def test_get_user_calculates_completed_game_statistics(self, fe: Frontend):
+        owner_id = 10
+        other_user_id = 12
+        fe.new_game(user_id=owner_id, name="CompletedStats", start_date="2025-01-01")
+        game = fe.be.get_many_games(name="CompletedStats", owner_id=owner_id, include_private=True)[0]
+        fe.join_game(user_id=other_user_id, game_id=game.id)
+        owner_participant = fe._participant_id(owner_id, game.id)
+        other_participant = fe._participant_id(other_user_id, game.id)
+        fe.be.update_participant(owner_participant, current_value=11_000, change_dollars=1_000, change_percent=10)
+        fe.be.update_participant(other_participant, current_value=9_000, change_dollars=-1_000, change_percent=-10)
+        fe.be.update_game(game.id, status="ended")
+
+        owner = fe.get_user(owner_id)
+        other = fe.get_user(other_user_id)
+
+        assert owner.overall_wins == 1
+        assert owner.change_dollars == 1_000
+        assert owner.change_percent == 10
+        assert other.overall_wins == 0
+        assert other.change_dollars == -1_000
+        assert other.change_percent == -10
+
     # # CHANGE_NAME # #
     def test_change_name_success(self, fe: Frontend):
         user_id = 10 # Owner user from fixture
@@ -318,6 +347,8 @@ class TestFrontend:
         fe.join_game(user_id=non_existent_user_id, game_id=game_db.id)
         games = fe.my_games(user_id=non_existent_user_id)
         assert games.games[0].name == game_name # User should end up in the game
+        participant = fe.be.get_many_participants(user_id=non_existent_user_id, game_id=game_db.id)[0]
+        assert participant.name is None
         
         
 
@@ -332,8 +363,9 @@ class TestFrontend:
         game_name = "JoinGameFail"
         
         fe.new_game(user_id=user_id, name=game_name, start_date="2025-02-01", pick_date="2025-02-01")
+        game_db = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)[0]
         with pytest.raises(ValueError) as excinfo: # SqlHelper wraps SQL errors
-             fe.join_game(user_id=user_id, game_id=1) # Game 999 does not exist
+             fe.join_game(user_id=user_id, game_id=game_db.id)
         assert "`pick_date` has passed." in str(excinfo)
 
 
@@ -535,10 +567,71 @@ class TestFrontend:
 
 
     # # SELL_STOCK # #
-    def test_sell_stock_not_implemented(self, fe: Frontend):
-        # This method is currently `pass` in stocks.py
-        # Test that it doesn't raise an error and returns None (default for pass)
-        assert fe.sell_stock(user_id=10, game_id=1, ticker="ANY") is None
+    def test_sell_stock_cancels_pending_buy(self, fe: Frontend):
+        owner_id = 10
+        fe.new_game(user_id=owner_id, name="CancelPendingBuy", start_date="2099-06-01")
+        game = fe.be.get_many_games(name="CancelPendingBuy", owner_id=owner_id, include_private=True)[0]
+        participant_id = fe._participant_id(user_id=owner_id, game_id=game.id)
+        stock = _add_stock_to_db(fe.be, "CANCEL")
+        fe.be.add_stock_pick(participant_id=participant_id, stock_id=stock.id)
+
+        fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+
+        with pytest.raises(LookupError, match="No items found"):
+            fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)
+
+    def test_sell_owned_stock_rejected_when_selling_disabled(self, fe: Frontend):
+        owner_id = 10
+        fe.new_game(user_id=owner_id, name="SellingDisabled", start_date="2099-06-01")
+        game = fe.be.get_many_games(name="SellingDisabled", owner_id=owner_id, include_private=True)[0]
+        participant_id = fe._participant_id(user_id=owner_id, game_id=game.id)
+        stock = _add_stock_to_db(fe.be, "HOLD")
+        fe.be.add_stock_pick(participant_id=participant_id, stock_id=stock.id)
+        pick = fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)[0]
+        fe.be.update_stock_pick(
+            pick_id=pick.id,
+            current_value=1000,
+            shares=10,
+            start_value=1000,
+            status="owned",
+        )
+
+        with pytest.raises(bexc.NotAllowedError) as exc:
+            fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+
+        assert exc.value.reason == "Selling disabled"
+
+    def test_sell_owned_stock_settles_when_selling_enabled(self, fe: Frontend, mocker):
+        owner_id = 10
+        fe.new_game(
+            user_id=owner_id,
+            name="SellingEnabled",
+            start_date="2025-01-01",
+            sell_during_game=True,
+        )
+        game = fe.be.get_many_games(name="SellingEnabled", owner_id=owner_id, include_private=True)[0]
+        fe.be.update_game(game.id, status="active")
+        participant_id = fe._participant_id(user_id=owner_id, game_id=game.id)
+        stock = _add_stock_to_db(fe.be, "SELL")
+        fe.be.add_stock_pick(participant_id=participant_id, stock_id=stock.id)
+        pick = fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)[0]
+        fe.be.update_stock_pick(
+            pick_id=pick.id,
+            current_value=1000,
+            shares=10,
+            start_value=1000,
+            status="owned",
+        )
+        fe.be.add_stock_price(stock.id, price=110, datetime="2025-05-21 10:00:00")
+        mocker.patch.object(fe.gl, "_is_market_hours", return_value=False)
+
+        fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+        fe.gl.update_stock_picks(game_id=game.id, force=True)
+
+        sold = fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)[0]
+        assert sold.status == "sold"
+        assert sold.current_value == 1100
+        assert sold.change_dollars == 100
 
 
     # # REMOVE_PICK # #
@@ -622,10 +715,25 @@ class TestFrontend:
             fe.remove_pick(user_id=owner_id, game_id=game_db.id, ticker=ticker_owned)
         assert 'Pick status is `owned`.  Only `pending_buy` picks can be removed.' in str(excinfo)
 
-    # # START_DRAFT # #
-    def test_start_draft_not_implemented(self, fe: Frontend):
-        # This method is currently `pass` in stocks.py
-        assert fe.start_draft(user_id=10, game_id=1) is None
+    # # DRAFT MODE # #
+    def test_draft_mode_prevents_duplicate_tickers_across_players(self, fe: Frontend):
+        owner_id = 10
+        other_user_id = 11
+        fe.new_game(
+            user_id=owner_id,
+            name="ExclusiveDraft",
+            start_date="2099-06-01",
+            pick_date="2099-06-01",
+            exclusive_picks=True,
+        )
+        game = fe.be.get_many_games(name="ExclusiveDraft", owner_id=owner_id, include_private=True)[0]
+        fe.join_game(user_id=other_user_id, game_id=game.id)
+        stock = _add_stock_to_db(fe.be, "ONE")
+
+        fe.buy_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+
+        with pytest.raises(bexc.AlreadyExistsError):
+            fe.buy_stock(user_id=other_user_id, game_id=game.id, ticker=stock.ticker)
 
     # # FORCE_UPDATE # #
     def test_force_update_by_owner_success(self, fe: Frontend, mocker):
@@ -724,11 +832,9 @@ class TestFrontend:
         game_name = "NoPendingGame"
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-07-01", private_game=True)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
-        # Owner is auto-added and approved by default for their own game in this setup.
-        # Let's approve the owner first.
-        #owner_participant = fe._participant_id(user_id=owner_id, game_id=game_db.id)
-        with pytest.raises(LookupError, match='No items found'):
-            pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
+        # Owner is auto-added and active by default. No pending users exist.
+        pending_users = fe.pending_game_users(user_id=owner_id, game_id=game_db.id)
+        assert pending_users == ()
 
 
     # # APPROVE_GAME_USERS # #
