@@ -667,13 +667,24 @@ class Backend:
         Returns:
             dict: Stock information.
         """
-        if isinstance(ticker_or_id, str): # ID
-            filters={'ticker': str(ticker_or_id).upper()}
-        else: # Ticker
+        if isinstance(ticker_or_id, int):
             filters = {'stock_id': int(ticker_or_id)}
-            
-        resp = self.sql.get(table='stocks', filters=filters)
-        return self._single_get(model=dtv.Stock, resp=resp)
+            resp = self.sql.get(table='stocks', filters=filters)
+            return self._single_get(model=dtv.Stock, resp=resp)
+
+        # Accept BRK.B / BRK-B / mixed case — DB may store either class-share form.
+        raw = str(ticker_or_id).strip().upper()
+        candidates = list(dict.fromkeys([raw, to_db_ticker(raw), to_alpaca_symbol(raw)]))
+        last_error: Optional[LookupError] = None
+        for candidate in candidates:
+            resp = self.sql.get(table='stocks', filters={'ticker': candidate})
+            try:
+                return self._single_get(model=dtv.Stock, resp=resp)
+            except LookupError as e:
+                last_error = e
+        if last_error is not None:
+            raise last_error
+        raise LookupError(f'Stock not found: {ticker_or_id}')
         
     def get_many_stocks(self, company_name:Optional[str]=None, exchange:Optional[str]=None, tickers_only:bool=False)-> tuple[dtv.Stock]:
         """Get multiple stocks
@@ -1382,11 +1393,14 @@ class GameLogic: # Might move some of the control/running actions here
         self.update_stock_picks(game_id=game_id, force=force) # Handle pending stock picks
         self.update_participants_and_games(game_id=game_id) # Update participants (set their total value, etc.)
             
-    def find_stock(self, ticker:str): 
+    def find_stock(self, ticker:str) -> str: 
         """Find and add a US equity to the database via Alpaca.
 
         Args:
-            ticker (str): Stock ticker.  Eg: 'MSFT'.
+            ticker (str): Stock ticker.  Eg: 'MSFT' or 'BRK.B'.
+
+        Returns:
+            str: Canonical ticker as stored in the database (e.g. ``BRK-B``).
             
         Raises:
             ValueError: Stock is not tradeable
@@ -1398,8 +1412,8 @@ class GameLogic: # Might move some of the control/running actions here
 
         for candidate in dict.fromkeys([db_ticker, alpaca_ticker]):
             try:
-                self.be.get_stock(ticker_or_id=candidate)
-                return
+                existing = self.be.get_stock(ticker_or_id=candidate)
+                return existing.ticker
             except LookupError:
                 pass
 
@@ -1417,6 +1431,7 @@ class GameLogic: # Might move some of the control/running actions here
             exchange=exchange,
             company_name=company_name,
         )
+        return db_ticker
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
 class Frontend: # This will be where a bot (like discord) interacts
@@ -1797,8 +1812,8 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
-        self.gl.find_stock(ticker=str(ticker))  # This will add the stock
-        stock = self.be.get_stock(ticker_or_id=str(ticker)) # This should only run if the stock was added successfully
+        resolved_ticker = self.gl.find_stock(ticker=str(ticker))  # Ensures stock exists; returns DB ticker
+        stock = self.be.get_stock(ticker_or_id=resolved_ticker)
 
         # Draft mode: prevent duplicate tickers across players
         game = self.be.get_game(game_id=game_id)
