@@ -2418,6 +2418,12 @@ async def help(interaction: discord.Interaction):
 ## Available Commands
 All commands include built-in hints and help when you run them!
 
+## How to Play
+1. **Find a game** using `/game-list` or **create your own** with `/create-game`
+2. **Join a game** using `/join-game`
+3. **Buy stocks** using `/buy-stock`
+4. **Watch the leaderboard** and see how your picks perform!
+
 ### Game Management
 - `/create-game` - Guided setup for stock game creation
 - `/create-game-advanced` - Create a new stock game without a wizard
@@ -2446,14 +2452,9 @@ All commands include built-in hints and help when you run them!
         help_text += """
 ### Moderator Commands
 - `/create-recurring-game` - Create a recurring game template (Moderator only)
-- `/list-game-templates` - List your recurring game templates (Moderator only)
+- `/manage-recurring-games` - Browse, stop, or delete recurring templates (Moderator only)
 - `/update` - Force-update stock prices and game portfolios (Moderator only)
 - `/logs` - For admins to get logs (Moderator only)
-
-## How to Play
-1. **Join a game** using `/join-game` or create your own with `/create-game`
-2. **Buy stocks** using `/buy-stock`
-3. **Watch the leaderboard** and see how your picks perform!
 
 ## Need Help?
 Use `/help` to see this message again, or contact a moderator if you encounter any issues!"""
