@@ -750,10 +750,10 @@ async def create_game(interaction: discord.Interaction):
 @bot.tree.command(name="create-recurring-game", description="Create a recurring game template (Moderator Only)")
 @app_commands.describe(
     name="Name of the game template",
-    start_date="Start date (YYYY-MM-DD)",
+    start_date="First game start date (YYYY-MM-DD). Later games repeat monthly from this day",
     recurring_period="Months between recurring games (optional, default: 1)",
     game_length="How many months should the game last. 0 = infinite game (optional, default: 1)", 
-    create_days_in_advance="How many days before start_date to create the game (optional, default: 7)",
+    create_days_in_advance="How many days before each game's start to create it (optional, default: 7)",
     starting_money="Starting money for players (optional, default: 10000)",
     pick_date="Buy deadline in days before month start. Negative = after start. Empty = buy anytime",
     private_game="Make the game private (optional, default: False)",
