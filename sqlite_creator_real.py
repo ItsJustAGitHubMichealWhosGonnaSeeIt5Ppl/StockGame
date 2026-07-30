@@ -13,7 +13,7 @@ load_dotenv()
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
-db_ver = "0.1.0" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
+db_ver = "0.1.1" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
 def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
     """Rebuild an older schema into the current schema and keep a backup.
 
@@ -49,6 +49,7 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
             'game_participants', 'stock_picks',
         )
         now = _iso8601()
+        seen_template_names: set[str] = set()
         for table in table_order:
             exists = source.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
@@ -67,6 +68,16 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                 if table == 'game_templates':
                     row.setdefault('template_name', row.get('game_name') or 'Recurring game')
                     row.setdefault('game_name', row.get('template_name') or 'Recurring game')
+                    base_name = str(row['game_name'])
+                    unique_name = base_name
+                    suffix = 2
+                    while unique_name in seen_template_names:
+                        trimmed = base_name[: max(1, 35 - len(f' {suffix}'))]
+                        unique_name = f'{trimmed} {suffix}'
+                        suffix += 1
+                    seen_template_names.add(unique_name)
+                    row['game_name'] = unique_name
+                    row['template_name'] = unique_name
                 if table == 'stock_picks' and not row.get('datetime_created'):
                     row['datetime_created'] = row.get('last_updated') or now
                 row.setdefault('datetime_created', now)
@@ -257,7 +268,7 @@ def create(db_name:str, upgrade:bool=True):
         template_id INTEGER PRIMARY KEY AUTOINCREMENT,
         template_name TEXT NOT NULL,
         template_description TEXT DEFAULT NULL,
-        game_name TEXT NOT NULL,
+        game_name TEXT NOT NULL UNIQUE,
         game_description TEXT DEFAULT NULL,
         status TEXT NOT NULL DEFAULT 'enabled',               -- Whether to create the game or not
         owner_user_id INTEGER NOT NULL,                       -- User_ID who created the game 

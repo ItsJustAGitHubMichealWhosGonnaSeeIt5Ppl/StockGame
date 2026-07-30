@@ -563,7 +563,26 @@ class Backend:
         #TODO support basic variables in the game name
         if start_date and not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
-        
+        if recurring_period < 1:
+            raise ValueError('`recurring_period` must be at least 1.')
+        if create_days_in_advance < 0:
+            raise ValueError('`create_days_in_advance` cannot be negative.')
+        if game_length < 0:
+            raise ValueError('`game_length` cannot be negative.')
+        if game_length > 0 and game_length > recurring_period:
+            raise ValueError(
+                '`game_length` cannot be greater than `recurring_period` '
+                '(overlapping active games from the same template).'
+            )
+        if exclusive_picks and pick_date is None:
+            raise ValueError('`pick_date` is required when `exclusive_picks` is enabled.')
+        if exclusive_picks and pick_date is not None and pick_date < 0:
+            raise ValueError(
+                '`pick_date` cannot be after the game start when `exclusive_picks` is enabled.'
+            )
+        if pick_date is not None and (pick_date < -30 or pick_date > 30):
+            raise ValueError('`pick_date` must be between -30 and 30 days relative to each game start.')
+
         items = {
             'template_name': name,
             'game_name': name,
@@ -582,12 +601,24 @@ class Backend:
             'datetime_created': _iso8601()
             }
 
+        existing = self.sql.get(table='game_templates', filters={'game_name': name})
+        if existing.status == 'success':
+            raise bexc.AlreadyExistsError(
+                table='game_templates',
+                duplicate=name,
+                message='Cannot add multiple templates with the same name',
+            )
+
         resp = self.sql.insert(table='game_templates', items=items)
         if resp.status != 'success': #TODO errors
-            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and str(resp.result).strip() == 'game_templates.game_name':
-                raise bexc.AlreadyExistsError(table='game_templates', duplicate=name, message='Cannot add multiple games with the same name')
+            if resp.reason == 'SQLITE_CONSTRAINT_UNIQUE' and 'game_templates.game_name' in str(resp.result):
+                raise bexc.AlreadyExistsError(
+                    table='game_templates',
+                    duplicate=name,
+                    message='Cannot add multiple templates with the same name',
+                )
 
-            raise Exception(f'Failed to add game.', resp) 
+            raise Exception(f'Failed to add game.', resp)
         
     def get_game_template(self, template_id:int):
         #TODO docstring
@@ -627,6 +658,31 @@ class Backend:
             game_length=game_length,
             last_updated=_iso8601(),
         )
+
+    def remove_game_template(self, template_id:int):
+        """Delete a recurring-game template.
+
+        Existing games keep running; their ``template_id`` is cleared so the
+        row can be removed without FK conflicts.
+        """
+        self.get_game_template(template_id)  # Raises LookupError if missing
+        clear = self.sql.update(
+            table='games',
+            items={'template_id': 'NULL'},
+            filters={'template_id': int(template_id)},
+            force=False,
+        )
+        if clear.status != 'success' and clear.reason not in ('NO ROWS RETURNED', 'NO ROWS EFFECTED'):
+            raise Exception(f'Failed to detach games from template {template_id}.', clear)
+        resp = self.sql.delete(table='game_templates', filters={'template_id': int(template_id)})
+        if resp.status != 'success':
+            if resp.reason == 'NO ROWS RETURNED':
+                raise bexc.DoesntExistError(
+                    table='game_templates',
+                    item=template_id,
+                    message=f'Template {template_id} does not exist.',
+                )
+            raise Exception(f'Failed to delete template {template_id}.', resp)
     
     # # STOCK ACTIONS # #
     def add_stock(self, ticker:str, exchange:str, company_name:str):
@@ -1109,6 +1165,10 @@ class GameLogic: # Might move some of the control/running actions here
         ).utcoffset() or timedelta(0)
         return (market_offset - local_offset).total_seconds() / 3600
     
+    def _today_et(self) -> date:
+        """Calendar date in America/New_York (US market calendar day)."""
+        return datetime.now(pytz.timezone('America/New_York')).date()
+
     def _next_recurring_start(
         self,
         anchor: date,
@@ -1132,64 +1192,104 @@ class GameLogic: # Might move some of the control/running actions here
             next_start = anchor + relativedelta(months=months)
         return next_start
 
+    def _unique_recurring_game_name(self, base_name: str) -> str:
+        """Return ``base_name``, or ``base_name #n`` if that name is taken.
+
+        Does not embed calendar dates (naming scheme TBD later).
+        """
+        candidate = base_name[:35]
+        attempt = 1
+        while attempt <= 100:
+            try:
+                existing = self.be.sql.get(table='games', filters={'name': candidate})
+                if existing.status != 'success':
+                    return candidate
+            except Exception:
+                return candidate
+            attempt += 1
+            suffix = f' #{attempt}'
+            candidate = f'{base_name[: max(1, 35 - len(suffix))]}{suffix}'
+        raise bexc.AlreadyExistsError(
+            table='games',
+            duplicate=base_name,
+            message=f'Could not find a unique game name for {base_name!r}',
+        )
+
     def recurring_games(self):
-        """Create each enabled template's next due game exactly once.
+        """Create each enabled template's due games (catch up all overdue ones).
 
         ``template.start_date`` is the first game's start. Later games follow
         every ``recurring_period`` months from that anchor date.
+        Disabled templates are skipped (stop = no new games; existing continue).
         """
-        today = datetime.today().date()
+        today = self._today_et()
         try:
             templates = self.be.get_many_game_templates(status='enabled')
         except LookupError:
             return
 
         for template in templates:
-            response = self.be.sql.get(
-                table='games',
-                columns=['start_date'],
-                filters={'template_id': template.id},
-                order={'start_date': 'DESC'},
-            )
-            latest_start: Optional[date] = None
-            if response.status == 'success':
-                assert isinstance(response.result, tuple)
-                latest_start = datetime.strptime(response.result[0]['start_date'], '%Y-%m-%d').date()
-            next_start_date = self._next_recurring_start(
-                anchor=template.start_date,
-                recurring_period=template.recurring_period,
-                after=latest_start,
-            )
+            try:
+                while True:
+                    response = self.be.sql.get(
+                        table='games',
+                        columns=['start_date'],
+                        filters={'template_id': template.id},
+                        order={'start_date': 'DESC'},
+                    )
+                    latest_start: Optional[date] = None
+                    if response.status == 'success':
+                        assert isinstance(response.result, tuple)
+                        latest_start = datetime.strptime(
+                            response.result[0]['start_date'], '%Y-%m-%d'
+                        ).date()
+                    next_start_date = self._next_recurring_start(
+                        anchor=template.start_date,
+                        recurring_period=template.recurring_period,
+                        after=latest_start,
+                    )
 
-            due_date = next_start_date - timedelta(days=template.create_days_in_advance)
-            if due_date > today:
+                    due_date = next_start_date - timedelta(days=template.create_days_in_advance)
+                    if due_date > today:
+                        break
+
+                    game_name = self._unique_recurring_game_name(template.name)
+                    pick_date = None
+                    if template.pick_date is not None:
+                        pick_date = next_start_date - timedelta(days=template.pick_date)
+                    end_date = None
+                    if template.game_length:
+                        end_date = next_start_date + relativedelta(
+                            months=template.game_length, days=-1
+                        )
+
+                    self.be.add_game(
+                        user_id=template.owner_id,
+                        name=game_name,
+                        start_date=next_start_date,
+                        end_date=end_date,
+                        starting_money=template.start_money,
+                        pick_date=pick_date,
+                        private_game=template.private_game,
+                        total_picks=template.pick_count,
+                        exclusive_picks=template.draft_mode,
+                        sell_during_game=template.allow_selling,
+                        update_frequency=template.update_frequency,
+                        template_id=template.id,
+                    )
+                    self.logger.info(
+                        'Created recurring game %r for template %s starting %s',
+                        game_name,
+                        template.id,
+                        next_start_date,
+                    )
+            except Exception:
+                self.logger.exception(
+                    'Failed while creating recurring games for template %s (%s)',
+                    template.id,
+                    template.name,
+                )
                 continue
-
-            formatted_name = template.name.format(date=next_start_date.strftime('%b/%Y'))
-            if formatted_name == template.name:
-                formatted_name = f'{template.name} {next_start_date:%Y-%m}'
-            formatted_name = formatted_name[:35]
-            pick_date = None
-            if template.pick_date is not None:
-                pick_date = next_start_date - timedelta(days=template.pick_date)
-            end_date = None
-            if template.game_length:
-                end_date = next_start_date + relativedelta(months=template.game_length, days=-1)
-
-            self.be.add_game(
-                user_id=template.owner_id,
-                name=formatted_name,
-                start_date=next_start_date,
-                end_date=end_date,
-                starting_money=template.start_money,
-                pick_date=pick_date,
-                private_game=template.private_game,
-                total_picks=template.pick_count,
-                exclusive_picks=template.draft_mode,
-                sell_during_game=template.allow_selling,
-                update_frequency=template.update_frequency,
-                template_id=template.id,
-            )
     
     def update_game_statuses(self, game_id:Optional[int | str]=None):
         """Update game statuses
@@ -1199,6 +1299,7 @@ class GameLogic: # Might move some of the control/running actions here
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all games will be checked.
         """
+        today = self._today_et()
         
         try:
             if game_id:
@@ -1211,9 +1312,9 @@ class GameLogic: # Might move some of the control/running actions here
         for game in games: #TODO add log here
             
             # Start and end games
-            if game.status == 'open' and game.start_date <= datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): # Set games to active
+            if game.status == 'open' and game.start_date <= today: # Set games to active
                 self.be.update_game(game_id=game.id, status='active')
-            if game.status == 'active' and game.end_date and game.end_date < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
+            if game.status == 'active' and game.end_date and game.end_date < today: #Game has ended
                 self.be.update_game(game_id=game.id, status='ended')
 
     def update_stock_prices(self, game_id:Optional[int | str]=None, force:bool=False):
