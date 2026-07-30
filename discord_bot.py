@@ -1,6 +1,7 @@
 # DISCORD Bot
 # SOME AI USED
 # Draft exclusivity is enforced by the backend; Discord exposes it during game creation.
+# TODO set up some sort of draft system for stocks
 
 # BUILT-IN
 from datetime import datetime, timedelta
