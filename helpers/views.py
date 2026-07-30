@@ -3,9 +3,12 @@
 
 import discord
 import datetime
-from typing import Callable, Optional, List, Dict, Any, Optional, Union
+from typing import Callable, Optional, List, Dict, Any, Optional, Union, TYPE_CHECKING
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
+
+if TYPE_CHECKING:
+    from helpers.datatype_validation import GameInfo
 
 class Pagination(discord.ui.View):
     def __init__(self, interaction: discord.Interaction, page_len:int, embed: discord.Embed, games: list[tuple[str,str]| str], mode: str = 'field', ephemeral: bool = True):
@@ -176,13 +179,27 @@ class LeaderboardImageGenerator:
     def _load_fonts(self):
         """Load fonts with fallback to default."""
         self.fonts = {}
-        font_names = ['arial.ttf', 'Arial.ttf', 'arial.ttc']  # Multiple potential font files
+        # Try multiple font paths for cross-platform compatibility
+        # Windows paths
+        font_paths = [
+            'arial.ttf',
+            'Arial.ttf',
+            'arial.ttc',
+            # Linux paths
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+            '/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/TTF/DejaVuSans.ttf',
+            # macOS paths (if needed)
+            '/System/Library/Fonts/Helvetica.ttc',
+            '/Library/Fonts/Arial.ttf',
+        ]
         
         for size_name, size in self.font_sizes.items():
             font_loaded = False
-            for font_name in font_names:
+            for font_path in font_paths:
                 try:
-                    self.fonts[size_name] = ImageFont.truetype(font_name, size)
+                    self.fonts[size_name] = ImageFont.truetype(font_path, size)
                     font_loaded = True
                     break
                 except (OSError, IOError):
@@ -432,25 +449,41 @@ class StockPortfolioImageGenerator:
     def _load_fonts(self):
         """Load fonts with fallback to default."""
         self.fonts = {}
-        font_names = ['arial.ttf', 'Arial.ttf', 'arial.ttc']
+        # Try multiple font paths for cross-platform compatibility
+        # Windows paths
+        font_paths = [
+            'arial.ttf',
+            'Arial.ttf',
+            'arial.ttc',
+            # Linux paths
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+            '/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf',
+            '/usr/share/fonts/TTF/DejaVuSans.ttf',
+            # macOS paths (if needed)
+            '/System/Library/Fonts/Helvetica.ttc',
+            '/Library/Fonts/Arial.ttf',
+        ]
         
         for size_name, size in self.font_sizes.items():
             font_loaded = False
-            for font_name in font_names:
+            for font_path in font_paths:
                 try:
-                    self.fonts[size_name] = ImageFont.truetype(font_name, size)
+                    self.fonts[size_name] = ImageFont.truetype(font_path, size)
                     font_loaded = True
                     break
                 except (OSError, IOError):
                     continue
             
             if not font_loaded:
+                # Fallback to default font
                 self.fonts[size_name] = ImageFont.load_default()
     
     def create_portfolio_image(self, 
                              user_data: Dict[str, Any], 
                              game_data: Dict[str, Any],
                              stock_picks: List[Dict[str, Any]],
+                             info,
                              show_footer: bool = True) -> BytesIO:
         """
         Create a stock portfolio image from user, game, and stock data.
@@ -466,10 +499,12 @@ class StockPortfolioImageGenerator:
         """
         # Filter only owned stocks for display
         owned_stocks = [pick for pick in stock_picks if pick.get('status') == 'owned']
+        pending_stocks = [pick for pick in stock_picks if pick.get('status') == 'pending_buy']
+        all_stocks = {'owned': owned_stocks, 'pending': pending_stocks}
         
         # Calculate image height
-        extra_height = 120 if owned_stocks else 80  # Extra space for summary or no stocks message
-        height = self.base_height + (len(owned_stocks) * self.row_height) + extra_height
+        extra_height = 140 if owned_stocks or pending_stocks else 80  # Extra space for summary or no stocks message
+        height = self.base_height + ((len(owned_stocks) + len(pending_stocks)) * self.row_height) + extra_height
         
         # Create image
         img = Image.new('RGB', (self.width, height), self.colors['bg'])
@@ -489,23 +524,33 @@ class StockPortfolioImageGenerator:
         y_offset = self._draw_centered_text(draw, subtitle_text, y_offset, self.fonts['text'], self.colors['footer'])
         y_offset += 15
         
-        if owned_stocks:
+        if owned_stocks or pending_stocks:
             # Calculate and draw portfolio summary
-            y_offset = self._draw_portfolio_summary(draw, owned_stocks, y_offset)
+            y_offset = self._draw_portfolio_summary(draw, all_stocks, y_offset, info)
             y_offset += 20
             
             # Draw stock table
             y_offset = self._draw_stock_header(draw, y_offset)
-            y_offset = self._draw_stock_rows(draw, owned_stocks, y_offset)
+            y_offset = self._draw_stock_rows(draw, all_stocks, y_offset, info)
         else:
             # No stocks message
             no_stocks_text = "No stocks currently owned"
             y_offset = self._draw_centered_text(draw, no_stocks_text, y_offset + 40, 
                                               self.fonts['text'], self.colors['footer'])
         
-        # Add footer if requested
+        # Add footer if requested - position it below the content with proper spacing
         if show_footer:
-            self._draw_footer(draw, height, last_updated=stock_picks[0].get('last_updated'))
+            # Add padding before footer
+            footer_y = y_offset + 20
+            # Ensure image is tall enough for footer
+            footer_height = footer_y + 30
+            if footer_height > height:
+                # Resize image to accommodate footer
+                new_img = Image.new('RGB', (self.width, footer_height), self.colors['bg'])
+                new_img.paste(img)
+                img = new_img
+                draw = ImageDraw.Draw(img)
+            self._draw_footer(draw, footer_height, footer_y, last_updated=stock_picks[0].get('last_updated') if stock_picks else None)
 
         # Save to BytesIO buffer
         buffer = BytesIO()
@@ -523,8 +568,11 @@ class StockPortfolioImageGenerator:
         draw.text((x, y), text, fill=color, font=font)
         return y + text_height + 10
     
-    def _draw_portfolio_summary(self, draw: ImageDraw.Draw, owned_stocks: List[Dict], y_offset: int) -> int:
+    def _draw_portfolio_summary(self, draw: ImageDraw.Draw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
         """Draw portfolio summary section."""
+        owned_stocks = all_stocks['owned']
+        pending_stocks = all_stocks['pending']
+
         # Calculate totals
         total_value = sum(float(stock.get('current_value', 0)) for stock in owned_stocks)
         total_gain_dollars = sum(float(stock.get('change_dollars', 0)) for stock in owned_stocks)
@@ -533,31 +581,44 @@ class StockPortfolioImageGenerator:
         total_invested = total_value - total_gain_dollars
         total_gain_percent = (total_gain_dollars / total_invested * 100) if total_invested != 0 else 0
         
-        # Summary box
-        summary_rect = [50, y_offset, self.width - 50, y_offset + 60]
+        # Calculate pending stocks amount and money left
+        start_money = float(info.game.start_money)
+        pick_count = int(info.game.pick_count)
+        value_per_pick = start_money / pick_count if pick_count > 0 else 0
+        pending_stocks_amount = len(pending_stocks) * value_per_pick
+        money_left = start_money - total_value - pending_stocks_amount
+        
+        # Summary box - taller to accommodate 5 items in 2 rows
+        summary_rect = [50, y_offset, self.width - 50, y_offset + 110]
         draw.rectangle(summary_rect, fill=self.colors['summary_bg'], outline=self.colors['border'])
         
-        # Summary text in three columns
+        # Summary text in three columns for first row
         col1_x = 70
         col2_x = 310
         col3_x = 550
-        text_y = y_offset + 12
+        row1_y = y_offset + 12
+        row2_y = y_offset + 60
         
-        # Portfolio value (white)
-        draw.text((col1_x, text_y), "Total Portfolio Value:", fill=self.colors['text'], font=self.fonts['text'])
-        draw.text((col1_x, text_y + 20), f"${total_value:,.2f}", fill=self.colors['text'], font=self.fonts['header'])
+        # Row 1: Portfolio value, Gain/Loss, Return %
+        draw.text((col1_x, row1_y), "Total Portfolio Value:", fill=self.colors['text'], font=self.fonts['text'])
+        draw.text((col1_x, row1_y + 20), f"${total_value:,.2f}", fill=self.colors['text'], font=self.fonts['header'])
         
-        # Dollar gain (color coded)
         gain_color = self.colors['positive'] if total_gain_dollars >= 0 else self.colors['negative']
-        draw.text((col2_x, text_y), "Total Gain/Loss:", fill=self.colors['text'], font=self.fonts['text'])
-        draw.text((col2_x, text_y + 20), f"${total_gain_dollars:+,.2f}", fill=gain_color, font=self.fonts['header'])
+        draw.text((col2_x, row1_y), "Total Gain/Loss:", fill=self.colors['text'], font=self.fonts['text'])
+        draw.text((col2_x, row1_y + 20), f"${total_gain_dollars:+,.2f}", fill=gain_color, font=self.fonts['header'])
         
-        # Percentage return (color coded)
         percent_color = self.colors['positive'] if total_gain_percent >= 0 else self.colors['negative']
-        draw.text((col3_x, text_y), "Total Return:", fill=self.colors['text'], font=self.fonts['text'])
-        draw.text((col3_x, text_y + 20), f"{total_gain_percent:+.2f}%", fill=percent_color, font=self.fonts['header'])
+        draw.text((col3_x, row1_y), "Total Return:", fill=self.colors['text'], font=self.fonts['text'])
+        draw.text((col3_x, row1_y + 20), f"{total_gain_percent:+.2f}%", fill=percent_color, font=self.fonts['header'])
         
-        return y_offset + 60
+        # Row 2: Pending Stocks Amount, Money Left
+        draw.text((col1_x, row2_y), "Pending Stocks Amount:", fill=self.colors['text'], font=self.fonts['text'])
+        draw.text((col1_x, row2_y + 20), f"${pending_stocks_amount:,.2f}", fill=self.colors['text'], font=self.fonts['header'])
+        
+        draw.text((col2_x, row2_y), "Money Left to Spend:", fill=self.colors['text'], font=self.fonts['text'])
+        draw.text((col2_x, row2_y + 20), f"${money_left:,.2f}", fill=self.colors['text'], font=self.fonts['header'])
+        
+        return y_offset + 110
     
     def _draw_stock_header(self, draw: ImageDraw.Draw, y_offset: int) -> int:
         """Draw stock table header."""
@@ -579,8 +640,17 @@ class StockPortfolioImageGenerator:
         
         return y_offset + 35
     
-    def _draw_stock_rows(self, draw: ImageDraw.Draw, owned_stocks: List[Dict], y_offset: int) -> int:
+    def _draw_stock_rows(self, draw: ImageDraw.Draw, all_stocks: Dict[str, List[Dict]], y_offset: int, info) -> int:
         """Draw stock rows."""
+        owned_stocks = all_stocks['owned']
+        pending_stocks = all_stocks['pending']
+        
+        # Calculate value per pick for pending stocks
+        start_money = float(info.game.start_money)
+        pick_count = int(info.game.pick_count)
+        value_per_pick = start_money / pick_count if pick_count > 0 else 0
+
+        # Draw owned stocks
         for idx, stock in enumerate(owned_stocks):
             # Alternating row colors
             row_color = self.colors['row_bg_1'] if idx % 2 == 0 else self.colors['row_bg_2']
@@ -593,6 +663,7 @@ class StockPortfolioImageGenerator:
             current_value = float(stock.get('current_value', 0))
             change_dollars = float(stock.get('change_dollars', 0))
             change_percent = float(stock.get('change_percent', 0))
+            status = str(stock.get('status', 'N/A'))
             
             # Calculate share price
             share_price = current_value / shares if shares > 0 else 0
@@ -630,11 +701,65 @@ class StockPortfolioImageGenerator:
             
             y_offset += self.row_height
         
+        # Draw pending stocks
+        for idx, stock in enumerate(pending_stocks):
+            # Continue alternating pattern from owned stocks
+            total_owned = len(owned_stocks)
+            row_color = self.colors['row_bg_1'] if (total_owned + idx) % 2 == 0 else self.colors['row_bg_2']
+            row_rect = [20, y_offset, self.width - 20, y_offset + self.row_height]
+            draw.rectangle(row_rect, fill=row_color)
+            
+            # Extract stock data
+            ticker = str(stock.get('stock_ticker', 'N/A'))
+            # Pending stocks use current_value if available, otherwise value_per_pick
+            pending_value = value_per_pick
+            
+            # Try to get price if available (pending stocks might have price data)
+            # Check if we can calculate from shares and value, or use a default
+            shares = stock.get('shares')
+            if shares and float(shares) > 0:
+                share_price = pending_value / float(shares)
+            else:
+                # If no shares, we can't calculate price - show N/A
+                share_price = 0
+            
+            # Draw ticker with "*" indicator for pending
+            ticker_rect = [25, y_offset + 8, 95, y_offset + self.row_height - 8]
+            draw.rectangle(ticker_rect, fill=self.colors['ticker_bg'])
+            ticker_with_status = f"{ticker}*"
+            bbox = draw.textbbox((0, 0), ticker_with_status, font=self.fonts['text'])
+            ticker_text_width = bbox[2] - bbox[0]
+            ticker_rect_center_x = (ticker_rect[0] + ticker_rect[2]) // 2
+            ticker_text_x = ticker_rect_center_x - (ticker_text_width // 2)
+            draw.text((ticker_text_x, y_offset + 15), ticker_with_status, fill=self.colors['text'], font=self.fonts['text'])
+            
+            # Draw price (show N/A if not available)
+            if share_price > 0:
+                price_text = f"${share_price:,.2f}"
+            else:
+                price_text = "N/A"
+            draw.text((120, y_offset + 15), price_text, fill=self.colors['footer'], font=self.fonts['text'])
+            
+            # Draw shares - show "Pending" instead
+            draw.text((220, y_offset + 15), "Pending", fill=self.colors['footer'], font=self.fonts['text'])
+            
+            # Draw value (the allocated amount)
+            value_text = f"${pending_value:,.2f}"
+            draw.text((330, y_offset + 15), value_text, fill=self.colors['text'], font=self.fonts['text'])
+            
+            # Draw dollar gain - show "-" for pending
+            draw.text((460, y_offset + 15), "-", fill=self.colors['footer'], font=self.fonts['text'])
+            
+            # Draw percentage gain - show "-" for pending
+            draw.text((580, y_offset + 15), "-", fill=self.colors['footer'], font=self.fonts['text'])
+            
+            y_offset += self.row_height
+        
         return y_offset
     
-    def _draw_footer(self, draw: ImageDraw.Draw, height: int, last_updated: Optional[datetime.datetime] = None):
+    def _draw_footer(self, draw: ImageDraw.Draw, height: int, footer_y: int, last_updated: Optional[datetime.datetime] = None):
         """Draw footer text."""
-        draw.text((20, height - 25), "Last Updated: " +
+        draw.text((20, footer_y), "Last Updated: " +
                   (last_updated.strftime("%Y-%m-%d %H:%M:%S") if last_updated else "Generated by StockBot"), 
                  fill=self.colors['footer'], font=self.fonts['small'])
 

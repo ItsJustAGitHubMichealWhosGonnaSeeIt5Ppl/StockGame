@@ -71,6 +71,12 @@ def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False)
                 if send.status == 'error':
                     if send.reason == 'DUPLICATE COLUMN NAME': # The column is already there, not a big deal so keep moving
                         continue
+                    elif send.reason == 'NO ROWS RETURNED' or send.reason == 'NO ROWS EFFECTED':
+                        total = sql.get(table="table")
+                        if total.reason == 'NO ROWS RETURNED': # Should fix issues if something that has no lines is attempted to be upgraded
+                            continue
+                        else:
+                            raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n', send)
                     else:
                         raise Exception(f'An unknown error occurred while trying to upgrade from v0.0.2 to v0.0.3\n', send) # Sometimes gives error but does what its asked anyway...
 
@@ -414,9 +420,16 @@ def create(db_name:str, upgrade:bool=True):
     conn.commit()
     conn.close()
     
-    # Run database upgrade
-    if upgrade:
+    
+    sql = SqlHelper(db_name)
+    info = sql.get(table="database_info")
+    if info.status == 'error' and info.reason == "NO ROWS RETURNED": # likely brand new
+        upd = sql.insert(table='database_info', items={'database_name': db_name, 'original_version': db_ver, 'current_version': db_ver, 'datetime_created': _iso8601()})
+        
+    if upgrade: # Run database upgrade
         upgrade_db(db_current_ver=db_ver, db_name=db_name)
+
+        
     
 if __name__ == "__main__":
     
