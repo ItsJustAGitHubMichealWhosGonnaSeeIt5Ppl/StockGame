@@ -11,7 +11,7 @@ MainStatus = Literal['success', 'error']
 GameStatus = Literal['open', 'active', 'ended']
 ParticipantStatus = Literal['pending', 'active', 'inactive']
 PickStatus = Literal['pending_buy', 'owned', 'pending_sell', 'sold']
-UpdateFrequency = Literal['daily', 'hourly', 'minute', 'realtime']
+UpdateFrequency = Literal['daily', 'hourly', 'minute', 'realtime', 'alpaca']
 PydanticModelType = TypeVar('PydanticModelType', bound=BaseModel)
 GameTemplateStatus = Literal['enabled', 'disabled']
 
@@ -50,7 +50,7 @@ class Game(BaseModel):
     draft_mode: bool = False
     private_game: bool = False
     allow_selling: bool = False
-    update_frequency: UpdateFrequency = 'daily'
+    update_frequency: UpdateFrequency = 'alpaca'
     start_date: date # YYYY-MM-DD
     end_date: Optional[date] = None # YYYY-MM-DD
     status: GameStatus = 'open'
@@ -80,7 +80,7 @@ class GameTemplate(BaseModel):
     draft_mode: bool = False
     private_game: bool = False
     allow_selling: bool = False
-    update_frequency: UpdateFrequency = 'daily'
+    update_frequency: UpdateFrequency = 'alpaca'
     start_date: date # YYYY-MM-DD
     create_days_in_advance: int
     recurring_period: int

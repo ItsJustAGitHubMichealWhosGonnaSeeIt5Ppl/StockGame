@@ -8,7 +8,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any, Literal, Mapping, Optional, cast # 3.13 +
+from typing import Any, Mapping, Optional, cast # 3.13 +
 
 # EXTERNAL
 import discord
@@ -313,13 +313,21 @@ logger.info(f'Connecting with DB: {DB_NAME}')
 fe = Frontend(database_name=DB_NAME, owner_user_id=OWNER_ID, source='discord') # Frontend
 ac.init_autocomplete(fe)  # Inject the shared Frontend instance into autocomplete module
 
-@tasks.loop(hours=1)
+# Prevent overlapping update_all runs if a cycle takes longer than the loop interval.
+_game_update_lock = asyncio.Lock()
+
+@tasks.loop(minutes=1)
 async def scheduled_game_update():
-    """Refresh recurring games, statuses, prices, portfolios, and totals."""
-    try:
-        await asyncio.to_thread(fe.gl.update_all)
-    except Exception:
-        logger.exception('Scheduled game update failed.')
+    """Refresh prices (Alpaca) and game portfolios without blocking Discord commands."""
+    if _game_update_lock.locked():
+        logger.debug('Skipping scheduled update; previous cycle still running.')
+        return
+    async with _game_update_lock:
+        try:
+            # Blocking HTTP + SQLite work stays off the event loop.
+            await asyncio.to_thread(fe.gl.update_all)
+        except Exception:
+            logger.exception('Scheduled game update failed.')
 
 @scheduled_game_update.before_loop
 async def wait_for_scheduled_update():
@@ -350,14 +358,14 @@ async def on_ready():
 @bot.tree.command(name="create-game-advanced", description="Create a new stock game without a wizard")
 @app_commands.describe(
     name="Name of the game",
-    start_date="Start date (YYYY-MM-DD)",
+    start_date="Game start date (YYYY-MM-DD). Does not by itself stop buying.",
     end_date="End date (YYYY-MM-DD)",
-    pick_date="Date stocks must be picked by (YYYY-MM-DD)",
+    pick_date="Last day players can buy stocks (YYYY-MM-DD). Leave empty = buy anytime.",
     starting_money="Starting money amount",
     total_picks="Number of stocks each player can pick",
-    exclusive_picks="Whether stocks can only be picked once",
+    exclusive_picks="Whether stocks can only be picked once (requires a pick_date)",
     private_game="Whether the game is private (requires owner approval for new users)",
-    update_frequency="How often prices should update ('daily', 'hourly')" #, 'minute', 'realtime')"
+    # update_frequency="How often prices should update ('daily', 'hourly')" #, 'minute', 'realtime')"
     # sell_during_game="Whether players can sell stocks during game"
 )
 async def create_game_advanced(
@@ -370,7 +378,7 @@ async def create_game_advanced(
     exclusive_picks: bool = False,
     private_game: bool = False,
     pick_date: str | None = None,
-    update_frequency: Literal['daily', 'hourly'] = "daily", #Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
+    # update_frequency: Literal['daily', 'hourly'] = "daily", #Literal['daily', 'hourly', 'minute', 'realtime'] = "daily",
     # sell_during_game: bool = False
 ):
     # Create game using frontend and return
@@ -385,13 +393,18 @@ async def create_game_advanced(
             exclusive_picks=exclusive_picks,
             private_game= private_game,
             pick_date=pick_date,
-            update_frequency=update_frequency
+            update_frequency='alpaca',
             # sell_during_game is configured through the guided flow/manage command.
         )
         
+        pick_note = (
+            f"Pick deadline: `{pick_date}`"
+            if pick_date
+            else "Pick deadline: none — players can buy anytime"
+        )
         embed = discord.Embed(
             title="Game Created Successfully",
-            description=f"Game '{name}' has been created!",
+            description=f"Game '{name}' has been created!\n{pick_note}",
             color=discord.Color.green()
         )
     except Exception as e: #TODO find specific errors!
@@ -444,7 +457,7 @@ async def create_game(interaction: discord.Interaction):
         )
 
         start_date_input = discord.ui.TextInput(
-            label="Start Date *No buying after this date",
+            label="Start Date (when the game becomes active)",
             placeholder=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"), # Default to 7 days from now
             required=True,
             max_length=10,
@@ -519,14 +532,18 @@ async def create_game(interaction: discord.Interaction):
                 else:
                     game_exclusive_picks = False
 
-                pick_date_modal = discord.ui.Modal(title="Pick Date", timeout=60)
+                pick_date_modal = discord.ui.Modal(title="Buy / Pick Deadline", timeout=60)
 
                 pick_date_input = discord.ui.TextInput(
-                    label=f"Pick Date{' *leave blank for no pick date' if not game_exclusive_picks else ''}",
-                    placeholder="YYYY-MM-DD",
+                    label=(
+                        "Pick deadline (required for exclusive picks)"
+                        if game_exclusive_picks
+                        else "Pick deadline (blank = buy anytime)"
+                    ),
+                    placeholder="YYYY-MM-DD — leave blank to allow buying anytime",
                     required=game_exclusive_picks,
                     max_length=10,
-                    min_length=10,
+                    min_length=10 if game_exclusive_picks else 0,
                     style=discord.TextStyle.short
                 )
 
@@ -571,150 +588,132 @@ async def create_game(interaction: discord.Interaction):
                         else:
                             private_game = False
 
-                        # Create a response embed for update frequency
-                        update_frequency_embed = discord.Embed(
-                            title="Update Frequency",
-                            description="How often should the stock prices update?\nDefaults to daily.",
+                        # update_frequency UI commented out — games are tagged/updated via Alpaca
+                        # update_frequency_embed = discord.Embed(
+                        #     title="Update Frequency",
+                        #     description="How often should the stock prices update?\nDefaults to daily.",
+                        #     color=discord.Color.blue()
+                        # )
+                        # update_frequency_daily = discord.ui.Button(
+                        #     label="Daily",
+                        #     style=discord.ButtonStyle.success,
+                        #     custom_id="update_frequency_daily"
+                        # )
+                        # update_frequency_hourly = discord.ui.Button(
+                        #     label="Hourly",
+                        #     style=discord.ButtonStyle.success,
+                        #     custom_id="update_frequency_hourly"
+                        # )
+                        # update_frequency_view = discord.ui.View()
+                        # update_frequency_view.add_item(update_frequency_daily)
+                        # update_frequency_view.add_item(update_frequency_hourly)
+                        # await interaction.response.edit_message(embed=update_frequency_embed, view=update_frequency_view)
+
+                        game_update_frequency = "alpaca"
+                        game_name=name_input.value
+                        game_start_date=start_date_input.value
+                        game_end_date=end_date_input.value if end_date_input.value else None
+                        game_pick_date=pick_date_input.value if pick_date_input.value else None
+                        game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
+                        game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
+                        pick_deadline_text = (
+                            game_pick_date
+                            if game_pick_date
+                            else "None — players can buy anytime"
+                        )
+                        
+                        # Confirm the game creation with the provided inputs
+                        confirmation_embed = discord.Embed(
+                            title="Game Creation Confirmation",
+                            description=(
+                                f"Name: {game_name}\n"
+                                f"Start Date: {game_start_date}\n"
+                                f"End Date: {game_end_date}\n"
+                                f"Starting Money: {game_starting_money}\n"
+                                f"Total Picks: {game_total_picks}\n"
+                                f"Exclusive Picks: {game_exclusive_picks}\n"
+                                f"Private Game: {private_game}\n"
+                                f"Pick Deadline: {pick_deadline_text}"
+                                #f"Updates: {game_update_frequency}"
+                            ),
                             color=discord.Color.blue()
                         )
-
-                        # Create buttons for update frequency
-                        update_frequency_daily = discord.ui.Button(
-                            label="Daily",
-                            style=discord.ButtonStyle.success,
-                            custom_id="update_frequency_daily"
-                        )
-
-                        update_frequency_hourly = discord.ui.Button(
-                            label="Hourly",
-                            style=discord.ButtonStyle.success,
-                            custom_id="update_frequency_hourly"
-                        )
-
-                        # update_frequency_minute = discord.ui.Button(
-                        #     label="Minute",
-                        #     style=discord.ButtonStyle.success,
-                        #     custom_id="update_frequency_minute"
-                        # )
-
-                        # update_frequency_realtime = discord.ui.Button(
-                        #     label="Realtime",
-                        #     style=discord.ButtonStyle.success,
-                        #     custom_id="update_frequency_realtime"
-                        # )
-
-                        update_frequency_view = discord.ui.View()
-                        update_frequency_view.add_item(update_frequency_daily)
-                        update_frequency_view.add_item(update_frequency_hourly)
-                        # update_frequency_view.add_item(update_frequency_minute)
-                        # update_frequency_view.add_item(update_frequency_realtime)
-
-                        await interaction.response.edit_message(embed=update_frequency_embed, view=update_frequency_view)
-
-                        async def update_frequency_callback(interaction: discord.Interaction):
-                            # Check which button was clicked
-                            custom_id = interaction_custom_id(interaction)
-                            if custom_id == "update_frequency_daily":
-                                game_update_frequency = "daily"
-                            elif custom_id == "update_frequency_hourly":
-                                game_update_frequency = "hourly"
-                            elif custom_id == "update_frequency_minute":
-                                game_update_frequency = "minute"
-                            else:
-                                game_update_frequency = "realtime"
+                        confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
                     
-                            game_name=name_input.value
-                            game_start_date=start_date_input.value
-                            game_end_date=end_date_input.value if end_date_input.value else None
-                            game_pick_date=pick_date_input.value if pick_date_input.value else None
-                            game_starting_money=int(starting_money_input.value if starting_money_input.value else 10000.00)
-                            game_total_picks=int(total_picks_input.value if total_picks_input.value else 10)
-                            
-                            # Confirm the game creation with the provided inputs
-                            confirmation_embed = discord.Embed(
-                                title="Game Creation Confirmation",
-                                description=f"Name: {game_name}\nStart Date: {game_start_date}\nEnd Date: {game_end_date}\nStarting Money: {game_starting_money}\nTotal Picks: {game_total_picks}\nExclusive Picks: {game_exclusive_picks}\nPrivate Game: {private_game}\nUpdate Frequency: {game_update_frequency}",
-                                color=discord.Color.blue()
-                            )
-                            confirmation_embed.set_footer(text="Click 'Confirm' to create the game.")
-                        
-                            confirmation_view = discord.ui.View()
+                        confirmation_view = discord.ui.View()
 
-                            confirm_button = discord.ui.Button(
-                                label="Confirm",
-                                style=discord.ButtonStyle.success,
-                                custom_id="confirm_game_creation"
-                            )
+                        confirm_button = discord.ui.Button(
+                            label="Confirm",
+                            style=discord.ButtonStyle.success,
+                            custom_id="confirm_game_creation"
+                        )
 
-                            cancel_button = discord.ui.Button(
-                                label="Cancel",
-                                style=discord.ButtonStyle.danger,
-                                custom_id="cancel_game_creation"
-                            )
+                        cancel_button = discord.ui.Button(
+                            label="Cancel",
+                            style=discord.ButtonStyle.danger,
+                            custom_id="cancel_game_creation"
+                        )
 
-                            confirmation_view.add_item(confirm_button)
-                            confirmation_view.add_item(cancel_button)
-                            await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
+                        confirmation_view.add_item(confirm_button)
+                        confirmation_view.add_item(cancel_button)
+                        await interaction.response.edit_message(embed=confirmation_embed, view=confirmation_view)
 
-                            # Define what happens when the confirm button is clicked
-                            async def confirm_callback(interaction: discord.Interaction):
-                                # Create the game using the provided inputs
-                                try:
-                                    fe.new_game(
-                                        user_id=interaction.user.id,
-                                        name=game_name,
-                                        start_date=game_start_date,
-                                        end_date=game_end_date,
-                                        pick_date=game_pick_date,
-                                        starting_money=game_starting_money,
-                                        total_picks=game_total_picks,
-                                        exclusive_picks=game_exclusive_picks,
-                                        private_game=private_game,
-                                        update_frequency=game_update_frequency,
-                                        sell_during_game=False # Placeholder for sell_during_game
-                                        # sell_during_game=sell_during_game
-                                    )
+                        # Define what happens when the confirm button is clicked
+                        async def confirm_callback(interaction: discord.Interaction):
+                            # Create the game using the provided inputs
+                            try:
+                                fe.new_game(
+                                    user_id=interaction.user.id,
+                                    name=game_name,
+                                    start_date=game_start_date,
+                                    end_date=game_end_date,
+                                    pick_date=game_pick_date,
+                                    starting_money=game_starting_money,
+                                    total_picks=game_total_picks,
+                                    exclusive_picks=game_exclusive_picks,
+                                    private_game=private_game,
+                                    update_frequency=game_update_frequency,
+                                    sell_during_game=False # Placeholder for sell_during_game
+                                    # sell_during_game=sell_during_game
+                                )
 
-                                    creation_status_embed = discord.Embed(
-                                        title="Game Created Successfully",
-                                        description=f"Game '{name_input.value}' has been created!",
-                                        color=discord.Color.green()
-                                    )
+                                creation_status_embed = discord.Embed(
+                                    title="Game Created Successfully",
+                                    description=f"Game '{name_input.value}' has been created!",
+                                    color=discord.Color.green()
+                                )
 
-                                except ValueError as e:
-                                    creation_status_embed = discord.Embed(
-                                        title="Game Creation Failed",
-                                        description=str(e),
-                                        color=discord.Color.red()
-                                    )
-                                
-                                except InvalidDateFormatError as e: # This handles invalid dates
-                                    creation_status_embed = discord.Embed(
-                                        title="Game Creation Failed",
-                                        description=str(e),
-                                        color=discord.Color.red()
-                                    )
-                                
-                                await interaction.response.edit_message(embed=creation_status_embed, view=None)
-                            
-                            # Define what happens when the cancel button is clicked
-                            async def cancel_callback(interaction: discord.Interaction):
-                                cancel_embed = discord.Embed(
-                                    title="Game Creation Cancelled",
-                                    description="The game creation process has been cancelled.",
+                            except ValueError as e:
+                                creation_status_embed = discord.Embed(
+                                    title="Game Creation Failed",
+                                    description=str(e),
                                     color=discord.Color.red()
                                 )
-                                await interaction.response.edit_message(embed=cancel_embed, view=None)                    
-                
-                            # Set the confirm button callbacks
-                            confirm_button.callback = confirm_callback
-                            cancel_button.callback = cancel_callback
+                            
+                            except InvalidDateFormatError as e: # This handles invalid dates
+                                creation_status_embed = discord.Embed(
+                                    title="Game Creation Failed",
+                                    description=str(e),
+                                    color=discord.Color.red()
+                                )
+                            
+                            await interaction.response.edit_message(embed=creation_status_embed, view=None)
+                        
+                        # Define what happens when the cancel button is clicked
+                        async def cancel_callback(interaction: discord.Interaction):
+                            cancel_embed = discord.Embed(
+                                title="Game Creation Cancelled",
+                                description="The game creation process has been cancelled.",
+                                color=discord.Color.red()
+                            )
+                            await interaction.response.edit_message(embed=cancel_embed, view=None)                    
+            
+                        # Set the confirm button callbacks
+                        confirm_button.callback = confirm_callback
+                        cancel_button.callback = cancel_callback
 
-                        # Set the update frequency button callbacks
-                        update_frequency_daily.callback = update_frequency_callback
-                        update_frequency_hourly.callback = update_frequency_callback
-                        # update_frequency_minute.callback = update_frequency_callback
-                        # update_frequency_realtime.callback = update_frequency_callback
+                        # update_frequency_daily.callback = update_frequency_callback
+                        # update_frequency_hourly.callback = update_frequency_callback
                 
                     # Set the join after button callback
                     private_yes.callback = private_game_callback
@@ -741,12 +740,12 @@ async def create_game(interaction: discord.Interaction):
     game_length="How many months should the game last. 0 = infinite game (optional, default: 1)", 
     create_days_in_advance="How many days before start_date to create the game (optional, default: 7)",
     starting_money="Starting money for players (optional, default: 10000)",
-    pick_date="Pick deadline in days before start of month. Negative numbers are after start of month. Empty for no pick date (optional)",
+    pick_date="Buy deadline in days before month start. Negative = after start. Empty = buy anytime",
     private_game="Make the game private (optional, default: False)",
     total_picks="Maximum number of picks per player (optional, default: 10)",
     exclusive_picks="Enable draft mode - each stock can only be picked once (optional, default: False)",
     # sell_during_game="Allow selling stocks during the game (optional, default: False)",
-    update_frequency="How often to update game data ('daily', 'hourly') (optional, default: daily)"
+    # update_frequency="How often to update game data ('daily', 'hourly') (optional, default: daily)"
 )
 async def create_recurring_game(
     interaction: discord.Interaction,
@@ -761,7 +760,7 @@ async def create_recurring_game(
     total_picks: app_commands.Range[int, 1, 1000] = 10,
     exclusive_picks: bool = False,
     # sell_during_game: bool = False,
-    update_frequency: Literal['daily', 'hourly'] = "daily"
+    # update_frequency: Literal['daily', 'hourly'] = "daily"
 ):
         """Create a recurring game template"""
         
@@ -773,16 +772,17 @@ async def create_recurring_game(
             return
         
         sell_during_game: bool = False
+        update_frequency = "alpaca"
 
         try:            
             # Validate update frequency
-            valid_frequencies = ['daily', 'hourly']
-            if update_frequency.lower() not in valid_frequencies:
-                await interaction.followup.send(
-                    f"❌ Invalid update frequency. Must be one of: {', '.join(valid_frequencies)}", 
-                    ephemeral=ephemeral_test
-                )
-                return
+            # valid_frequencies = ['daily', 'hourly']
+            # if update_frequency.lower() not in valid_frequencies:
+            #     await interaction.followup.send(
+            #         f"❌ Invalid update frequency. Must be one of: {', '.join(valid_frequencies)}", 
+            #         ephemeral=ephemeral_test
+            #     )
+            #     return
 
 
             # Validate pick date number
@@ -831,13 +831,16 @@ async def create_recurring_game(
             embed.add_field(name="📊 Total Picks", value=str(total_picks), inline=True)
             embed.add_field(name="🔒 Private", value="Yes" if private_game else "No", inline=True)
             
-            if pick_date:
+            if pick_date is not None:
                 pick_date_text: str = f"{pick_date} days before the 1st" if pick_date >= 1 else f"{pick_date * -1} days after the 1st"
                 embed.add_field(name="📝 Pick Deadline", value=pick_date_text, inline=True)
+            else:
+                embed.add_field(name="📝 Pick Deadline", value="None — buy anytime", inline=True)
             
             embed.add_field(name="🎯 Exclusive Picks", value="Yes" if exclusive_picks else "No", inline=True)
             # embed.add_field(name="💸 Selling Allowed", value="Yes" if sell_during_game else "No", inline=True)
-            embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
+            # embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
+            embed.add_field(name="🏷️ Updates", value="alpaca", inline=True)
             embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
             
             embed.set_footer(text=f"Created by {interaction.user.display_name}")
@@ -934,13 +937,13 @@ async def delete_game(
     owner="Game owner user ID",
     start_date="New start date (YYYY-MM-DD)",
     end_date="New end date (YYYY-MM-DD); Cannot be changed once game has started",
-    pick_date="Date stocks must be picked by (YYYY-MM-DD); Cannot be changed once game has started",
+    pick_date="Last day to buy stocks (YYYY-MM-DD). Clear not supported here; omit to leave unchanged",
     private_game="Whether the game is private or not",
     starting_money="New starting money amount; Cannot be changed once game has started",
     total_picks="New number of stocks each player can pick; Cannot be changed once game has started",
     draft_mode="Whether multiple users can pick the same stock; Pick date must be on or before start date; Cannot be changed once game has started",
     sell_during_game="Whether users can sell stocks during the game; Cannot be changed once game has started",
-    update_frequency="How often prices should update ('daily', 'hourly')", #, 'minute', 'realtime')"
+    # update_frequency="How often prices should update ('daily', 'hourly')", #, 'minute', 'realtime')"
 )
 async def manage_game(
     interaction: discord.Interaction, 
@@ -955,7 +958,7 @@ async def manage_game(
     private_game: bool | None = None,
     draft_mode: bool | None = None,
     sell_during_game: bool | None = None,
-    update_frequency: Literal['daily', 'hourly'] | None = None
+    # update_frequency: Literal['daily', 'hourly'] | None = None
 ):
     
     try:
@@ -982,7 +985,7 @@ async def manage_game(
             private_game=private_game,
             total_picks=total_picks,
             exclusive_picks=draft_mode,
-            update_frequency=update_frequency,
+            # update_frequency=update_frequency,
             sell_during_game=sell_during_game
         )
 
@@ -1209,7 +1212,7 @@ async def list_game_templates(
                 user_templates = user_templates[:10]
             for template in user_templates:
                 # Format pick date display
-                pick_date_text = "No deadline"
+                pick_date_text = "None — buy anytime"
                 if template.pick_date is not None:
                     if template.pick_date >= 1:
                         pick_date_text = f"{template.pick_date} days before 1st"
@@ -1232,7 +1235,7 @@ async def list_game_templates(
                         f"📊 Total picks: {template.pick_count}\n"
                         f"🎯 Exclusive: {'Yes' if template.draft_mode else 'No'}\n"
                         f"💸 Selling: {'Yes' if template.allow_selling else 'No'}\n"
-                        f"🔄 Updates: {template.update_frequency.title()}"
+                        f"🏷️ Updates: `{template.update_frequency}`"
                     ),
                     inline=True
                 )
@@ -1267,11 +1270,12 @@ async def update(
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
         return
     try:
-        await asyncio.to_thread(
-            fe.force_update,
-            user_id=interaction.user.id,
-            enforce_permissions=False,
-        )
+        async with _game_update_lock:
+            await asyncio.to_thread(
+                fe.force_update,
+                user_id=interaction.user.id,
+                enforce_permissions=False,
+            )
         embed.title = "Success"
         embed.description = f"All games have been successfully updated"
         embed.color = discord.Color.green()
@@ -1498,11 +1502,16 @@ async def game_info(
         leaderboard = game_info_obj.leaderboard or []
         
         # Basic embed for game info
-        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{date_range}\n{participants}'.format(
+        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{updates}\n{date_range}\n{participants}'.format(
             owner_id=game.owner_id,
-            pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+            pick_info=(
+                f'\n> **Pick date:** {game.pick_date}'
+                if game.pick_date
+                else '\n> **Pick date:** none — buy anytime'
+            ),
             start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
             pick_count=f'> **Pick Count:** `{game.pick_count}`',
+            updates=f'> **Updates:** `{game.update_frequency}`',
             date_range='> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
             participants=f'> **Participants:** `{len(leaderboard)}`' if show_leaderboard else '> **Participants:** hidden',
         )
@@ -1634,9 +1643,14 @@ async def game_list(
         for game in games: # Make a field for each game
             formatted_games.append(( 
                 f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
-                '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{date_range}'.format(owner_id=game.owner_id,
-                pick_info=f'\n> **Pick date:** {game.pick_date}' if game.pick_date else '',
+                '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{updates}\n{date_range}'.format(owner_id=game.owner_id,
+                pick_info=(
+                    f'\n> **Pick date:** {game.pick_date}'
+                    if game.pick_date
+                    else '\n> **Pick date:** none — buy anytime'
+                ),
                 start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
+                updates=f'> **Updates:** `{game.update_frequency}`',
                 date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else ''
                     )
                 ) # Tuple of game info

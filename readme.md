@@ -37,12 +37,12 @@ DEVELOPMENT BRANCH
    This will install:
    - discord.py (Discord bot library)
    - python-dotenv (Environment variable management)
-   - yfinance (Yahoo Finance API for stock data)
    - pydantic (Data validation)
    - pytz (Timezone support)
    - python-dateutil (Date utilities)
    - Pillow (Image generation / leaderboards)
-   - pandas, beautifulsoup4, lxml, requests (Stock-data fetching)
+   - pandas, beautifulsoup4, requests (helpers / seeding scripts)
+   - Alpaca market data via HTTP (`helpers/alpaca_client.py`; requires `ALPACA_API_KEY` / `ALPACA_SECRET_KEY`)
 
    Contributors should install the development dependencies instead:
    ```bash
