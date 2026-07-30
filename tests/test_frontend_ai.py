@@ -575,7 +575,7 @@ class TestFrontend:
         stock = _add_stock_to_db(fe.be, "CANCEL")
         fe.be.add_stock_pick(participant_id=participant_id, stock_id=stock.id)
 
-        fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+        assert fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker) == "cancelled"
 
         with pytest.raises(LookupError, match="No items found"):
             fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)
@@ -625,7 +625,7 @@ class TestFrontend:
         fe.be.add_stock_price(stock.id, price=110, datetime="2025-05-21 10:00:00")
         mocker.patch.object(fe.gl, "_is_market_hours", return_value=False)
 
-        fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker)
+        assert fe.sell_stock(user_id=owner_id, game_id=game.id, ticker=stock.ticker) == "sell_requested"
         fe.gl.update_stock_picks(game_id=game.id, force=True)
 
         sold = fe.be.get_many_stock_picks(participant_id=participant_id, stock_id=stock.id)[0]
