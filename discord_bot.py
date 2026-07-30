@@ -868,7 +868,12 @@ async def create_recurring_game(
                 ephemeral=ephemeral_test,
             )
         except Exception as e:
-            log_unexpected(logger, "create-recurring-game failed", exc=e, user_id=interaction.user.id, command="create-recurring-game", name=name)
+            logger.exception(
+                "create-recurring-game failed | user=%s name=%s",
+                interaction.user.id,
+                name,
+                exc_info=e,
+            )
             await interaction.followup.send(
                 "❌ Failed to create recurring game template. Please try again or contact a moderator.",
                 ephemeral=ephemeral_test,
@@ -1361,13 +1366,11 @@ class RecurringTemplateManager(discord.ui.View):
                 ephemeral=True,
             )
         except Exception as e:
-            log_unexpected(
-                logger,
-                "manage-recurring-games stop failed",
-                exc=e,
-                user_id=interaction.user.id,
-                command="manage-recurring-games",
-                template_id=template.id,
+            logger.exception(
+                "manage-recurring-games stop failed | user=%s template_id=%s",
+                interaction.user.id,
+                template.id,
+                exc_info=e,
             )
             if interaction.response.is_done():
                 await interaction.followup.send(
@@ -1393,13 +1396,11 @@ class RecurringTemplateManager(discord.ui.View):
                 ephemeral=True,
             )
         except Exception as e:
-            log_unexpected(
-                logger,
-                "manage-recurring-games resume failed",
-                exc=e,
-                user_id=interaction.user.id,
-                command="manage-recurring-games",
-                template_id=template.id,
+            logger.exception(
+                "manage-recurring-games resume failed | user=%s template_id=%s",
+                interaction.user.id,
+                template.id,
+                exc_info=e,
             )
             if interaction.response.is_done():
                 await interaction.followup.send(
@@ -1428,13 +1429,11 @@ class RecurringTemplateManager(discord.ui.View):
                 ephemeral=True,
             )
         except Exception as e:
-            log_unexpected(
-                logger,
-                "manage-recurring-games delete failed",
-                exc=e,
-                user_id=interaction.user.id,
-                command="manage-recurring-games",
-                template_id=template.id,
+            logger.exception(
+                "manage-recurring-games delete failed | user=%s template_id=%s",
+                interaction.user.id,
+                template.id,
+                exc_info=e,
             )
             self.confirming_delete = False
             self._sync_buttons()
@@ -1489,12 +1488,10 @@ async def manage_recurring_games(interaction: discord.Interaction):
             ephemeral=ephemeral_test,
         )
     except Exception as e:
-        log_unexpected(
-            logger,
-            "manage-recurring-games failed",
-            exc=e,
-            user_id=interaction.user.id,
-            command="manage-recurring-games",
+        logger.exception(
+            "manage-recurring-games failed | user=%s",
+            interaction.user.id,
+            exc_info=e,
         )
         await interaction.response.send_message(
             "❌ Unable to load recurring templates. Please try again or contact a moderator.",
