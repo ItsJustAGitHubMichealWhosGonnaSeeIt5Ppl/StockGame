@@ -5,7 +5,7 @@ import os
 import random
 import string
 import re
-from typing import Optional, Type, get_args
+from typing import Any, Optional, Type, cast, get_args
 
 # EXTERNAL
 from dateutil.relativedelta import relativedelta
@@ -132,9 +132,6 @@ class Backend:
             else:
                 raise Exception(f'Failed to delete item {item_id} in table {table}.', resp) # Worst case error where nothing was caught
     
-    def _validation_recovery(self, table:str, error:ValidationError, resp:Status): # Try to recover from errors 
-        pass
-        
     # # USER ACTIONS # #
     def add_user(self, user_id:int, source:str, display_name:Optional[str]=None, permissions:int = 210):
         """Add a user
@@ -229,7 +226,7 @@ class Backend:
             ValueError(Atleast one arg must be changed.): Raised if no args besides user_id are passed.
         """
         
-        if not display_name and not permissions and not source: # Must have atleast once of these changed
+        if all(value is None for value in (display_name, permissions, source, overall_wins, change_dollars, change_percent)):
             raise ValueError('Atleast one arg must be changed.')
         
         self._update_single(
@@ -265,7 +262,7 @@ class Backend:
             return id
 
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily', template_id:Optional[int]=None):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -279,9 +276,9 @@ class Backend:
             pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            exclusive_picks (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
-            sell_during_game (bool, optional): Whether users can sell stocks during the game.  Defaults to False. - NOT IMPLEMENTED
-            update_frequency (str, optional): How often prices will update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'. - NOT IMPLEMENTED
+            exclusive_picks (bool, optional): Whether multiple users can pick the same stock. If enabled, pick date must be on or before start date.
+            sell_during_game (bool, optional): Whether users can sell during the game. Defaults to False.
+            update_frequency (str, optional): How often prices update. Defaults to 'daily'.
             
         Returns:
             Status: Game creation status.
@@ -299,14 +296,14 @@ class Backend:
         
         if isinstance(pick_date, date): # TODO this might crash idk
             try:
-                pick_date = pick_date.strftime('%Y-%m-%d') # Convert date
+                pick_date = pick_date.strftime('%Y-%m-%d') # Convert date
             except Exception as e:
                 #TODO find valid errors here
                 raise e
             
         if isinstance(end_date, date): # TODO this might crash idk
             try:
-                start_date = end_date.strftime('%Y-%m-%d') # Convert date
+                end_date = end_date.strftime('%Y-%m-%d') # Convert date
             except Exception as e:
                 #TODO find valid errors here
                 raise e
@@ -344,6 +341,7 @@ class Backend:
         items = {
             'name': name,
             'game_id': game_id,
+            'template_id': template_id,
             'owner_user_id': user_id,
             'start_money': starting_money,
             'pick_count': total_picks,
@@ -391,7 +389,10 @@ class Backend:
                 
                 if 'name' in str(exc):
                     self.logger.debug(f'Shortening name to 35 characters for game: {game_id}')
-                    name = re.sub(r'[\(\)\[\]/`\\/{}]', '', resp.result[0]['name']) # Clean the name more
+                    if not isinstance(resp.result, tuple) or not resp.result or not isinstance(resp.result[0], dict):
+                        raise ValidationError('Unable to recover invalid game name without a row result.')
+                    row = cast(dict[str, Any], resp.result[0])
+                    name = re.sub(r'[\(\)\[\]/`\\/{}]', '', str(row['name'])) # Clean the name more
                     if tobsi_loop != 0: # We've been here before, add the game ID to the name
                         fixes['name'] = str(str(game_id) + name)[:35] # name string at 35 characters and get rid of shit.  If it fails, remove an extra character
                     else:
@@ -533,15 +534,15 @@ class Backend:
                 start_date = start_date,
                 end_date = end_date,
                 aggregate_value = aggregate_value,
-                change_dollars = round(change_dollars, 2) if change_dollars else None,
-                change_percent = round(change_percent, 2) if change_percent else None,
-                last_updated = _iso8601() 
+                change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
+                change_percent = round(change_percent, 2) if change_percent is not None else None,
+                last_updated = _iso8601()
             )
         except ValueError as e: # Raised when Constraint check fails
             if 'CHECK constraint failed:' in str(e):
                 raise ValueError(str(e).strip('IntegrityError(\'CHECK constraint failed:').strip(')')) # Pass on just the field that failed #TODO regex
-            
-    def remove_game(self, game_id:int | str): 
+
+    def remove_game(self, game_id:int | str):
         """Remove a game
 
         Args:
@@ -565,6 +566,7 @@ class Backend:
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
         
         items = {
+            'template_name': name,
             'game_name': name,
             'owner_user_id': user_id,
             'start_money': starting_money,
@@ -590,7 +592,7 @@ class Backend:
         
     def get_game_template(self, template_id:int):
         #TODO docstring
-        resp = self.sql.get(table='game_template',filters={'template_id': int(template_id)})
+        resp = self.sql.get(table='game_templates',filters={'template_id': int(template_id)})
         return self._single_get(model=dtv.GameTemplate, resp=resp)
     
     def get_many_game_templates(self, status:Optional[dtv.GameTemplateStatus]) -> tuple[dtv.GameTemplate]:
@@ -602,9 +604,30 @@ class Backend:
         templates = self._many_get(typeadapter=dtv.GameTemplates, resp=resp)
         return templates
     
-    def update_game_template(self):
-        #TODO create
-        pass
+    def update_game_template(self, template_id:int, name:Optional[str]=None, status:Optional[dtv.GameTemplateStatus]=None, create_days_in_advance:Optional[int]=None, recurring_period:Optional[int]=None, game_length:Optional[int]=None):
+        """Update the mutable scheduling fields on a recurring-game template."""
+        if name is None and status is None and create_days_in_advance is None and recurring_period is None and game_length is None:
+            raise ValueError('At least one template field must be changed.')
+        if status is not None and status not in get_args(dtv.GameTemplateStatus):
+            raise ValueError(f'Invalid template status {status}')
+        if recurring_period is not None and recurring_period < 1:
+            raise ValueError('`recurring_period` must be at least 1.')
+        if create_days_in_advance is not None and create_days_in_advance < 0:
+            raise ValueError('`create_days_in_advance` cannot be negative.')
+        if game_length is not None and game_length < 0:
+            raise ValueError('`game_length` cannot be negative.')
+        self._update_single(
+            table='game_templates',
+            id_column='template_id',
+            item_id=template_id,
+            template_name=name,
+            game_name=name,
+            status=status,
+            create_days_in_advance=create_days_in_advance,
+            recurring_period=recurring_period,
+            game_length=game_length,
+            last_updated=_iso8601(),
+        )
     
     # # STOCK ACTIONS # #
     def add_stock(self, ticker:str, exchange:str, company_name:str):
@@ -615,8 +638,16 @@ class Backend:
             exchange (str): Exchange stock is listed on.
             company_name (str): Company name.
         """        
+        ticker = ticker.upper()
+        try:
+            self.get_stock(ticker)
+        except LookupError:
+            pass
+        else:
+            raise ValueError(f'Stock with ticker {ticker} already exists.')
+
         items = {
-            'ticker': ticker.upper(),
+            'ticker': ticker,
             'exchange': exchange,
             'company_name': company_name
             } # I guess not all stocks have a long name?
@@ -638,7 +669,7 @@ class Backend:
             dict: Stock information.
         """
         if isinstance(ticker_or_id, str): # ID
-            filters={'ticker': str(ticker_or_id)}
+            filters={'ticker': str(ticker_or_id).upper()}
         else: # Ticker
             filters = {'stock_id': int(ticker_or_id)}
             
@@ -664,7 +695,7 @@ class Backend:
         resp = self.sql.get(table='stocks', filters=filters)
         stocks = self._many_get(typeadapter=dtv.Stocks, resp=resp)
         if tickers_only:
-            tickers = tuple([ticker['ticker'] for ticker in stocks])
+            tickers = tuple(stock.ticker for stock in stocks)
             return tickers
         else:
             return stocks
@@ -814,8 +845,13 @@ class Backend:
                 raise ValidationError(str(exc) + 'Unable to fix automatically') # Throw the same error
             else: # Apply fixes
                 apply = self.sql.update(table='stock_picks', filters={'pick_id': pick_id}, items=fixes)
-                if apply.status !='success': 
-                    self.logger.error(f'Fix to pick: {pick_id} failed.  More info: {apply}')
+                if apply.status !='success':
+                    raise Exception(f'Fix to pick: {pick_id} failed. More info: {apply}')
+
+                return self._single_get(
+                    model=dtv.StockPick,
+                    resp=self.sql.get(table='stock_picks', filters={'pick_id': pick_id}),
+                )
 
     def get_many_stock_picks(self, participant_id:Optional[int]=None, status:Optional[str | list]=None, stock_id:Optional[int]=None, include_tickers:bool=False)-> tuple[dtv.StockPick]: 
         """List stock picks.  Optionally, filter by a status or participant ID
@@ -833,7 +869,7 @@ class Backend:
         """
         valid_statuses = ['pending_buy', 'owned', 'pending_sell', 'sold']
         left_str = None
-        filters = { 
+        filters: dict[Any, Any] = {
             'participation_id': participant_id,
             'stock_id': stock_id
             }
@@ -853,7 +889,7 @@ class Backend:
         resp = self.sql.get(table='stock_picks', left_join=left_str, filters=filters, order={'change_percent': 'DESC', 'change_dollars': 'DESC'})
         return self._many_get(typeadapter=dtv.StockPicks, resp=resp)
 
-    def update_stock_pick(self, pick_id:int, current_value:float,  shares:Optional[float]=None, start_value:Optional[float]=None,  status:Optional[str]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None): #Update a single stock pick
+    def update_stock_pick(self, pick_id:int, current_value:Optional[float]=None, shares:Optional[float]=None, start_value:Optional[float]=None, status:Optional[str]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None): #Update a single stock pick
         """Update a stock pick
 
         Args:
@@ -876,11 +912,11 @@ class Backend:
             start_value = start_value,
             current_value = current_value,
             status = status,
-            change_dollars = round(change_dollars, 2) if change_dollars else None,
-            change_percent = round(change_percent, 2) if change_percent else None,
+            change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
+            change_percent = round(change_percent, 2) if change_percent is not None else None,
             last_updated = _iso8601()
         )
-    
+
     def remove_stock_pick(self, pick_id:int):
         """Remove a stock pick
         
@@ -993,8 +1029,8 @@ class Backend:
             name = team_name,
             status = status,
             current_value = current_value,
-            change_dollars = round(change_dollars, 2) if change_dollars else None,
-            change_percent = round(change_percent, 2) if change_percent else None,
+            change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
+            change_percent = round(change_percent, 2) if change_percent is not None else None,
             last_updated = _iso8601()
             )
         
@@ -1052,74 +1088,78 @@ class GameLogic: # Might move some of the control/running actions here
         Returns:
             float: Offset in hours.
         """
-        local_time = datetime.now() # Naive time (except then it isnt fucking naive like 30 seconds later so why call it that)
-        local_utc_offset = datetime.now().astimezone().utcoffset()
-        local_offset_hours = (local_utc_offset.days * 24) + (local_utc_offset.seconds / 3600) # This is the UTC offset in hours
-        if local_offset_hours > 0: # Ahead of UTC
-            local_offset = 'ahead'
-        else:
-             local_offset = 'behind'
-            
-        nyc = pytz.timezone('America/New_York') # NYC timezone
-        market_utc_offset = nyc.localize(local_time).utcoffset()
-        market_offset_hours = (market_utc_offset.days * 24) + (market_utc_offset.seconds / 3600) # So is this
-        if market_offset_hours > 0: # Ahead of UTC
-            market_offset = 'ahead' # Market offset should never be ahead of UTC, but idk maybe one day it will be :)
-        else:
-             market_offset = 'behind' 
-        
-        total_offset = (0 -local_offset_hours if local_offset == 'ahead'  else +local_offset_hours) + (0 -market_offset_hours if market_offset == 'ahead'  else +market_offset_hours)
-        return total_offset
+        local_offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+        market_offset = datetime.now(pytz.utc).astimezone(
+            pytz.timezone('America/New_York')
+        ).utcoffset() or timedelta(0)
+        return (market_offset - local_offset).total_seconds() / 3600
     
-    def recurring_games(self): # Check and create recurring games
-        
-        today = datetime.today() # Current date
-        start_of_month = today + relativedelta(months=1, day =1) # The 1st of the next month
-        str_start_month = datetime.strftime(start_of_month, '%Y-%m-%d') # TODO just let add_game accept datetime
-        end_of_month = start_of_month + relativedelta(months=1, days=-1) #The last of the month (IDK if there is another way to get)
-        days_untl_nxt_mnth: timedelta = start_of_month - today # How many days until the next month
-        
-        templates = self.be.get_many_game_templates(status='enabled') # Game templates
-        
+    def recurring_games(self):
+        """Create each enabled template's next due game exactly once."""
+        today = datetime.today().date()
+        try:
+            templates = self.be.get_many_game_templates(status='enabled')
+        except LookupError:
+            return
+
         for template in templates:
-            
-            exists = False 
-            self.logger.debug(f'Trying to create game "{template.name}".')
-            existing_games = len(self.be.get_many_games(name=template.name, owner_id=OWNER)) # Get existing open and active games to avoid creaating the same game twice # TODO get these by template ID instead
-            next_start_date = template.start_date + relativedelta(months=existing_games + 1) # This is when the next game should be created
-            if (next_start_date - relativedelta(days=template.create_days_in_advance)) <= today: # Game should be created.
-            
-            
-                if not exists:
-                    try:
-                        self.be.add_game(
-                            user_id=int(template.owner_id), #STOP COMPLAINING (ok it was complaining before I swear)
-                            name=template.name.format(date=datetime.strftime(start_of_month, '%b/%Y')),
-                            start_date=next_start_date,
-                            end_date=next_start_date + relativedelta(months=template.game_length) if template.game_length != 0 else None,
-                            starting_money=template.start_money,
-                            pick_date= next_start_date + relativedelta(days=template.pick_date) if template.pick_date != 0 else None,
-                            private_game=template.private_game,
-                            total_picks=template.pick_count,
-                            exclusive_picks=template.draft_mode,
-                            sell_during_game=template.allow_selling,
-                            update_frequency=template.update_frequency
-                            )
-                        self.logger.debug(f'Created game "{template.name}".')
-                    except Exception as e: #TODO errors
-                        self.logger.exception(f'Error when creating game "{template.name}".', exc_info=e)
-                        raise Exception(f'An unexpected error occurred while trying to create game "{template.name}"', e)
+            response = self.be.sql.get(
+                table='games',
+                columns=['start_date'],
+                filters={'template_id': template.id},
+                order={'start_date': 'DESC'},
+            )
+            if response.status == 'success':
+                assert isinstance(response.result, tuple)
+                latest_start = datetime.strptime(response.result[0]['start_date'], '%Y-%m-%d').date()
+                next_start_date = latest_start + relativedelta(months=template.recurring_period)
             else:
-                self.logger.debug(f'Game "{template.name}" not created.  {days_untl_nxt_mnth} days until the start of next month.  Game are set to be created with {template.create_days_in_advance} days or less until the next month.')
+                next_start_date = template.start_date + relativedelta(months=template.recurring_period)
+
+            due_date = next_start_date - timedelta(days=template.create_days_in_advance)
+            if due_date > today:
+                continue
+
+            formatted_name = template.name.format(date=next_start_date.strftime('%b/%Y'))
+            if formatted_name == template.name:
+                formatted_name = f'{template.name} {next_start_date:%Y-%m}'
+            formatted_name = formatted_name[:35]
+            pick_date = None
+            if template.pick_date is not None:
+                pick_date = next_start_date - timedelta(days=template.pick_date)
+            end_date = None
+            if template.game_length:
+                end_date = next_start_date + relativedelta(months=template.game_length, days=-1)
+
+            self.be.add_game(
+                user_id=template.owner_id,
+                name=formatted_name,
+                start_date=next_start_date,
+                end_date=end_date,
+                starting_money=template.start_money,
+                pick_date=pick_date,
+                private_game=template.private_game,
+                total_picks=template.pick_count,
+                exclusive_picks=template.draft_mode,
+                sell_during_game=template.allow_selling,
+                update_frequency=template.update_frequency,
+                template_id=template.id,
+            )
     
-    def update_game_statuses(self):
+    def update_game_statuses(self, game_id:Optional[int | str]=None):
         """Update game statuses
         
         Sets games that have started to 'active' and games that have ended to 'ended'
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all games will be checked.
         """
         
         try:
-            games = self.be.get_many_games(include_private=True) # Get all games
+            if game_id:
+                games = [self.be.get_game(game_id=game_id)]
+            else:
+                games = self.be.get_many_games(include_private=True) # Get all games
         except LookupError:
             return # No games
 
@@ -1131,16 +1171,33 @@ class GameLogic: # Might move some of the control/running actions here
             if game.status == 'active' and game.end_date and game.end_date < datetime.strptime(_iso8601('date'), "%Y-%m-%d").date(): #Game has ended
                 self.be.update_game(game_id=game.id, status='ended')
 
-    def update_stock_prices(self):
+    def update_stock_prices(self, game_id:Optional[int | str]=None, force:bool=False):
         """Find and update stock prices for all stocks currently in games (pending picks are included)
         
         Uses yfinance API.
+
+        Args:
+            game_id (Optional[int], optional): Game ID.  If blank, all active games will be checked.
+            force (bool, optional): Force update even if market status would normally skip.
         """
         #TODO Skip holidays
         #TODO allow after hours data to be added here as long as its tagged?
         #TODO don't run too often
         # Only get active stocks (stocks from games that are running)
-        query = """
+        if game_id:
+            query = """
+        WHERE stock_id IN (SELECT stock_id
+            FROM stock_picks
+            WHERE status IS NOT "sold"
+            AND participation_id IN (SELECT participation_id
+                FROM game_participants
+                WHERE game_id = ?
+                )
+            )
+        """
+            query = (query, [game_id])
+        else:
+            query = """
         WHERE stock_id IN (SELECT stock_id
             FROM stock_picks
             WHERE status IS NOT "sold"
@@ -1164,23 +1221,17 @@ class GameLogic: # Might move some of the control/running actions here
         if len(active_stocks) > 0:
             market_open = self._is_market_hours()
             for ticker in active_stocks:
-                basic_info = yf.Ticker(ticker.ticker).fast_info # Hopefully speed this up
-                if basic_info['quote_type'] != 'EQUITY': #TODO decide what should happen if someone manages this
-                    self.logger.error(f'Ticker {ticker} is not tradeable! Skipping')
-                    continue
-                
-                if market_open:
-                    price = basic_info['last_price'] 
-                else:
-                    price = basic_info['regular_market_previous_close'] 
-                    
                 try:
+                    basic_info = yf.Ticker(ticker.ticker).fast_info
+                    if basic_info['quote_type'] != 'EQUITY':
+                        self.logger.error(f'Ticker {ticker.ticker} is not tradeable; skipping')
+                        continue
+                    price = basic_info['last_price'] if market_open else basic_info['regular_market_previous_close']
                     self.be.add_stock_price(ticker_or_id=ticker.ticker, price=price, datetime=_iso8601()) # Update pricing
                 except Exception as e:
-                    self.logger.exception(e) # Log exception
-                    pass #TODO find problems if/when they appear
+                    self.logger.exception('Failed to update price for %s', ticker.ticker, exc_info=e)
     
-    def update_stock_picks(self, game_id:Optional[int | str]=None) -> None:
+    def update_stock_picks(self, game_id:Optional[int | str]=None, force:bool=False) -> None:
         """Update all owned and pending stock picks with current prices
         
         - Validates game type of daily, but nothing else for now
@@ -1189,6 +1240,7 @@ class GameLogic: # Might move some of the control/running actions here
 
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all games will be checked/run
+            force (bool, optional): Skip market-hours and 8-hour throttle checks.
         """
         
         try:        
@@ -1204,12 +1256,12 @@ class GameLogic: # Might move some of the control/running actions here
             return # No games
         
         for game in games:
-            if game.update_frequency == 'daily' and self._is_market_hours():
+            if not force and game.update_frequency == 'daily' and self._is_market_hours():
                 self.logger.info(f'Not updating stock picks for game: {game.id} because update_frequency is daily and market is still open')
                 continue # daily game, currently in market hours, don't run
             self.logger.debug(f'Updating stock picks for game: {game.id}')
             pending_and_owned_query = """
-            WHERE status IN ("pending_buy", "owned")
+            WHERE status IN ("pending_buy", "owned", "pending_sell")
             AND participation_id IN (SELECT participation_id
                 FROM game_participants
                 WHERE status = "active"
@@ -1227,7 +1279,7 @@ class GameLogic: # Might move some of the control/running actions here
             for pick in picks:
                 assert isinstance(pick.id, int)
                 assert isinstance(pick.stock_id, int)
-                if game.update_frequency == 'daily' and pick.status == 'owned' and datetime.strptime(str(pick.last_updated), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8 ) > datetime.now():
+                if not force and game.update_frequency == 'daily' and pick.status == 'owned' and pick.last_updated and datetime.strptime(str(pick.last_updated), "%Y-%m-%d %H:%M:%S") + timedelta(hours=8) > datetime.now():
                     self.logger.debug(f'Skipping stock pick: {pick.id} in game: {game_id} because update_frequency is daily, and it was last updated less than 8 hours ago')
                     continue # Skip picks with daily update frequency that have been updated in the last 12 hours
                 try:
@@ -1237,7 +1289,7 @@ class GameLogic: # Might move some of the control/running actions here
                     continue
                 
                 #TODO check datetime here and decide if price should be used
-                buying_power = None,
+                buying_power = None
                 shares = None
                 start_value = None
                 status = None
@@ -1250,12 +1302,14 @@ class GameLogic: # Might move some of the control/running actions here
                     percent_change = 0
                     status = 'owned'
                 
-                else: # Stock is owned 
+                else: # Stock is owned or awaiting sale
                     assert isinstance(pick.shares, float) # Owned stocks would have to have this
                     assert isinstance(pick.start_value, float) # Owned stocks would have to have this
                     current_value = float(pick.shares * price.price)
                     dollar_change = current_value - pick.start_value
                     percent_change = (dollar_change / pick.start_value) * 100
+                    if pick.status == 'pending_sell':
+                        status = 'sold'
                 self.be.update_stock_pick(pick_id=pick.id,shares=shares, start_value=start_value, current_value=current_value, status=status, change_dollars=dollar_change, change_percent=percent_change) # Update
 
     def update_participants_and_games(self, game_id:Optional[int | str]=None):
@@ -1278,7 +1332,7 @@ class GameLogic: # Might move some of the control/running actions here
         for game in games:
             aggr_val = 0
             if game.status != 'active':
-                return "Game not active"
+                continue
             try:
                 players = self.be.get_many_participants(game_id=game.id, status='active')
             except LookupError:
@@ -1287,13 +1341,24 @@ class GameLogic: # Might move some of the control/running actions here
             for player in players:
                 portfolio_value = 0.0
                 try:
-                    picks = self.be.get_many_stock_picks(participant_id=player.id, status='owned')
-                except LookupError: # Skip games with no picks 
-                    continue
-                      
-                for pick in picks:
-                    assert isinstance(pick.current_value, float)
-                    portfolio_value += pick.current_value
+                    picks = self.be.get_many_stock_picks(participant_id=player.id, status=['owned', 'pending_buy', 'pending_sell', 'sold'])
+                except LookupError:
+                    picks = []  # No picks, all cash uninvested
+
+                allocation = game.start_money / game.pick_count
+                active_picks = [pick for pick in picks if pick.status != 'sold']
+                for pick in active_picks:
+                    if pick.status == 'pending_buy':
+                        portfolio_value += allocation
+                    elif pick.current_value is not None:
+                        portfolio_value += pick.current_value
+                portfolio_value += sum(pick.change_dollars or 0 for pick in picks if pick.status == 'sold')
+
+                active_count = len(active_picks)
+                invested_cash = (game.start_money / game.pick_count) * active_count
+                uninvested_cash = game.start_money - invested_cash
+                portfolio_value += uninvested_cash
+
                 dollar_change = portfolio_value - game.start_money
                 percent_change = (dollar_change / game.start_money) * 100
                 self.be.update_participant(participant_id=player.id, current_value=portfolio_value, change_dollars=dollar_change, change_percent=percent_change)
@@ -1303,17 +1368,19 @@ class GameLogic: # Might move some of the control/running actions here
             game_percent_change =  (game_dollar_change / (game.start_money * len(players))) * 100 
             self.be.update_game(game_id=game.id, aggregate_value=aggr_val, change_dollars=game_dollar_change, change_percent=game_percent_change)
                
-    def update_all(self, game_id:Optional[int | str]=None, force:bool=False): #TODO allow game_id #TODO allow force
+    def update_all(self, game_id:Optional[int | str]=None, force:bool=False):
         """Run all update commands/logic for games
 
         Args:
             game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
             force (bool, optional): Force update games that may not be updated due to frequency. Defaults to False.
         """
-        self.update_game_statuses() # Update games statuses (start and stop)
-        self.update_stock_prices() # Update stock prices
-        self.update_stock_picks() # Handle pending stock picks 
-        self.update_participants_and_games() # Update participants (set their total value, etc.)
+        if game_id is None:
+            self.recurring_games()
+        self.update_game_statuses(game_id=game_id) # Update games statuses (start and stop)
+        self.update_stock_prices(game_id=game_id, force=force) # Update stock prices
+        self.update_stock_picks(game_id=game_id, force=force) # Handle pending stock picks
+        self.update_participants_and_games(game_id=game_id) # Update participants (set their total value, etc.)
             
     def find_stock(self, ticker:str): 
         """Find and add a stock to database
@@ -1333,11 +1400,11 @@ class GameLogic: # Might move some of the control/running actions here
         except LookupError: # Stock doesnt exist, add
             stock = yf.Ticker(ticker)
             try:
-                info = stock.info
+                info = cast(dict[str, Any], stock.info)
                 if "country" in info and info["country"] != "United States":
                     raise ValueError("Unable to find stock") # US Stocks only
             except AttributeError: # If stock isn't valid, an attribute error should be raised
-                info = [] # Set list to 0 length so error is thrown
+                info = {} # Empty mapping causes the validation below to fail
             except exceptions.HTTPError: # Just fully gives up
                 raise ValueError('Unable to find stock')
                 
@@ -1349,9 +1416,6 @@ class GameLogic: # Might move some of the control/running actions here
                     company_name=info['displayName'] if 'displayName' in info else info['shortName'])
             else:
                 raise ValueError(f'Failed to add `ticker` {ticker}.')
-        pass
-
-
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
 class Frontend: # This will be where a bot (like discord) interacts
@@ -1384,7 +1448,32 @@ class Frontend: # This will be where a bot (like discord) interacts
         Returns:
             dict: User information.
         """
-        return self.be.get_user(user_id=user_id)
+        user = self.be.get_user(user_id=user_id)
+        total_change = 0.0
+        total_starting_value = 0.0
+        wins = 0
+        try:
+            participations = self.be.get_many_participants(user_id=user_id)
+        except LookupError:
+            participations = ()
+        for participation in participations:
+            if participation.status == 'pending':
+                continue
+            game = self.be.get_game(participation.game_id)
+            if game.status != 'ended':
+                continue
+            total_change += participation.change_dollars or 0
+            total_starting_value += game.start_money
+            try:
+                players = self.be.get_many_participants(game_id=game.id, status='active', sort_by_value=True)
+            except LookupError:
+                continue
+            if players and players[0].user_id == user_id:
+                wins += 1
+        user.overall_wins = wins
+        user.change_dollars = round(total_change, 2)
+        user.change_percent = round((total_change / total_starting_value) * 100, 2) if total_starting_value else 0
+        return user
 
     def _user_owns_game(self, user_id:int, game_id:int | str): # Check if a user owns a specific game
         """Check whether a user owns a specific game
@@ -1470,9 +1559,9 @@ class Frontend: # This will be where a bot (like discord) interacts
             pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
-            exclusive_picks (bool, optional): Whether multiple users can pick the same stock.  If enabled, pick date must be on or before start date Defaults to False. - NOT IMPLEMENTED
-            sell_during_game (bool, optional): Whether users can sell stocks during the game.  Defaults to False. - NOT IMPLEMENTED
-            update_frequency (str, optional): How often prices will update ('daily', 'hourly', 'minute', 'realtime'). Defaults to 'daily'. - NOT IMPLEMENTED
+            exclusive_picks (bool, optional): Whether multiple users can pick the same stock. If enabled, pick date must be on or before start date.
+            sell_during_game (bool, optional): Whether users can sell during the game. Defaults to False.
+            update_frequency (str, optional): How often prices update. Defaults to 'daily'.
         """
     
         try: # Try create user
@@ -1614,7 +1703,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         self.register(user_id) # Must try to register user
         try:
-            self.be.add_participant(user_id=int(user_id), game_id=int(game_id), team_name=str(name))
+            self.be.add_participant(user_id=int(user_id), game_id=game_id, team_name=name)
         except LookupError:
             raise LookupError('Game not found.')
             
@@ -1668,7 +1757,12 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id)
-        picks = self.be.get_many_stock_picks(participant_id=player_id,status=['pending_buy', 'owned', 'pending_sell'], include_tickers=True)            
+        statuses = ['owned', 'pending_sell']
+        if show_pending:
+            statuses.append('pending_buy')
+        if show_sold:
+            statuses.append('sold')
+        picks = self.be.get_many_stock_picks(participant_id=player_id, status=statuses, include_tickers=True)
         return picks
     
     # # STOCK RELATED
@@ -1704,11 +1798,65 @@ class Frontend: # This will be where a bot (like discord) interacts
         player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
         self.gl.find_stock(ticker=str(ticker))  # This will add the stock
         stock = self.be.get_stock(ticker_or_id=str(ticker)) # This should only run if the stock was added successfully
+
+        # Draft mode: prevent duplicate tickers across players
+        game = self.be.get_game(game_id=game_id)
+        if game.draft_mode:
+            try:
+                participants = self.be.get_many_participants(game_id=game_id)
+            except LookupError:
+                participants = []
+            for p in participants:
+                if p.id != player_id:
+                    try:
+                        existing = self.be.get_many_stock_picks(participant_id=p.id, stock_id=stock.id, status=['pending_buy', 'owned', 'pending_sell'])
+                        if len(existing) > 0:
+                            raise bexc.AlreadyExistsError(table='stock_picks', duplicate={'ticker': ticker}, message='Draft mode: ticker already picked by another participant')
+                    except LookupError:
+                        pass
+
         self.be.add_stock_pick(participant_id=player_id, stock_id=stock.id) # Add the pick
 
-    def sell_stock(self, user_id:int, game_id:int | str, ticker:str): # Will also allow for cancelling an order #TODO add sell_stock
+    def sell_stock(self, user_id:int, game_id:int | str, ticker:str):
+        """Sell/cancel a stock pick.
+
+        - Removes pending_buy picks entirely (cancels the order).
+        - Rejects owned picks if allow_selling is not enabled on the game.
+        - Marks owned picks as pending_sell when selling is allowed.
+
+        Args:
+            user_id (int): User ID.
+            game_id (int): Game ID.
+            ticker (str): Stock ticker to sell.
+
+        Raises:
+            LookupError: No matching pick found.
+            bexc.NotAllowedError(reason='Selling disabled'): Game does not allow selling.
+        """
         self.register(user_id) # Must try to register user
-        pass
+        player_id = self._participant_id(user_id=user_id, game_id=game_id)
+        stock = self.be.get_stock(ticker_or_id=ticker)
+        try:
+            picks = self.be.get_many_stock_picks(participant_id=player_id, stock_id=stock.id, status=['pending_buy', 'owned', 'pending_sell'])
+        except LookupError:
+            raise LookupError('No matching pick found for this ticker')
+
+        if len(picks) == 0:
+            raise LookupError('No matching pick found for this ticker')
+
+        pick = picks[0]  # Should be exactly one due to UNIQUE constraint
+
+        if pick.status == 'pending_buy':
+            # Cancel the pending order
+            self.be.remove_stock_pick(pick_id=pick.id)
+        elif pick.status == 'owned':
+            game = self.be.get_game(game_id=game_id)
+            if not game.allow_selling:
+                raise bexc.NotAllowedError(action='sell_stock', reason='Selling disabled', message='Cannot sell owned stocks in this game')
+            # Mark for sale — price accounting handled by update_stock_picks
+            self.be.update_stock_pick(pick_id=pick.id, status='pending_sell')
+        else:  # pending_sell — already requested, nothing to do
+            pass
     
     def remove_pick(self, user_id:int, game_id:int | str, ticker:str): # Remove a stock pick
         """Remove a stock pick. Status must be pending, cannot remove already owned stocks.
@@ -1737,9 +1885,6 @@ class Frontend: # This will be where a bot (like discord) interacts
             raise ValueError(f'Pick status is `{picks[0].status}`.  Only `pending_buy` picks can be removed.')
     
     # # OTHER # #
-    def start_draft(self, user_id:int, game_id:int | str): #TODO add
-        pass
-    
     def force_update(self, user_id:int, game_id:Optional[int | str]=None, enforce_permissions:bool=True):
         """Force update game(s)
 
@@ -1755,7 +1900,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         self.gl.update_all(game_id=game_id, force=True) # 
         
-    def manage_game(self, user_id:int, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[str]=None, enforce_permissions:bool=True):
+    def manage_game(self, user_id:int, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, enforce_permissions:bool=True):
         """Update/Manage an existing game.
         
         start_date, starting_money, pick_date, total_picks, exclusive_picks, sell_during_game cannot be changed once a game has started
@@ -1787,7 +1932,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
         
         self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
-        
+
     def remove_game(self, user_id:int, game_id:int | str, enforce_permissions:bool=True):
         """Remove a game
         
@@ -1803,7 +1948,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         
         self.register(user_id) # Must try to register user
-        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
+        if user_id != self.owner_id and not self._user_owns_game(user_id=user_id, game_id=game_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
         
         self.be.remove_game(game_id)
@@ -1820,12 +1965,12 @@ class Frontend: # This will be where a bot (like discord) interacts
             list: Pending users (including participant ID)
         """
         self.register(user_id) # Must try to register user
-        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
+        if user_id != self.owner_id and not self._user_owns_game(user_id=user_id, game_id=game_id) and enforce_permissions:
             raise PermissionError(f'User {user_id} is not allowed to manage players for game {game_id}')
         try:
             return self.be.get_many_participants(game_id=game_id, status='pending')
-        except ValueError: # no pending users, return empty list 
-            return () #TODO problem?
+        except LookupError: # no pending users, return empty list
+            return ()
         
     def approve_game_users(self, user_id:int, game_id:int | str, approved_user_id:int, enforce_permissions:bool=True):
         """Approve/add a user to private game
@@ -1843,11 +1988,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         """
         
         self.register(user_id) # Must try to register user
+        if user_id != self.owner_id and not self._user_owns_game(user_id=user_id, game_id=game_id) and enforce_permissions:
+            raise PermissionError(f'User {user_id} is not allowed to approve players for game {game_id}')
+
         player_id = self._participant_id(user_id=approved_user_id, game_id=game_id) #TODO check for errors
-        if (not self._user_owns_game(user_id=user_id, game_id=game_id) or user_id != self.owner_id) and enforce_permissions:
-            raise PermissionError(f'User {user_id} is not allowed to approve players for game {player_id}')
-        
-        #TODO errors!
         self.be.update_participant(participant_id=player_id, status='active')
 
     def get_all_participants(self, game_id: int | str):

@@ -4,6 +4,7 @@
 from datetime import datetime
 import functools
 import logging
+import re
 import sqlite3
 from typing import Optional, Literal
 
@@ -96,12 +97,17 @@ class SqlHelper: # Simple helper for SQL
         self.logger = logging.getLogger('SqlHelper')
         self.logger.info('Logging for SqlHelper started')
         self.db = db_name
-        try: #TODO can we check if the DB is locked?
-            self._open_connection()
-            self._close_connection()
-        except Exception as e: #TODO find errors 
-            print(e)
-            pass
+        self._open_connection()
+        self._close_connection()
+
+    @staticmethod
+    def _identifier(value:str, allow_wildcard:bool=False) -> str:
+        """Validate an SQL identifier before interpolating it into a query."""
+        if allow_wildcard and value == '*':
+            return value
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?', value):
+            raise ValueError(f'Invalid SQL identifier: {value!r}')
+        return value
     
     def _open_connection(self): # Start/open connection:
             self.conn = sqlite3.connect(self.db)
@@ -126,9 +132,10 @@ class SqlHelper: # Simple helper for SQL
         return Status(status=status, reason=reason, result=result, more_info=more_info)
         
     def _run_query(self, query:str, values:Optional[list]=None, mode: str ='get')-> Status:
-        if mode not in ['insert', 'insert_multi', 'update', 'delete', 'get', 'raw-get']:
+        if mode not in ['insert', 'insert_multi', 'update', 'delete', 'get', 'raw-get', 'ddl']:
             raise ValueError(f'Invalid mode {mode}.')
         status = 'error' # Assume the request was no good to start
+        reason = 'UNKNOWN ERROR'
         more_info = None
         result = None
         try:
@@ -144,7 +151,9 @@ class SqlHelper: # Simple helper for SQL
             self.conn.commit() # Commit changes, should only run if something happened
             reason = 'VALID QUERY' # Assume query is valid (I love assuming)
             
-            if mode in ['insert', 'update', 'delete']: # Modify/change modes
+            if mode == 'ddl':
+                result = None
+            elif mode in ['insert', 'update', 'delete']: # Modify/change modes
                 if self.cur.rowcount > 0:
                     result = self.cur.lastrowid # Get the last updated row ID
                     more_info = f'{self.cur.rowcount} row effected' # Shows how many rows were effected by the last command
@@ -188,13 +197,12 @@ class SqlHelper: # Simple helper for SQL
             reason = 'OTHER ERROR'
             result = e
             
-        finally:
-            return self._simple_status( # Return the result
-                status = status, 
-                reason = reason,
-                result = result,
-                more_info = more_info
-                )
+        return self._simple_status(
+            status=status,
+            reason=reason,
+            result=result,
+            more_info=more_info,
+        )
 
     def _format(self, items:list | tuple, keys:list | tuple)-> tuple[dict]:
         item_keys = [key[0] for key in keys] # Extract keys
@@ -238,11 +246,15 @@ class SqlHelper: # Simple helper for SQL
                 for var, item in filters.items():
                     if item != None: # Skip blank items
                         if isinstance(var, tuple): # Support LIKE and NOT by sending a line like this var = ('LIKE', '<query>')
-                            filter_vars.append(f'{var[1]} {var[0].upper()} ' + str(f'({item})' if var[0].lower() == 'in' else '?'))
+                            operator = var[0].upper()
+                            if operator not in {'LIKE', 'IN', 'NOT LIKE'}:
+                                raise ValueError(f'Invalid SQL filter operator: {operator}')
+                            column = self._identifier(var[1])
+                            filter_vars.append(f'{column} {operator} ' + str(f'({item})' if operator == 'IN' else '?'))
                             if not var[0].lower() == 'in':
                                 filter_items.append(item)
                         else:
-                            filter_vars.append(var + " = ?")
+                            filter_vars.append(self._identifier(var) + " = ?")
                             filter_items.append(item)
         
                 if len(filter_vars) > 0: # Sometimes filters are sent but all the items are none I guess
@@ -255,6 +267,7 @@ class SqlHelper: # Simple helper for SQL
         values = list()
         questionmarks = list()
         for key, val in items.items():
+            key = self._identifier(key)
             if val == None:  # Skip blank items
                 continue
             elif val == 'NULL': # Allows a field be set back to none/null
@@ -273,6 +286,7 @@ class SqlHelper: # Simple helper for SQL
     
     @open_and_close
     def insert(self, table:str, items:dict): # Insert into table
+        table = self._identifier(table)
         sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
         keys, values, questionmarks = self._sql_items(items)
         
@@ -281,22 +295,23 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, values, mode='insert')
     
     @open_and_close
-    def _insert_many(self, table:str, columns:list, rows:tuple | list): # Insert multiple rows
-        raise ValueError('DOES NOT WORK!!!!!!!!!!')
-        #TODO finish this
-        sql_query = "INSERT INTO {table} ({keys}) VALUES({keyvars})"
-        
-        
-        keys, v, questionmarks = self._sql_items(rows[0]) # Use first row to get column names
-        values = list() # This will store tuples of each of the rows to be inserted
-        for row in rows:
-            k, value, q = self._sql_items(row) # Don't need the keys or the values
-            values.append(tuple(value))
-            if k != keys:
-                pass
-        sql_query = sql_query.format(table=table, keys=",".join(keys), keyvars=",".join(questionmarks))
-        
-        #return self._run_query(sql_query, values, mode='insert_multi')
+    def _insert_many(self, table:str, columns:list[str], rows:list[dict]): # Insert multiple rows
+        """Insert multiple rows at once using executemany.
+
+        Args:
+            table: Table name (NOT injection safe — do not expose to users).
+            columns: Ordered list of column names (NOT injection safe).
+            rows: List of dicts; each dict must have the keys listed in *columns*.
+        """
+        if not rows:
+            return self._simple_status(status='error', reason='NO ROWS',
+                                       more_info='rows list is empty')
+        table = self._identifier(table)
+        columns = [self._identifier(column) for column in columns]
+        placeholders = ','.join(['?'] * len(columns))
+        sql_query = f"INSERT INTO {table} ({','.join(columns)}) VALUES({placeholders})"
+        values = [tuple(row[col] for col in columns) for row in rows]
+        return self._run_query(sql_query, values=values, mode='insert_multi')
         
         
         
@@ -316,8 +331,10 @@ class SqlHelper: # Simple helper for SQL
         Returns:
             tuple of items and their keys
         """
+        table = self._identifier(table)
         if len(columns) == 0:
             columns = ['*']        
+        columns = [self._identifier(column, allow_wildcard=True) for column in columns]
         sql_query = """SELECT {columns} FROM {table} {left_join} {filters} {order}"""
 
         filter_str, filter_items = self._sql_filters(filters)
@@ -333,18 +350,26 @@ class SqlHelper: # Simple helper for SQL
                         more_info=f'Order direction must be ASC or DESC, not \'{direction}\'.'
                         )
                 
-                order_items.append(f"{var} {direction.upper()}") 
+                order_items.append(f"{self._identifier(var)} {direction.upper()}")
             
             order_str = "ORDER BY " + ", ".join(order_items)
             
-        sql_query = sql_query.format(columns=",".join(columns), table=table, left_join=str(left_join), filters=filter_str, order =order_str)
+        sql_query = sql_query.format(columns=",".join(columns), table=table, left_join=left_join or '', filters=filter_str, order=order_str)
         return self._run_query(sql_query, values=filter_items, mode='get')  # type: ignore its a list or status, idk why it has a hard time understanding that but im sick of trying to fix it
     
     @open_and_close
-    def update(self, table:str, items:dict, filters:dict | str | tuple={}):
+    def update(self, table:str, items:dict, filters:dict | str | tuple={}, force:bool=False):
+        table = self._identifier(table)
         sql_query = """UPDATE {table} SET {keys} {filters}"""
         
         filter_str, filter_items = self._sql_filters(filters)
+
+        if not filter_str and not force:
+            return self._simple_status(
+                status='error',
+                reason='FORCE REQUIRED',
+                more_info='Empty filters would update all rows; set force=True to proceed',
+            )
 
         keys, value_items, questionmarks = self._sql_items(items, mode='set')
         if len(value_items) == 0:
@@ -359,11 +384,24 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(sql_query, all_items, mode='update')
     
     @open_and_close
-    def delete(self, table:str, filters:dict | str | tuple={}):
-        sql_query = """DELETE FROM {table} {filters}"""
-        
+    def delete(self, table:str, filters:dict | str | tuple={}, force:bool=False):
+        """Delete rows matching *filters*.
+
+        Args:
+            table: Table name (NOT injection safe).
+            filters: SQL filter(s).  An empty dict is treated as "no filter"
+                     and requires *force=True* to guard against truncation.
+            force: Must be True when *filters* is empty (or all-dict items are
+                   None).  Prevents accidental full-table deletion.
+        """
+        table = self._identifier(table)
         filter_str, filter_items = self._sql_filters(filters)
-        
+        # Guard: refuse to delete every row unless explicitly forced
+        if not filter_str and not force:
+            return self._simple_status(status='error', reason='FORCE REQUIRED',
+                                       more_info='Empty filters would delete all rows; set force=True to proceed')
+
+        sql_query = """DELETE FROM {table} {filters}"""
         sql_query = sql_query.format(table=table, filters=filter_str)
         return self._run_query(sql_query, filter_items, mode='delete')
     
@@ -372,11 +410,26 @@ class SqlHelper: # Simple helper for SQL
         return self._run_query(query=query, values=values, mode=mode)
     
     @open_and_close
-    def delete_table(self, table:str): # Drop that shit
-        query = """DROP TABLE IF EXISTS ?
-        VALUES(?,)"""
-        values = [table]
-        return self._run_query(query=query, values=values, mode='delete')
+    def delete_table(self, table:str, force:bool=False): # Drop a table
+        """Drop a table from the database.
+
+        Args:
+            table: Table name (NOT injection safe — do not expose to users).
+            force: Must be True to proceed.  Protects against accidental drops.
+        """
+        if not force:
+            return self._simple_status(status='error', reason='FORCE REQUIRED',
+                                       more_info='Set force=True to drop the table')
+        # Table names cannot be parameterized; use a simple allow-list guard
+        _allowed_tables = {
+            'database_info', 'users', 'game_templates', 'games', 'stocks',
+            'stock_prices', 'game_participants', 'stock_picks',
+        }
+        if table.lower() not in _allowed_tables:
+            return self._simple_status(status='error', reason='TABLE NOT ALLOWED',
+                                       more_info=f'Table {table} is not in the allow-list')
+        query = f"DROP TABLE IF EXISTS {table}"
+        return self._run_query(query=query, mode='ddl')
     
     @open_and_close
     def alter_table(self, table:str, data:str, mode:str):
@@ -391,7 +444,7 @@ class SqlHelper: # Simple helper for SQL
         else:
             raise ValueError(f'Invalid mode: {mode}')
         
-        return self._run_query(query=query.format(table=table, data=data), mode='insert')
+        return self._run_query(query=query.format(table=table, data=data), mode='ddl')
 
     def create_backup(self, dest_db:str, display_progress:bool=False):
         """Manually create a backup of the current database
@@ -404,7 +457,6 @@ class SqlHelper: # Simple helper for SQL
         
         
         def info(status:int, todo:int, total:int):
-            pass
             print(f'Status: {status} | Copied {total - todo} of {total}')
             
         # Connect/create DBs

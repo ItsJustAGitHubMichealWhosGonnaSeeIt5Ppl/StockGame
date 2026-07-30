@@ -76,7 +76,7 @@ class GameTemplate(BaseModel):
     owner_id: int = Field(validation_alias=AliasChoices('owner_user_id'))
     start_money: PositiveFloat 
     pick_count: PositiveInt
-    pick_date: int # Optional[date] = None # YYYY-MM-DD
+    pick_date: Optional[int] = None  # Optional[date] = None # YYYY-MM-DD
     draft_mode: bool = False
     private_game: bool = False
     allow_selling: bool = False

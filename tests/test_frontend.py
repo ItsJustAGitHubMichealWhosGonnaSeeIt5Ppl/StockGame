@@ -19,11 +19,13 @@ class TestFrontend:
             name=game_name,
             start_date=start_date,
         )
-        game = fe.be.get_game(game_id=1)
-        assert game.id == 1 # First game should be one
-        assert game.owner_id == user_id # First game should be one
-        assert game.name == game_name 
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
+        game = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)[0]
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.owner_id == user_id
+        assert game.name == game_name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
         assert game.end_date == None 
     
     def test_new_game_success(self, fe: Frontend):
@@ -50,16 +52,18 @@ class TestFrontend:
             sell_during_game=sell_during_game,
             update_frequency=update_frequency
         )
-        game = fe.be.get_game(game_id=1)
-        assert game.id == 1 
-        assert game.name == game_name 
-        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date() 
-        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date() 
-        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date() 
-        assert game.start_money == starting_money 
-        assert game.pick_count == total_picks 
-        assert game.draft_mode == draft_mode 
-        assert game.allow_selling == sell_during_game 
+        game = fe.be.get_many_games(name=game_name, owner_id=user_id, include_private=True)[0]
+        assert isinstance(game.id, str)
+        assert len(game.id) == 5
+        assert game.id.isalnum()
+        assert game.name == game_name
+        assert game.start_date == datetime.strptime(start_date, "%Y-%m-%d").date()
+        assert game.end_date == datetime.strptime(end_date, "%Y-%m-%d").date()
+        assert game.pick_date == datetime.strptime(pick_date, "%Y-%m-%d").date()
+        assert game.start_money == starting_money
+        assert game.pick_count == total_picks
+        assert game.draft_mode == draft_mode
+        assert game.allow_selling == sell_during_game
         assert game.update_frequency == update_frequency 
     
     
