@@ -752,68 +752,71 @@ async def create_game(interaction: discord.Interaction):
     name="Name of the game template",
     start_date="First game start date (YYYY-MM-DD). Later games repeat monthly from this day",
     recurring_period="Months between recurring games (optional, default: 1)",
-    game_length="How many months should the game last. 0 = infinite game (optional, default: 1)", 
+    game_length="How many months each game lasts. 0 = infinite. Cannot exceed recurring period",
     create_days_in_advance="How many days before each game's start to create it (optional, default: 7)",
     starting_money="Starting money for players (optional, default: 10000)",
-    pick_date="Buy deadline in days before month start. Negative = after start. Empty = buy anytime",
+    pick_date="Buy deadline in days before each game start. Negative = after start. Empty = anytime",
     private_game="Make the game private (optional, default: False)",
     total_picks="Maximum number of picks per player (optional, default: 10)",
-    exclusive_picks="Enable draft mode - each stock can only be picked once (optional, default: False)",
-    # sell_during_game="Allow selling stocks during the game (optional, default: False)",
-    # update_frequency="How often to update game data ('daily', 'hourly') (optional, default: daily)"
+    exclusive_picks="Draft mode — each stock once. Requires pick_date on or before game start",
 )
 async def create_recurring_game(
     interaction: discord.Interaction,
     name: app_commands.Range[str, 1, name_cutoff],
     start_date: str,
     recurring_period: app_commands.Range[int, 1, 12] = 1,
-    game_length: int = 1,
+    game_length: app_commands.Range[int, 0, 12] = 1,
     create_days_in_advance: app_commands.Range[int, 0, 30] = 7,
     starting_money: app_commands.Range[int, 1, 1000000000000] = 10000,
     pick_date: int | None = None,
     private_game: bool = False,
     total_picks: app_commands.Range[int, 1, 1000] = 10,
     exclusive_picks: bool = False,
-    # sell_during_game: bool = False,
-    # update_frequency: Literal['daily', 'hourly'] = "daily"
 ):
         """Create a recurring game template"""
-        
-        # Defer the response since backend operations might take time
+
         await interaction.response.defer(ephemeral=ephemeral_test)
 
         if not is_moderator(interaction):
             await interaction.followup.send("You do not have permission to create recurring games.", ephemeral=True)
             return
-        
+
         sell_during_game: bool = False
-        update_frequency = "alpaca"
 
-        try:            
-            # Validate update frequency
-            # valid_frequencies = ['daily', 'hourly']
-            # if update_frequency.lower() not in valid_frequencies:
-            #     await interaction.followup.send(
-            #         f"❌ Invalid update frequency. Must be one of: {', '.join(valid_frequencies)}", 
-            #         ephemeral=ephemeral_test
-            #     )
-            #     return
+        try:
+            if exclusive_picks and pick_date is None:
+                await interaction.followup.send(
+                    "❌ Exclusive picks requires a pick deadline on or before each game start. "
+                    "Press the **↑ up arrow** to edit your previous command.",
+                    ephemeral=ephemeral_test,
+                )
+                return
+            if exclusive_picks and pick_date is not None and pick_date < 0:
+                await interaction.followup.send(
+                    "❌ Exclusive picks cannot use a pick deadline after the game start. "
+                    "Press the **↑ up arrow** to edit your previous command.",
+                    ephemeral=ephemeral_test,
+                )
+                return
+            if pick_date is not None and (pick_date < -30 or pick_date > 30):
+                await interaction.followup.send(
+                    "❌ Pick date must be between -30 and 30 days relative to each game's start date. "
+                    "Press the **↑ up arrow** to edit your previous command.",
+                    ephemeral=ephemeral_test,
+                )
+                return
+            if game_length > 0 and game_length > recurring_period:
+                await interaction.followup.send(
+                    "❌ Game length cannot be longer than the recurring period "
+                    "(that would overlap active games). "
+                    "Press the **↑ up arrow** to edit your previous command.",
+                    ephemeral=ephemeral_test,
+                )
+                return
 
-
-            # Validate pick date number
-            if pick_date is not None:
-                if pick_date < -30 or pick_date > 30:
-                    await interaction.followup.send(
-                        "❌ Pick date must be between -30 and 30 days relative to the start of the month.",
-                        ephemeral=ephemeral_test
-                    )
-                    return
-
-
-            # Get user ID
             user_id = interaction.user.id
-            
-            # Create the game template using backend
+            fe.register(user_id=user_id, username=interaction.user.display_name)
+
             fe.be.add_game_template(
                 user_id=user_id,
                 name=name,
@@ -827,46 +830,63 @@ async def create_recurring_game(
                 total_picks=total_picks,
                 exclusive_picks=exclusive_picks,
                 sell_during_game=sell_during_game,
-                update_frequency=update_frequency
             )
-            
-            # Create success embed
+
             embed = discord.Embed(
                 title="✅ Recurring Game Template Created!",
                 description=f"Successfully created recurring game template: **{name}**",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
-            
-            # Add game details to embed
+
             embed.add_field(name="📅 Start Date", value=start_date, inline=True)
             embed.add_field(name="🔄 Recurring Every", value=f"{recurring_period} months", inline=True)
             embed.add_field(name="⏱️ Game Length", value=(f"{game_length} months" if game_length != 0 else "infinite"), inline=True)
             embed.add_field(name="💰 Starting Money", value=f"${starting_money:,.2f}", inline=True)
             embed.add_field(name="📊 Total Picks", value=str(total_picks), inline=True)
             embed.add_field(name="🔒 Private", value="Yes" if private_game else "No", inline=True)
-            
+
             if pick_date is not None:
-                pick_date_text: str = f"{pick_date} days before the 1st" if pick_date >= 1 else f"{pick_date * -1} days after the 1st"
+                if pick_date > 0:
+                    pick_date_text = f"{pick_date} days before each game start"
+                elif pick_date < 0:
+                    pick_date_text = f"{abs(pick_date)} days after each game start"
+                else:
+                    pick_date_text = "On each game start date"
                 embed.add_field(name="📝 Pick Deadline", value=pick_date_text, inline=True)
             else:
                 embed.add_field(name="📝 Pick Deadline", value="None — buy anytime", inline=True)
-            
-            embed.add_field(name="🎯 Exclusive Picks", value="Yes" if exclusive_picks else "No", inline=True)
-            # embed.add_field(name="💸 Selling Allowed", value="Yes" if sell_during_game else "No", inline=True)
-            # embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
-            embed.add_field(name="🏷️ Updates", value="alpaca", inline=True)
-            embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
-            
-            embed.set_footer(text=f"Created by {interaction.user.display_name}")
-            
-            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-            
-        except Exception as e:
-            # Handle specific backend errors
-            error_message = "❌ Failed to create recurring game template. Please try again or contact a moderator."
 
-            await interaction.followup.send(error_message, ephemeral=ephemeral_test)
+            embed.add_field(name="🎯 Exclusive Picks", value="Yes" if exclusive_picks else "No", inline=True)
+            embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
+
+            embed.set_footer(text=f"Created by {interaction.user.display_name}")
+
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+
+        except AlreadyExistsError:
+            await interaction.followup.send(
+                f"❌ A recurring template named **{name}** already exists. "
+                "Choose a different name — press the **↑ up arrow** to bring back your previous command and edit it.",
+                ephemeral=ephemeral_test,
+            )
+        except InvalidDateFormatError:
+            await interaction.followup.send(
+                "❌ Invalid start date. Use `YYYY-MM-DD` (example: `2026-08-01`). "
+                "Press the **↑ up arrow** to edit your previous command.",
+                ephemeral=ephemeral_test,
+            )
+        except ValueError as e:
+            await interaction.followup.send(
+                f"❌ {e} Press the **↑ up arrow** to edit your previous command.",
+                ephemeral=ephemeral_test,
+            )
+        except Exception as e:
+            log_unexpected(logger, "create-recurring-game failed", exc=e, user_id=interaction.user.id, command="create-recurring-game", name=name)
+            await interaction.followup.send(
+                "❌ Failed to create recurring game template. Please try again or contact a moderator.",
+                ephemeral=ephemeral_test,
+            )
 
 # TODO Handle more specific errors when implemented (private game, invalid game id, etc)
 @bot.tree.command(name="join-game", description="Join an existing stock game")
@@ -1197,83 +1217,311 @@ async def manage_pending(
         )
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
   
-@bot.tree.command(name="list-game-templates", description="List your game templates (Moderator Only)")
-@app_commands.describe(
-    show_all="Show all templates (default: False, only shows first 10)"
-)
-async def list_game_templates(
-    interaction: discord.Interaction,
-    show_all: bool = False
-):
-    """List game templates for the user"""
-    if not is_moderator(interaction):
-        await interaction.response.send_message("You do not have permission to list recurring games.", ephemeral=True)
-        return
-    try:
-        # Get templates from backend - assuming it has a method to get by user
-        templates = fe.be.get_many_game_templates(status=None)  # Adjust this based on your backend
-        
-        # Filter by user if needed (depends on your backend implementation)
-        user_templates = [t for t in templates if t.owner_id == interaction.user.id]
-        
-        if not user_templates:
-            embed = discord.Embed(
-                title="No Game Templates Found",
-                description="You haven't created any recurring game templates yet.",
-                color=discord.Color.orange()
-            )
-        else:
-            embed = discord.Embed(
-                title="Your Game Templates",
-                description=f"Found {len(user_templates)} template(s)",
-                color=discord.Color.blue()
-            )
-            
-            # Add templates to embed
-            if not show_all:
-                user_templates = user_templates[:10]
-            for template in user_templates:
-                # Format pick date display
-                pick_date_text = "None — buy anytime"
-                if template.pick_date is not None:
-                    if template.pick_date >= 1:
-                        pick_date_text = f"{template.pick_date} days before 1st"
-                    else:
-                        pick_date_text = f"{abs(template.pick_date)} days after 1st"
-                
-                # Format game length
-                game_length_text = "Infinite" if template.game_length == 0 else f"{template.game_length} months"
-                
-                embed.add_field(
-                    name=f"📋 {template.name}",
-                    value=(
-                        f"🔄 Every {template.recurring_period} months\n"
-                        f"📅 Start: {template.start_date}\n"
-                        f"⏱️ Length: {game_length_text}\n"
-                        f"⏰ Create: {template.create_days_in_advance} days early\n"
-                        f"💰 Starting: ${template.start_money:,}\n"
-                        f"📝 Pick deadline: {pick_date_text}\n"
-                        f"🔒 Private: {'Yes' if template.private_game else 'No'}\n"
-                        f"📊 Total picks: {template.pick_count}\n"
-                        f"🎯 Exclusive: {'Yes' if template.draft_mode else 'No'}\n"
-                        f"💸 Selling: {'Yes' if template.allow_selling else 'No'}\n"
-                        f"🏷️ Updates: `{template.update_frequency}`"
-                    ),
-                    inline=True
-                )
-           
-            if len(user_templates) > 10 or show_all:
-                embed.set_footer(text=f"Showing first 10 of {len(user_templates)} templates")
-        
-    except Exception as e:
-        embed = discord.Embed(
-            title="Failed to List Game Templates",
-            description="Unable to list game templates. Please try again or contact a moderator.",
-            color=discord.Color.red()
+class RecurringTemplateManager(discord.ui.View):
+    """Paginate through recurring templates one at a time with stop/delete."""
+
+    def __init__(self, interaction: discord.Interaction, templates: list):
+        super().__init__(timeout=180)
+        self.interaction = interaction
+        self.templates = list(templates)
+        self.index = 0
+        self.confirming_delete = False
+        self._sync_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.interaction.user.id:
+            return True
+        await interaction.response.send_message(
+            "Only the moderator who ran this command can use these controls.",
+            ephemeral=True,
         )
-        logger.exception(f'User: {interaction.user.id} failed to list game templates. Error: {e}')
-    
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+        return False
+
+    def _sync_buttons(self) -> None:
+        self.clear_items()
+        if self.confirming_delete:
+            confirm = discord.ui.Button(label="Confirm Delete", style=discord.ButtonStyle.danger)
+            cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+            confirm.callback = self._confirm_delete  # type: ignore[method-assign]
+            cancel.callback = self._cancel_delete  # type: ignore[method-assign]
+            self.add_item(confirm)
+            self.add_item(cancel)
+            return
+
+        prev_btn = discord.ui.Button(emoji="◀️", style=discord.ButtonStyle.blurple, disabled=self.index <= 0)
+        next_btn = discord.ui.Button(
+            emoji="▶️",
+            style=discord.ButtonStyle.blurple,
+            disabled=self.index >= len(self.templates) - 1,
+        )
+        delete_btn = discord.ui.Button(label="Delete", style=discord.ButtonStyle.danger)
+
+        stopped = bool(self.templates and self.templates[self.index].status == "disabled")
+        if stopped:
+            toggle_btn = discord.ui.Button(label="Resume", style=discord.ButtonStyle.success)
+            toggle_btn.callback = self._resume  # type: ignore[method-assign]
+        else:
+            toggle_btn = discord.ui.Button(label="Stop", style=discord.ButtonStyle.secondary)
+            toggle_btn.callback = self._stop  # type: ignore[method-assign]
+
+        prev_btn.callback = self._previous  # type: ignore[method-assign]
+        next_btn.callback = self._next  # type: ignore[method-assign]
+        delete_btn.callback = self._ask_delete  # type: ignore[method-assign]
+        self.add_item(prev_btn)
+        self.add_item(next_btn)
+        self.add_item(toggle_btn)
+        self.add_item(delete_btn)
+
+    def _pick_deadline_text(self, template) -> str:
+        if template.pick_date is None:
+            return "None — buy anytime"
+        if template.pick_date > 0:
+            return f"{template.pick_date} days before each game start"
+        if template.pick_date < 0:
+            return f"{abs(template.pick_date)} days after each game start"
+        return "On each game start date"
+
+    def build_embed(self) -> discord.Embed:
+        if not self.templates:
+            return discord.Embed(
+                title="Manage Recurring Games",
+                description="No recurring templates left.",
+                color=discord.Color.orange(),
+            )
+
+        template = self.templates[self.index]
+        status_label = "Enabled" if template.status == "enabled" else "Stopped"
+        length = "Infinite" if template.game_length == 0 else f"{template.game_length} months"
+        embed = discord.Embed(
+            title=f"📋 {template.name}",
+            description=(
+                f"Template **{self.index + 1}** of **{len(self.templates)}**\n"
+                f"**Status:** {status_label}\n\n"
+                "**Stop** — do not create future games; games already created keep running until they end.\n"
+                "**Resume** — start creating future games again on the normal schedule.\n"
+                "**Delete** — remove this template from the database (existing games stay)."
+            ),
+            color=discord.Color.blue() if template.status == "enabled" else discord.Color.dark_grey(),
+        )
+        embed.add_field(name="🔄 Recurring Every", value=f"{template.recurring_period} months", inline=True)
+        embed.add_field(name="📅 First Start", value=str(template.start_date), inline=True)
+        embed.add_field(name="⏱️ Game Length", value=length, inline=True)
+        embed.add_field(name="⏰ Create Early", value=f"{template.create_days_in_advance} days", inline=True)
+        embed.add_field(name="💰 Starting", value=f"${template.start_money:,.0f}", inline=True)
+        embed.add_field(name="📊 Picks", value=str(template.pick_count), inline=True)
+        embed.add_field(name="📝 Pick Deadline", value=self._pick_deadline_text(template), inline=True)
+        embed.add_field(name="🔒 Private", value="Yes" if template.private_game else "No", inline=True)
+        embed.add_field(name="🎯 Exclusive", value="Yes" if template.draft_mode else "No", inline=True)
+        embed.set_footer(text=f"Template ID: {template.id}")
+        return embed
+
+    def build_delete_confirm_embed(self) -> discord.Embed:
+        template = self.templates[self.index]
+        return discord.Embed(
+            title="Delete template?",
+            description=(
+                f"Permanently delete recurring template **{template.name}**?\n\n"
+                "Existing games created from it will keep running, but no new games will be created.\n"
+                "Confirm or Cancel — either way you will move to the next template."
+            ),
+            color=discord.Color.red(),
+        )
+
+    async def _refresh(self, interaction: discord.Interaction) -> None:
+        self.confirming_delete = False
+        self._sync_buttons()
+        if not self.templates:
+            await interaction.response.edit_message(embed=self.build_embed(), view=None)
+            self.stop()
+            return
+        if self.index >= len(self.templates):
+            self.index = len(self.templates) - 1
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def _advance_after_delete_prompt(
+        self,
+        interaction: discord.Interaction,
+        *,
+        deleted: bool,
+    ) -> None:
+        self.confirming_delete = False
+        if deleted:
+            # Index now points at what used to be the next template.
+            if self.index >= len(self.templates):
+                self.index = max(0, len(self.templates) - 1)
+        else:
+            # Cancel: move forward one template when possible.
+            if self.index < len(self.templates) - 1:
+                self.index += 1
+        self._sync_buttons()
+        if not self.templates:
+            await interaction.response.edit_message(embed=self.build_embed(), view=None)
+            self.stop()
+            return
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def _previous(self, interaction: discord.Interaction) -> None:
+        self.index = max(0, self.index - 1)
+        await self._refresh(interaction)
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        self.index = min(len(self.templates) - 1, self.index + 1)
+        await self._refresh(interaction)
+
+    async def _stop(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        try:
+            fe.be.update_game_template(template_id=template.id, status="disabled")
+            self.templates[self.index] = fe.be.get_game_template(template.id)
+            self.confirming_delete = False
+            self._sync_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            await interaction.followup.send(
+                f"🛑 **{template.name}** stopped. No new games will be created; "
+                "games already in progress will finish normally.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            log_unexpected(
+                logger,
+                "manage-recurring-games stop failed",
+                exc=e,
+                user_id=interaction.user.id,
+                command="manage-recurring-games",
+                template_id=template.id,
+            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "❌ Failed to stop this template. Please try again or contact a moderator.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ Failed to stop this template. Please try again or contact a moderator.",
+                    ephemeral=True,
+                )
+
+    async def _resume(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        try:
+            fe.be.update_game_template(template_id=template.id, status="enabled")
+            self.templates[self.index] = fe.be.get_game_template(template.id)
+            self.confirming_delete = False
+            self._sync_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            await interaction.followup.send(
+                f"▶️ **{template.name}** resumed. New games will be created again on schedule.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            log_unexpected(
+                logger,
+                "manage-recurring-games resume failed",
+                exc=e,
+                user_id=interaction.user.id,
+                command="manage-recurring-games",
+                template_id=template.id,
+            )
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    "❌ Failed to resume this template. Please try again or contact a moderator.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ Failed to resume this template. Please try again or contact a moderator.",
+                    ephemeral=True,
+                )
+
+    async def _ask_delete(self, interaction: discord.Interaction) -> None:
+        self.confirming_delete = True
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.build_delete_confirm_embed(), view=self)
+
+    async def _confirm_delete(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        try:
+            fe.be.remove_game_template(template_id=template.id)
+            del self.templates[self.index]
+            await self._advance_after_delete_prompt(interaction, deleted=True)
+            await interaction.followup.send(
+                f"🗑️ Deleted template **{template.name}**.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            log_unexpected(
+                logger,
+                "manage-recurring-games delete failed",
+                exc=e,
+                user_id=interaction.user.id,
+                command="manage-recurring-games",
+                template_id=template.id,
+            )
+            self.confirming_delete = False
+            self._sync_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            await interaction.followup.send(
+                "❌ Failed to delete this template. Please try again or contact a moderator.",
+                ephemeral=True,
+            )
+
+    async def _cancel_delete(self, interaction: discord.Interaction) -> None:
+        await self._advance_after_delete_prompt(interaction, deleted=False)
+
+    async def on_timeout(self) -> None:
+        try:
+            message = await self.interaction.original_response()
+            await message.edit(view=None)
+        except Exception:
+            pass
+
+
+@bot.tree.command(name="manage-recurring-games", description="Browse, stop, or delete recurring game templates (Moderator Only)")
+async def manage_recurring_games(interaction: discord.Interaction):
+    """Paginate through your recurring templates with stop/delete controls."""
+    if not is_moderator(interaction):
+        await interaction.response.send_message(
+            "You do not have permission to manage recurring games.",
+            ephemeral=True,
+        )
+        return
+
+    try:
+        try:
+            templates = fe.be.get_many_game_templates(status=None)
+        except LookupError:
+            templates = ()
+        user_templates = [t for t in templates if t.owner_id == interaction.user.id]
+        if not user_templates:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="Manage Recurring Games",
+                    description="You haven't created any recurring game templates yet.",
+                    color=discord.Color.orange(),
+                ),
+                ephemeral=ephemeral_test,
+            )
+            return
+
+        view = RecurringTemplateManager(interaction, user_templates)
+        await interaction.response.send_message(
+            embed=view.build_embed(),
+            view=view,
+            ephemeral=ephemeral_test,
+        )
+    except Exception as e:
+        log_unexpected(
+            logger,
+            "manage-recurring-games failed",
+            exc=e,
+            user_id=interaction.user.id,
+            command="manage-recurring-games",
+        )
+        await interaction.response.send_message(
+            "❌ Unable to load recurring templates. Please try again or contact a moderator.",
+            ephemeral=ephemeral_test,
+        )
+
 
 @bot.tree.command(name="update", description="Update the all game stock prices (Moderator Only)")
 @app_commands.describe(
@@ -1917,13 +2165,16 @@ All commands include built-in hints and help when you run them!
 - `/my-games` - View your games and their status
 - `/user-stats` - Shows global statistics of a user. Shows yours by default
 - `/about` - About the bot and its creators
-
+"""
+    if is_moderator(interaction):
+        help_text += """
 ### Moderator Commands
 - `/create-recurring-game` - Create a recurring game template (Moderator only)
-- `/list-recurring-games` - List your recurring game templates (Moderator only)
+- `/manage-recurring-games` - Browse, stop, or delete recurring templates (Moderator only)
 - `/update` - Update the all game stock prices (Moderator only)
 - `/logs` - Download latest debug or error logs (Moderator only)
-
+"""
+    help_text += """
 ## How to Play
 1. **Join a game** using `/join-game` or create your own with `/create-game`
 2. **Buy stocks** using `/buy-stock` 
