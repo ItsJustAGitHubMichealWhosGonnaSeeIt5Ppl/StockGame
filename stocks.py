@@ -70,11 +70,9 @@ class Backend:
                 raise LookupError(f'Expected one item, but got {len(resp.result)}.')
             
         elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
-            # Common / intentional for existence checks — keep at DEBUG to avoid noise.
-            self.logger.debug('Failed to get item - Not found. %s', resp)
+            self.logger.error(f'Failed to get item - Not found. {resp}' )
             raise LookupError(f'Item not found.')
         else:
-            self.logger.error('Failed to get item for unexpected reason: %s', resp)
             raise Exception('Failed to get item.', resp)
         
     def _many_get(self, typeadapter:TypeAdapter, resp:Status)-> tuple:
@@ -862,38 +860,19 @@ class Backend:
         
         player = self.get_participant(participant_id)
         if player.status != 'active':
-            self.logger.info(
-                "add_stock_pick rejected: not active participant_id=%s status=%s",
-                participant_id,
-                player.status,
-            )
             raise bexc.NotAllowedError(action='add_stock_pick', reason='Not active', message=f'Player status is {player.status}.  Must be active to pick stocks')
 
         
         game = self.get_game(game_id=player.game_id) 
         if game.pick_date and game.pick_date < datetime.today().date(): # Check that pick date hasn't passed
-            self.logger.info(
-                "add_stock_pick rejected: past pick_date participant_id=%s game=%s pick_date=%s",
-                participant_id,
-                game.id,
-                game.pick_date,
-            )
             raise bexc.NotAllowedError(action='add_stock_pick', reason='Past pick_date', message='Cannot pick stock once pick date has passed')
         
         try:
             picks = self.get_many_stock_picks(participant_id=participant_id, status=['pending_buy', 'owned', 'pending_sell'])
             if len(picks) >= game.pick_count: 
-                self.logger.info(
-                    "add_stock_pick rejected: max picks participant_id=%s game=%s picks=%s limit=%s",
-                    participant_id,
-                    game.id,
-                    len(picks),
-                    game.pick_count,
-                )
                 raise bexc.NotAllowedError(action='add_stock_pick', reason='Maximum picks reached', message='Player already has maximum amount of picks')
             
         except LookupError as e: # Should only be raised if no stocks are present
-            self.logger.debug("add_stock_pick: no existing picks for participant_id=%s", participant_id)
             pass
             
         items = {
@@ -1150,8 +1129,8 @@ class GameLogic: # Might move some of the control/running actions here
         self.est_offset = self._market_time_offset()
         self.alpaca = AlpacaMarketData()
         if not self.alpaca.configured:
-            self.logger.critical(
-                'Alpaca credentials missing; stock price updates and lookups will fail until '
+            self.logger.warning(
+                'Alpaca credentials missing; stock price updates will fail until '
                 'ALPACA_API_KEY and ALPACA_SECRET_KEY are set in .env'
             )
     
@@ -1364,9 +1343,6 @@ class GameLogic: # Might move some of the control/running actions here
 
         try:
             prices = self.alpaca.get_latest_prices(tickers)
-        except RuntimeError as e:
-            self.logger.critical('Alpaca price fetch aborted: %s', e)
-            return
         except Exception as e:
             self.logger.exception('Alpaca price fetch failed', exc_info=e)
             return
@@ -1564,35 +1540,19 @@ class GameLogic: # Might move some of the control/running actions here
         #TODO regex the subimissions to check for invalid characters and save time.
         db_ticker = to_db_ticker(ticker)
         alpaca_ticker = to_alpaca_symbol(ticker)
-        self.logger.debug(
-            "find_stock start input=%s db=%s alpaca=%s",
-            ticker,
-            db_ticker,
-            alpaca_ticker,
-        )
 
         for candidate in dict.fromkeys([db_ticker, alpaca_ticker]):
             try:
                 existing = self.be.get_stock(ticker_or_id=candidate)
-                self.logger.info(
-                    "find_stock cache hit input=%s resolved=%s",
-                    ticker,
-                    existing.ticker,
-                )
                 return existing.ticker
             except LookupError:
-                self.logger.debug("find_stock miss for candidate=%s", candidate)
+                pass
 
         try:
             asset = self.alpaca.get_us_equity(alpaca_ticker)
         except LookupError as e:
-            self.logger.info("find_stock not found via Alpaca: %s", ticker)
             raise ValueError("Unable to find stock") from e
-        except ValueError as e:
-            self.logger.info("find_stock rejected by Alpaca: %s (%s)", ticker, e)
-            raise
         except RuntimeError as e:
-            self.logger.critical("find_stock failed: Alpaca credentials/runtime issue for %s", ticker)
             raise ValueError("Unable to find stock") from e
 
         exchange = str(asset.get("exchange") or "UNKNOWN")
@@ -1601,12 +1561,6 @@ class GameLogic: # Might move some of the control/running actions here
             ticker=db_ticker,
             exchange=exchange,
             company_name=company_name,
-        )
-        self.logger.info(
-            "find_stock added new equity %s exchange=%s name=%s",
-            db_ticker,
-            exchange,
-            company_name,
         )
         return db_ticker
 # # FRONTEND INTERACTIONS. # #
@@ -1985,12 +1939,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         """ #TODO should this return picks remaining? Could also add that as another function
         
         if len(str(ticker)) > 5:
-            self.logger.info("buy_stock rejected: ticker too long user=%s ticker=%s", user_id, ticker)
             raise ValueError('Invalid Ticker, too long!')
         
         self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id) # If user doesn't exist in the game, error will be raised
-        self.logger.debug("buy_stock resolving ticker user=%s game=%s ticker=%s", user_id, game_id, ticker)
         resolved_ticker = self.gl.find_stock(ticker=str(ticker))  # Ensures stock exists; returns DB ticker
         stock = self.be.get_stock(ticker_or_id=resolved_ticker)
 
@@ -2006,24 +1958,11 @@ class Frontend: # This will be where a bot (like discord) interacts
                     try:
                         existing = self.be.get_many_stock_picks(participant_id=p.id, stock_id=stock.id, status=['pending_buy', 'owned', 'pending_sell'])
                         if len(existing) > 0:
-                            self.logger.info(
-                                "buy_stock rejected: draft duplicate user=%s game=%s ticker=%s",
-                                user_id,
-                                game_id,
-                                resolved_ticker,
-                            )
                             raise bexc.AlreadyExistsError(table='stock_picks', duplicate={'ticker': ticker}, message='Draft mode: ticker already picked by another participant')
                     except LookupError:
                         pass
 
         self.be.add_stock_pick(participant_id=player_id, stock_id=stock.id) # Add the pick
-        self.logger.info(
-            "buy_stock ok user=%s game=%s ticker=%s stock_id=%s",
-            user_id,
-            game_id,
-            resolved_ticker,
-            stock.id,
-        )
 
     def sell_stock(self, user_id:int, game_id:int | str, ticker:str):
         """Sell/cancel a stock pick.

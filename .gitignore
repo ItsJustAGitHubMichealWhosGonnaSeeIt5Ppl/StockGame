@@ -136,9 +136,6 @@ ENV/
 env.bak/
 venv.bak/
 
-# App runtime logs
-logs/
-
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -188,3 +185,5 @@ cython_debug/
 ./settings.json
 settings.json
 testPIL.py
+
+AGENTS.md

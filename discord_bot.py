@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 import asyncio
 import logging
 import os
-from typing import Any, Literal, Mapping, Optional, cast # 3.13 +
+import sys
+from typing import Any, Mapping, Optional, cast # 3.13 +
 
 # EXTERNAL
 import discord
@@ -21,16 +22,6 @@ from dotenv import load_dotenv
 from helpers.datatype_validation import GameLeaderboard
 from helpers.views import Pagination, LeaderboardImageGenerator, StockPortfolioImageGenerator
 import helpers.autocomplete as ac
-from helpers.logging_setup import (
-    attach_critical_dm_bot,
-    discord_upload_budget,
-    flush_critical_dm_queue,
-    latest_log_path,
-    log_intentional,
-    log_unexpected,
-    prepare_log_for_upload,
-    setup_app_logging,
-)
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
 
@@ -61,7 +52,28 @@ ephemeral_test = True # Set to False for testing, True for production
 name_cutoff = 25 # Cut names off at 25 characters
 dev_role_id = 1412173045350666271
 
-logger = setup_app_logging(console_level=logging.INFO, root_level=logging.DEBUG)
+# Logger thing
+now = datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
+def setup_logging(level): 
+    global console, logger
+    frmt = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S') #Format that I like
+    logger = logging.getLogger('DiscordBot') # Logger name
+    console = logging.StreamHandler(stream=sys.stderr)
+    console.setLevel(logging.DEBUG) 
+    console.setFormatter(frmt)
+    logger.addHandler(console)
+    
+    try:
+        os.mkdir('logs')
+    except FileExistsError:
+        pass # Folder already exists
+    
+    logging.basicConfig(filename=f'logs/stock_game{now}.log',filemode='w',
+        format='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.DEBUG)
+    logger.setLevel(level)
+    
+setup_logging(level=logging.DEBUG) # debug for now
 
 def has_permission(user:discord.member.Member):
     """Check if a user has permission to create/manage games
@@ -326,46 +338,20 @@ async def wait_for_scheduled_update():
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
-    attach_critical_dm_bot(bot)
-    await flush_critical_dm_queue()
     if bot.user is None:
         logger.error('Ready event fired without an authenticated bot user.')
         return
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     if not scheduled_game_update.is_running():
         scheduled_game_update.start()
-        logger.info('Started scheduled_game_update loop (every 1 minute).')
     try:
         # Sync commands globally
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} command(s)")
         for command in synced:
-            logger.debug(f"   - {command.name}: {command.description}")
+            logger.info(f"   - {command.name}: {command.description}")
     except Exception as e:
-        logger.exception("Failed to sync application commands", exc_info=e)
-
-
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    """Catch unhandled slash-command errors so they always land in logs."""
-    user_id = interaction.user.id if interaction.user else None
-    command = interaction.command.name if interaction.command else "unknown"
-    log_unexpected(
-        logger,
-        "Unhandled app command error",
-        exc=error,
-        user_id=user_id,
-        command=command,
-        guild=getattr(interaction.guild, "id", None),
-    )
-    try:
-        msg = "An unexpected error occurred. Moderators have been notified via logs."
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
-        else:
-            await interaction.response.send_message(msg, ephemeral=True)
-    except Exception:
-        logger.debug("Could not send error followup to user %s", user_id, exc_info=True)
+        logger.error(f"Failed to sync commands: {e}") #TODO should this be higher severity?
 
 
 # GAME INTERACTION RELATED
@@ -423,7 +409,7 @@ async def create_game_advanced(
             color=discord.Color.green()
         )
     except Exception as e: #TODO find specific errors!
-        log_unexpected(logger, "create-game-advanced failed", exc=e, user_id=interaction.user.id, command="create-game-advanced", name=name)
+        logger.exception("Game creation failed", exc_info=e)
         embed = discord.Embed(
         title="Game Creation Failed",
         description="Unable to create the game. Check the supplied values and try again.",
@@ -917,22 +903,16 @@ async def join_game(
         status = 'success'
     except LookupError as e:
         description = f'No game with the ID {game_id}.'
-        log_intentional(logger, "join-game rejected: game not found", user_id=interaction.user.id, command="join-game", game=game_id)
         
     except ValueError as e:
         if 'already in game.' in str(e).lower():
             description = f'You are already in this game ID {game_id}.'
-            log_intentional(logger, "join-game rejected: already in game", user_id=interaction.user.id, command="join-game", game=game_id)
             
         elif '`pick_date` has passed.' in str(e).lower():
             description = f'The pick date for this game has passed.'
-            log_intentional(logger, "join-game rejected: pick_date passed", user_id=interaction.user.id, command="join-game", game=game_id)
-        else:
-            log_unexpected(logger, "join-game unexpected ValueError", exc=e, user_id=interaction.user.id, command="join-game", game=game_id)
-            description = f'An unexpected error ocurred when joining game {game_id}. Please try again or contact a moderator.'
             
     except Exception as e:
-        log_unexpected(logger, "join-game unexpected failure", exc=e, user_id=interaction.user.id, command="join-game", game=game_id)
+        logger.exception(f'User: {interaction.user.id} failed to join game {game_id}.  Error: {e}')
         description = f'An unexpected error ocurred when joining game {game_id}. Please try again or contact a moderator.'
 
     if status == 'failed':
@@ -1042,9 +1022,8 @@ async def manage_game(
             description=str(e),
             color=discord.Color.red()
         )
-        log_intentional(logger, "manage-game rejected", user_id=interaction.user.id, command="manage-game", game=game_id, reason=str(e))
     except Exception as e:
-        log_unexpected(logger, "manage-game failed", exc=e, user_id=interaction.user.id, command="manage-game", game=game_id)
+        logger.exception("Game update failed", exc_info=e)
         embed = discord.Embed(
             title="Game Update Failed",
             description="Unable to update the game. Please try again or contact a moderator.",
@@ -1553,12 +1532,10 @@ async def update(
         embed.title = "Failed"
         embed.description = "You do not have permission to update this game"
         embed.color = discord.Color.red()
-        log_intentional(logger, "update rejected: permission", user_id=interaction.user.id, command="update")
     except Exception as e:
         embed.title = "Failed"
         embed.description = f"There was an error while executing this command. Please try again or contact a moderator."
         embed.color = discord.Color.red()
-        log_unexpected(logger, "update command failed", exc=e, user_id=interaction.user.id, command="update")
 
     await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
 
@@ -1581,12 +1558,6 @@ async def buy_stock(
     title = 'Stock Purchase Failed'
     try:
         ticker = ticker.upper()
-        logger.debug(
-            "buy-stock start | user=%s game=%s ticker=%s",
-            interaction.user.id,
-            game_id,
-            ticker,
-        )
         await asyncio.to_thread(
             fe.buy_stock,
             user_id=interaction.user.id,
@@ -1596,33 +1567,23 @@ async def buy_stock(
         title = 'Stock Purchased'
         description = f'You have successfully bought {ticker} in game: {game_id}.'
         status = 'success'
-        logger.info(
-            "buy-stock success | user=%s game=%s ticker=%s",
-            interaction.user.id,
-            game_id,
-            ticker,
-        )
 
     except ValueError as exc:
         if 'Invalid Ticker, too long!' in str(exc):
             description = f'The ticker {ticker} is not valid!'
-            log_intentional(logger, "buy-stock rejected: ticker too long", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
         
         elif 'Stock is not tradeable' in str(exc):
             description = f'The ticker {ticker} is not tradeable.  This can occur when a stock is private or has been delisted.'
-            log_intentional(logger, "buy-stock rejected: not tradeable", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
             
         elif 'Unable to find stock' in str(exc) or 'Failed to add `ticker`' in str(exc):
             description = f'The ticker {ticker} was not found.  Double check your spelling and try again!'
-            log_intentional(logger, "buy-stock rejected: ticker not found", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
         
         else:
-            log_unexpected(logger, "buy-stock unexpected ValueError", exc=exc, user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
+            logger.exception(f'Uncaught value error user: {interaction.user.id} tried to buy stock with ticker: {ticker}', exc_info=exc)
             description = 'An error ocurred while finding your stock.'
     
     except LookupError:
         description = f'No game with ID {game_id} found.'
-        log_intentional(logger, "buy-stock rejected: game not found", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
     
     except NotAllowedError as exc: # REASONS ARE NOW IN THE DOCSTRING OF buy_stock!!
         if exc.reason == 'Not active': # Player isn't an active member of the game - IDK HOW YOU WANT TO TELL THE USER THIS.  This could happen if they got banned, or if the game is private and they haven't been approved
@@ -1634,32 +1595,16 @@ async def buy_stock(
         
         elif exc.reason == 'Past pick_date':
             description = f'The pick date for this game has passed, so you can no longer pick stocks.'
-        else:
-            description = f'You are not allowed to buy stocks in the game: {game_id}.'
-        log_intentional(
-            logger,
-            f"buy-stock rejected: {exc.reason}",
-            user_id=interaction.user.id,
-            command="buy-stock",
-            game=game_id,
-            ticker=ticker,
-            reason=exc.reason,
-        )
     
     except AlreadyExistsError as exc:
         description = f'You already own {ticker} in this game!'
-        log_intentional(logger, "buy-stock rejected: already owned", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
         
     except DoesntExistError as exc: # Player isnt in the game at all
         if exc.table == 'game_participants':
             description = f'You are not in the game: {game_id}.'
-            log_intentional(logger, "buy-stock rejected: not in game", user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
-        else:
-            description = f'You are not in the game: {game_id}.'
-            log_unexpected(logger, "buy-stock DoesntExistError", exc=exc, user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker, table=exc.table)
 
     except Exception as e: # Other unexpeted errors
-        log_unexpected(logger, "buy-stock unexpected failure", exc=e, user_id=interaction.user.id, command="buy-stock", game=game_id, ticker=ticker)
+        logger.exception(f'User: {interaction.user.id} tried to buy the stock: {ticker} in game: {game_id}. Error: {e}')
         description=f'An unexpected error ocurred while trying to buy a stock\nReport this! Ticker: {ticker}, Game: {game_id}'
             
     await interaction.followup.send(
@@ -1700,7 +1645,6 @@ async def remove_stock(
         status = 'failed'
         title="Stock Removal Failed"
         description=f"Could not remove {ticker} from your picks in game: {game_id}."
-        log_unexpected(logger, "remove-stock failed", exc=e, user_id=interaction.user.id, command="remove-stock", game=game_id, ticker=ticker)
 
     await interaction.followup.send(embed=simple_embed(status = status, title = title, desc = description), ephemeral=ephemeral_test)
 
@@ -2048,95 +1992,22 @@ async def about(
     embed.add_field(name="Special Thanks", value="<@394012218729168907>: Gave the idea\n<@204414583203430400>: Chaotic Project Tester")
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="logs", description="(Moderator Only) Download the latest debug or error log")
-@app_commands.describe(
-    log_type="Which log file to fetch: debug (verbose) or error (errors only)",
-)
+@bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
 async def logs(
     interaction: discord.Interaction,
-    log_type: Literal["debug", "error"] = "error",
 ):
-    if not is_moderator(interaction):
-        log_intentional(
-            logger,
-            "logs rejected: not moderator",
-            user_id=interaction.user.id,
-            command="logs",
-        )
-        await interaction.response.send_message(
-            embed=simple_embed(
-                status="failed",
-                title="Not Allowed",
-                desc="Must be admin to get logs",
-            ),
-            ephemeral=True,
-        )
-        return
+    
+    if is_moderator(interaction): # Check if user is an admin
+        title = "Logs"
+        status = 'success'
+        logfile = discord.File(fp=f'logs/stock_game{now}.log', filename='log-latest.log')
+        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=''), file=logfile, ephemeral=ephemeral_test)
 
-    await interaction.response.defer(ephemeral=ephemeral_test)
-
-    path = latest_log_path(log_type)
-    if path is None:
-        await interaction.followup.send(
-            embed=simple_embed(
-                status="failed",
-                title="Logs Unavailable",
-                desc=f"No `{log_type}` log files found in `logs/`.",
-            ),
-            ephemeral=ephemeral_test,
-        )
-        return
-
-    guild_limit = interaction.guild.filesize_limit if interaction.guild else None
-    max_bytes = discord_upload_budget(guild_limit)
-    try:
-        buffer, filename, truncated, original_size, attached_size = prepare_log_for_upload(
-            path, max_bytes
-        )
-    except OSError as exc:
-        log_unexpected(
-            logger,
-            "logs failed to read file",
-            exc=exc,
-            user_id=interaction.user.id,
-            command="logs",
-            path=str(path),
-        )
-        await interaction.followup.send(
-            embed=simple_embed(
-                status="failed",
-                title="Logs Unavailable",
-                desc=f"Could not read log file `{path.name}`.",
-            ),
-            ephemeral=ephemeral_test,
-        )
-        return
-
-    desc_lines = [
-        f"Type: `{log_type}`",
-        f"Source: `{path.name}`",
-        f"File size: `{original_size:,}` bytes",
-        f"Attached: `{attached_size:,}` bytes (limit `{max_bytes:,}`)",
-    ]
-    if truncated:
-        desc_lines.append(
-            "File exceeded Discord's upload limit — attached the **latest tail** only."
-        )
-
-    logfile = discord.File(fp=buffer, filename=filename)
-    await interaction.followup.send(
-        embed=simple_embed(status="success", title="Logs", desc="\n".join(desc_lines)),
-        file=logfile,
-        ephemeral=ephemeral_test,
-    )
-    logger.info(
-        "logs sent | user=%s type=%s file=%s truncated=%s attached=%s",
-        interaction.user.id,
-        log_type,
-        path.name,
-        truncated,
-        attached_size,
-    )
+    else:
+        title = "Not Allowed"
+        status = 'failed'
+        logs = 'Must be admin to get logs'
+        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=logs), ephemeral=True)
 
 @bot.tree.command(name="help", description="Get help with StockBot")
 async def help(interaction: discord.Interaction):
@@ -2188,20 +2059,12 @@ Use `/help` to see this message again, or contact a moderator if you encounter a
 if __name__ == '__main__':
     if TOKEN:
         try:
-            attach_critical_dm_bot(bot)
-            bot.run(TOKEN, log_handler=None)  # we own logging; avoid discord.py double-config
+            bot.run(TOKEN)
         except discord.errors.LoginFailure:
-            logger.critical(
-                "Discord login failed: invalid DISCORD_TOKEN. Check .env / secrets.",
-                exc_info=True,
-            )
+            logger.exception("Login Failed: Improper token has been passed.")
         except discord.errors.PrivilegedIntentsRequired:
-            logger.critical(
-                "Discord privileged intents required. Enable Message Content / Members "
-                "in the Discord Developer Portal.",
-                exc_info=True,
-            )
+            logger.exception("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
         except Exception as e:
-            logger.critical("Bot crashed while starting/running: %s", e, exc_info=True)
+            logger.exception(f"An error occurred while running the bot: {e}")
     else:
-        logger.critical("DISCORD_TOKEN environment variable not found. Bot cannot start.")
+        logger.error("DISCORD_TOKEN environment variable not found.  Set DISCORD_TOKEN environment variable before running.")
