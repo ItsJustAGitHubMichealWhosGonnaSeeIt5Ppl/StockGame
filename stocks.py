@@ -13,12 +13,11 @@ from dotenv import load_dotenv
 from pydantic import TypeAdapter
 from pydantic import ValidationError
 import pytz
-from requests import exceptions # Exceptions!
-import yfinance as yf #TODO find alternative to yfinance since it seems to have issues https://docs.alpaca.markets/docs/about-market-data-api
 
 # INTERNAL
 import helpers.datatype_validation as dtv
 import helpers.exceptions as bexc
+from helpers.alpaca_client import AlpacaMarketData, to_alpaca_symbol, to_db_ticker
 from helpers.sqlhelper import SqlHelper, _iso8601, Status
 from sqlite_creator_real import create as create_db
 
@@ -262,7 +261,7 @@ class Backend:
             return id
 
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily', template_id:Optional[int]=None):
+    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca', template_id:Optional[int]=None):
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -273,12 +272,12 @@ class Backend:
             start_date (str): Start date.  Format: `YYYY-MM-DD`.
             end_date (str, optional): End date.  Format: `YYYY-MM-DD`.  Leave blank for infinite game.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
-            pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
+            pick_date (str, optional): Deadline to buy/pick stocks (`YYYY-MM-DD`). If omitted, players can buy anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. If enabled, pick date must be on or before start date.
             sell_during_game (bool, optional): Whether users can sell during the game. Defaults to False.
-            update_frequency (str, optional): How often prices update. Defaults to 'daily'.
+            update_frequency (str, optional): Price-update tag (`alpaca`, `daily`, etc.). Defaults to 'alpaca'.
             
         Returns:
             Status: Game creation status.
@@ -509,7 +508,7 @@ class Backend:
         if pick_date and not self._validate_date(pick_date):
             raise bexc.InvalidDateFormatError('Invalid `pick_date` format.')
         
-        if update_frequency and update_frequency not in ['daily', 'hourly', 'minute', 'realtime']: #TODO can this use dtv.UpdateFrequency?
+        if update_frequency and update_frequency not in get_args(dtv.UpdateFrequency):
             raise ValueError(f'Invalid update frequency {update_frequency}')
         if starting_money and starting_money < 1.0:
             raise ValueError('`starting_money` must be atleast `1.0`.')
@@ -560,7 +559,7 @@ class Backend:
                 self.get_game(game['game_id']) 
     
     # # GAME TEMPLATE ACTIONS # #
-    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca'):
         #TODO support basic variables in the game name
         if start_date and not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
@@ -1061,21 +1060,26 @@ class GameLogic: # Might move some of the control/running actions here
         self.market_open_est = datetime.strptime(market_open_est,"%H:%M")
         self.market_close_est = datetime.strptime(market_close_est,"%H:%M")
         self.est_offset = self._market_time_offset()
+        self.alpaca = AlpacaMarketData()
+        if not self.alpaca.configured:
+            self.logger.warning(
+                'Alpaca credentials missing; stock price updates will fail until '
+                'ALPACA_API_KEY and ALPACA_SECRET_KEY are set in .env'
+            )
     
     def _is_market_hours(self): # Only considers hours
-        """Check whether the time is inside our outside of market hours.  Does not consider weekends, etc.
+        """Check whether the US equity market is open.
+
+        Prefers Alpaca's clock; falls back to EST open/close window.
 
         Returns:
             bool: True when within market hours.
         """
-        
-        try:
-            market = yf.Market('US')
-            return False if market.status == 'closed' else True
-        except: #TODO log
-            pass
-        
-        # ALL OF THIS IS JUST IN CASE WE STOP USING YAHOO FINANCE
+        alpaca_open = self.alpaca.is_market_open()
+        if alpaca_open is not None:
+            return alpaca_open
+
+        # Fallback if Alpaca clock is unavailable
         the_time = datetime.strftime(datetime.now() + timedelta(hours=self.est_offset), "%H:%M")
         if datetime.strptime(the_time,"%H:%M") > self.market_open_est and self.market_close_est > datetime.strptime(the_time,"%H:%M"):
             return True
@@ -1172,64 +1176,60 @@ class GameLogic: # Might move some of the control/running actions here
                 self.be.update_game(game_id=game.id, status='ended')
 
     def update_stock_prices(self, game_id:Optional[int | str]=None, force:bool=False):
-        """Find and update stock prices for all stocks currently in games (pending picks are included)
-        
-        Uses yfinance API.
+        """Fetch and store latest prices for every equity ticker in the database.
+
+        Uses Alpaca IEX snapshots in rate-limited batches. Crypto is not included.
+        `game_id` is accepted for API compatibility with `update_all` but prices
+        are refreshed for all stocks in the DB.
 
         Args:
-            game_id (Optional[int], optional): Game ID.  If blank, all active games will be checked.
-            force (bool, optional): Force update even if market status would normally skip.
+            game_id (Optional[int], optional): Unused; all DB tickers are updated.
+            force (bool, optional): Reserved for callers; prices always refresh when invoked.
         """
         #TODO Skip holidays
         #TODO allow after hours data to be added here as long as its tagged?
-        #TODO don't run too often
-        # Only get active stocks (stocks from games that are running)
-        if game_id:
-            query = """
-        WHERE stock_id IN (SELECT stock_id
-            FROM stock_picks
-            WHERE status IS NOT "sold"
-            AND participation_id IN (SELECT participation_id
-                FROM game_participants
-                WHERE game_id = ?
-                )
-            )
-        """
-            query = (query, [game_id])
-        else:
-            query = """
-        WHERE stock_id IN (SELECT stock_id
-            FROM stock_picks
-            WHERE status IS NOT "sold"
-            AND participation_id IN (SELECT participation_id
-                FROM game_participants
-                WHERE game_id IN (SELECT game_id
-                    FROM games
-                    WHERE status IS NOT "ended"
-                    )
-                )
-            )
-        """
-        
-        try:
-            resp = self.be.sql.get(table='stocks', filters=query)
-            active_stocks = self.be._many_get(typeadapter=dtv.Stocks, resp=resp)
-        except LookupError:
-            return # No stocks
+        _ = game_id, force  # signature kept for update_all / force_update callers
 
-        #tickers = [tkr.ticker for tkr in active_stocks]
-        if len(active_stocks) > 0:
-            market_open = self._is_market_hours()
-            for ticker in active_stocks:
-                try:
-                    basic_info = yf.Ticker(ticker.ticker).fast_info
-                    if basic_info['quote_type'] != 'EQUITY':
-                        self.logger.error(f'Ticker {ticker.ticker} is not tradeable; skipping')
-                        continue
-                    price = basic_info['last_price'] if market_open else basic_info['regular_market_previous_close']
-                    self.be.add_stock_price(ticker_or_id=ticker.ticker, price=price, datetime=_iso8601()) # Update pricing
-                except Exception as e:
-                    self.logger.exception('Failed to update price for %s', ticker.ticker, exc_info=e)
+        try:
+            stocks = self.be.get_many_stocks()
+        except LookupError:
+            return  # No stocks
+
+        tickers = [stock.ticker for stock in stocks if stock.ticker]
+        if not tickers:
+            return
+
+        try:
+            prices = self.alpaca.get_latest_prices(tickers)
+        except Exception as e:
+            self.logger.exception('Alpaca price fetch failed', exc_info=e)
+            return
+
+        # Floor to the minute so frequent polls don't collide on UNIQUE(stock_id, datetime)
+        price_dt = datetime.now().strftime("%Y-%m-%d %H:%M:00")
+        updated = 0
+        for ticker, price in prices.items():
+            try:
+                self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=price_dt)
+                updated += 1
+            except Exception as e:
+                reason = ''
+                if len(e.args) > 1 and hasattr(e.args[1], 'reason'):
+                    reason = str(e.args[1].reason)
+                blob = f'{e} {reason}'.upper()
+                if 'UNIQUE' in blob or 'CONSTRAINT' in blob:
+                    self.logger.debug('Price already stored for %s at %s', ticker, price_dt)
+                else:
+                    self.logger.exception('Failed to update price for %s', ticker, exc_info=e)
+
+        missing = len(tickers) - len(prices)
+        self.logger.info(
+            'Alpaca price update: %s/%s tickers priced (%s missing from feed) at %s',
+            updated,
+            len(tickers),
+            missing,
+            price_dt,
+        )
     
     def update_stock_picks(self, game_id:Optional[int | str]=None, force:bool=False) -> None:
         """Update all owned and pending stock picks with current prices
@@ -1383,7 +1383,7 @@ class GameLogic: # Might move some of the control/running actions here
         self.update_participants_and_games(game_id=game_id) # Update participants (set their total value, etc.)
             
     def find_stock(self, ticker:str): 
-        """Find and add a stock to database
+        """Find and add a US equity to the database via Alpaca.
 
         Args:
             ticker (str): Stock ticker.  Eg: 'MSFT'.
@@ -1393,29 +1393,30 @@ class GameLogic: # Might move some of the control/running actions here
             ValueError: Unable to find stock
         """        
         #TODO regex the subimissions to check for invalid characters and save time.
-        #TODO should only USD stocks be allowed/limit exchanges?
-        try: # Check if the stock exists
-            self.be.get_stock(ticker_or_id=ticker)
-            
-        except LookupError: # Stock doesnt exist, add
-            stock = yf.Ticker(ticker)
+        db_ticker = to_db_ticker(ticker)
+        alpaca_ticker = to_alpaca_symbol(ticker)
+
+        for candidate in dict.fromkeys([db_ticker, alpaca_ticker]):
             try:
-                info = cast(dict[str, Any], stock.info)
-                if "country" in info and info["country"] != "United States":
-                    raise ValueError("Unable to find stock") # US Stocks only
-            except AttributeError: # If stock isn't valid, an attribute error should be raised
-                info = {} # Empty mapping causes the validation below to fail
-            except exceptions.HTTPError: # Just fully gives up
-                raise ValueError('Unable to find stock')
-                
-            if len(info) > 0: # Try to verify ticker is real and get the relevant infos
-                if info['quoteType'] != 'EQUITY': # Stock can no longer be traded
-                    raise ValueError('Stock is not tradeable')
-                self.be.add_stock(ticker=ticker.upper(),
-                    exchange=info['fullExchangeName'], #TODO this fails with CLR stock
-                    company_name=info['displayName'] if 'displayName' in info else info['shortName'])
-            else:
-                raise ValueError(f'Failed to add `ticker` {ticker}.')
+                self.be.get_stock(ticker_or_id=candidate)
+                return
+            except LookupError:
+                pass
+
+        try:
+            asset = self.alpaca.get_us_equity(alpaca_ticker)
+        except LookupError as e:
+            raise ValueError("Unable to find stock") from e
+        except RuntimeError as e:
+            raise ValueError("Unable to find stock") from e
+
+        exchange = str(asset.get("exchange") or "UNKNOWN")
+        company_name = str(asset.get("name") or db_ticker)
+        self.be.add_stock(
+            ticker=db_ticker,
+            exchange=exchange,
+            company_name=company_name,
+        )
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
 class Frontend: # This will be where a bot (like discord) interacts
@@ -1543,7 +1544,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         return text
 
     # # GAME RELATED # #
-    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='daily'):
+    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca'):
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
@@ -1556,12 +1557,12 @@ class Frontend: # This will be where a bot (like discord) interacts
             start_date (str): Start date.  Format: `YYYY-MM-DD`.
             end_date (str, optional): End date.  Format: `YYYY-MM-DD`.  Leave blank for infinite game.
             starting_money (float, optional): Starting money. Defaults to $10000.00.
-            pick_date (str, optional): Date stocks must be picked by.  Format: `YYYY-MM-DD`.  If not set, players can join anytime.
+            pick_date (str, optional): Deadline to buy/pick stocks (`YYYY-MM-DD`). If omitted, players can buy anytime.
             private_game(bool, optional): Whether the game is private (True).  Defaults to public (False).
             total_picks (int, optional): Amount of stocks each user picks. Defaults to 10.
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. If enabled, pick date must be on or before start date.
             sell_during_game (bool, optional): Whether users can sell during the game. Defaults to False.
-            update_frequency (str, optional): How often prices update. Defaults to 'daily'.
+            update_frequency (str, optional): Price-update tag. Defaults to 'alpaca'.
         """
     
         try: # Try create user

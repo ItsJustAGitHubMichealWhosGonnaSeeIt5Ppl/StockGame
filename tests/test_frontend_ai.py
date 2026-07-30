@@ -7,7 +7,7 @@ import helpers.exceptions as bexc
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests, matches conftest
 MOCK_DATE_STR = "2025-05-21" # Fixed date for tests, matches conftest
 
-# Helper function to pre-add stock to avoid yfinance calls
+# Helper function to pre-add stock to avoid Alpaca asset lookup calls
 def _add_stock_to_db(be: Backend, ticker: str, exchange: str = "NASDAQ", company_name: str = "Test Inc."):
     try:
         be.add_stock(ticker=ticker, exchange=exchange, company_name=company_name)
@@ -47,7 +47,7 @@ class TestFrontend:
         assert game.pick_count == 10
         assert game.draft_mode == False
         assert game.allow_selling == False # Default
-        assert game.update_frequency == 'daily' # Default 
+        assert game.update_frequency == 'alpaca' # Default 
  
 
         # Check if owner was added as participant
@@ -468,9 +468,9 @@ class TestFrontend:
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
         ticker_to_buy = "NEWCO"
-        # Ensure stock is NOT in DB first to test gl.find_stock's yf.Ticker path.
-        # For testing without network, we assume yf.Ticker is mocked or this path is avoided.
-        # As per plan, we will add stock to DB first to avoid yfinance call.
+        # Ensure stock is NOT in DB first to test gl.find_stock's Alpaca asset path.
+        # For testing without network, we assume Alpaca is mocked or this path is avoided.
+        # As per plan, we will add stock to DB first to avoid live Alpaca calls.
         _add_stock_to_db(fe.be, ticker=ticker_to_buy, company_name="New Company")
         stock_in_db = fe.be.get_stock(ticker_to_buy)
         
