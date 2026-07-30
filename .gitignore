@@ -185,3 +185,5 @@ cython_debug/
 ./settings.json
 settings.json
 testPIL.py
+
+AGENTS.md
