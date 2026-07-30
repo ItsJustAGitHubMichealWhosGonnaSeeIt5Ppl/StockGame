@@ -261,7 +261,7 @@ class Backend:
             return id
 
     # # GAME ACTIONS # #
-    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca', template_id:Optional[int]=None):
+    def add_game(self, user_id:int, name:str, start_date:str | date, end_date:Optional[str | date]=None, starting_money:float=10000.00, pick_date:Optional[str | date]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca', template_id:Optional[int]=None) -> str:
         """Add a new game
         
         WARNING: If using realtime, expect issues
@@ -280,10 +280,9 @@ class Backend:
             update_frequency (str, optional): Price-update tag (`alpaca`, `daily`, etc.). Defaults to 'alpaca'.
             
         Returns:
-            Status: Game creation status.
+            str: Identifier of the newly created game.
         """
         
-        #TODO maybe this should return the game ID
         # Date formatting validation
         
         if isinstance(start_date, date): # TODO this might crash idk
@@ -360,6 +359,7 @@ class Backend:
                 raise bexc.AlreadyExistsError(table='games', duplicate=name, message='Cannot add multiple games with the same name')
 
             raise Exception(f'Failed to add game.', resp) 
+        return game_id
     
     def get_game(self, game_id:int | str)-> dtv.Game: # Its always a Games object, but its being a fucking baby
         """Get a single game by ID
@@ -469,7 +469,7 @@ class Backend:
         
         raise Exception('Failed to repair games', e)
         
-    def update_game(self, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
+    def update_game(self, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, clear_end_date:bool=False, clear_pick_date:bool=False):
         """Update an existing game
         
         Args:
@@ -489,6 +489,8 @@ class Backend:
             aggregate_value (float, optional): Total value of all game participants stocks.  Shouldn't be changed manually.
             change_dollars (float, optional): aggregate_value - (starting_money * total participants).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
+            clear_end_date (bool, optional): Remove the optional end date.
+            clear_pick_date (bool, optional): Remove the optional pick deadline.
         """
 
         game = self.get_game(game_id) # Error will be thrown if game can't be found, so anything returned is a game
@@ -496,7 +498,7 @@ class Backend:
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
         
         if game.start_date < datetime.today().date():
-            if start_date or starting_money or pick_date or exclusive_picks:
+            if any(value is not None for value in (start_date, starting_money, pick_date, exclusive_picks)) or clear_pick_date:
                 raise ValueError('Cannot update `start_date`, `starting_money`, `pick_date`, or `exclusive_picks` once game has started.')
             
         if end_date: # Enddate stuff
@@ -525,13 +527,13 @@ class Backend:
                 start_money = starting_money,
                 pick_count = total_picks,
                 draft_mode = exclusive_picks,
-                pick_date = pick_date,
+                pick_date = 'NULL' if clear_pick_date else pick_date,
                 private_game = private_game,
                 allow_selling = sell_during_game,
                 status = status,
                 update_frequency = update_frequency.lower() if update_frequency else None,
                 start_date = start_date,
-                end_date = end_date,
+                end_date = 'NULL' if clear_end_date else end_date,
                 aggregate_value = aggregate_value,
                 change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
                 change_percent = round(change_percent, 2) if change_percent is not None else None,
@@ -1690,7 +1692,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         return text
 
     # # GAME RELATED # #
-    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca'):
+    def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca') -> str:
         """Create a new stock game!
         
         WARNING: If using realtime, expect issues
@@ -1709,45 +1711,34 @@ class Frontend: # This will be where a bot (like discord) interacts
             exclusive_picks (bool, optional): Whether multiple users can pick the same stock. If enabled, pick date must be on or before start date.
             sell_during_game (bool, optional): Whether users can sell during the game. Defaults to False.
             update_frequency (str, optional): Price-update tag. Defaults to 'alpaca'.
-        """
-    
-        try: # Try create user
-            user = self.register(user_id=user_id)  
-        except bexc.UserExistsError: # User was already there, my bad
-            self.logger.info(f'User with ID {user_id} already exists.')
-            pass #TODO log
-        
-        
 
-        try:  # Create game
-            # Allow alphanumeric characters and spaces
-            if not all(c.isalnum() or c.isspace() for c in name):
-                raise ValueError("Name must be alphanumeric (spaces allowed)!")
-            self.be.add_game(
-                user_id=user_id,
-                name=self.clean_text(name),
-                start_date=start_date,
-                end_date=end_date,
-                starting_money=starting_money,
-                pick_date=pick_date,
-                total_picks=total_picks,
-                private_game=private_game,
-                exclusive_picks=exclusive_picks,
-                sell_during_game=sell_during_game,
-                update_frequency=update_frequency
-                )
-        except Exception as e: #TODO find errors?
-            raise e
+        Returns:
+            str: Identifier of the newly created game.
+        """
+        self.register(user_id=user_id)
+        if not all(c.isalnum() or c.isspace() for c in name):
+            raise ValueError("Name must be alphanumeric (spaces allowed)!")
+        game_id = self.be.add_game(
+            user_id=user_id,
+            name=self.clean_text(name),
+            start_date=start_date,
+            end_date=end_date,
+            starting_money=starting_money,
+            pick_date=pick_date,
+            total_picks=total_picks,
+            private_game=private_game,
+            exclusive_picks=exclusive_picks,
+            sell_during_game=sell_during_game,
+            update_frequency=update_frequency,
+        )
         
         try:
-            games = self.be.get_many_games(name=name, owner_id=user_id, include_private=True)
-            if len(games) == 1:
-                self.be.add_participant(user_id=user_id, game_id=games[0].id)
+            self.be.add_participant(user_id=user_id, game_id=game_id)
         except LookupError: # Game wasn't found for some reason
             self.logger.warning('Game was created but owner could not be added.')
         except ValueError as exc:
             self.logger.warning(f'Game was created but owner could not be added.  Reason: {exc}')
-        
+        return game_id
        
     
     def list_games(self, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False): 
@@ -1848,7 +1839,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             add_participant > bexc.DoesntExistError: Attempted to join a game that doesn't exist
         """
-        self.register(user_id) # Must try to register user
+        self.register(user_id, username=name) # Must try to register user
         try:
             self.be.add_participant(user_id=int(user_id), game_id=game_id, team_name=name)
         except LookupError:
@@ -1911,6 +1902,21 @@ class Frontend: # This will be where a bot (like discord) interacts
             statuses.append('sold')
         picks = self.be.get_many_stock_picks(participant_id=player_id, status=statuses, include_tickers=True)
         return picks
+
+    def pick_capacity(self, user_id:int, game_id:int | str) -> tuple[int, int]:
+        """Return the remaining and total number of picks for a participant."""
+        self.register(user_id)
+        participant_id = self._participant_id(user_id=user_id, game_id=game_id)
+        game = self.be.get_game(game_id)
+        try:
+            picks = self.be.get_many_stock_picks(
+                participant_id=participant_id,
+                status=['pending_buy', 'owned', 'pending_sell'],
+            )
+        except LookupError:
+            picks = ()
+        total = int(game.pick_count)
+        return max(total - len(picks), 0), total
     
     # # STOCK RELATED
     def buy_stock(self, user_id:int, game_id:int | str, ticker:str):
@@ -1964,7 +1970,7 @@ class Frontend: # This will be where a bot (like discord) interacts
 
         self.be.add_stock_pick(participant_id=player_id, stock_id=stock.id) # Add the pick
 
-    def sell_stock(self, user_id:int, game_id:int | str, ticker:str):
+    def sell_stock(self, user_id:int, game_id:int | str, ticker:str) -> str:
         """Sell/cancel a stock pick.
 
         - Removes pending_buy picks entirely (cancels the order).
@@ -1979,6 +1985,10 @@ class Frontend: # This will be where a bot (like discord) interacts
         Raises:
             LookupError: No matching pick found.
             bexc.NotAllowedError(reason='Selling disabled'): Game does not allow selling.
+
+        Returns:
+            ``cancelled`` for a pending buy, ``sell_requested`` for an owned
+            pick, or ``already_pending`` when a sale was already requested.
         """
         self.register(user_id) # Must try to register user
         player_id = self._participant_id(user_id=user_id, game_id=game_id)
@@ -1996,14 +2006,16 @@ class Frontend: # This will be where a bot (like discord) interacts
         if pick.status == 'pending_buy':
             # Cancel the pending order
             self.be.remove_stock_pick(pick_id=pick.id)
+            return 'cancelled'
         elif pick.status == 'owned':
             game = self.be.get_game(game_id=game_id)
             if not game.allow_selling:
                 raise bexc.NotAllowedError(action='sell_stock', reason='Selling disabled', message='Cannot sell owned stocks in this game')
             # Mark for sale — price accounting handled by update_stock_picks
             self.be.update_stock_pick(pick_id=pick.id, status='pending_sell')
+            return 'sell_requested'
         else:  # pending_sell — already requested, nothing to do
-            pass
+            return 'already_pending'
     
     def remove_pick(self, user_id:int, game_id:int | str, ticker:str): # Remove a stock pick
         """Remove a stock pick. Status must be pending, cannot remove already owned stocks.
@@ -2047,7 +2059,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         
         self.gl.update_all(game_id=game_id, force=True) # 
         
-    def manage_game(self, user_id:int, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, enforce_permissions:bool=True):
+    def manage_game(self, user_id:int, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, enforce_permissions:bool=True, clear_end_date:bool=False, clear_pick_date:bool=False):
         """Update/Manage an existing game.
         
         start_date, starting_money, pick_date, total_picks, exclusive_picks, sell_during_game cannot be changed once a game has started
@@ -2068,6 +2080,8 @@ class Frontend: # This will be where a bot (like discord) interacts
             sell_during_game (bool, optional): Whether users can sell stocks during the game. Defaults to False. Cannot be changed once game has started.
             update_frequency (str, optional): How often prices should update ('daily', 'hourly', 'minute', 'realtime').
             enforce_permissions (bool): Disable to bypass permission checking.
+            clear_end_date (bool): Remove an existing optional end date.
+            clear_pick_date (bool): Remove an existing optional pick deadline.
 
         Raises:
             dict: Status/result
@@ -2078,7 +2092,20 @@ class Frontend: # This will be where a bot (like discord) interacts
             self.logger.error(f'User {user_id} is not allowed to make changes to game {game_id}')
             raise PermissionError(f'User {user_id} is not allowed to make changes to game {game_id}')
         
-        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency)
+        self.be.update_game(game_id=game_id, owner=owner, name=name, start_date=start_date, end_date=end_date, status=status, starting_money=starting_money, pick_date=pick_date, private_game=private_game, total_picks=total_picks, exclusive_picks=exclusive_picks, sell_during_game=sell_during_game, update_frequency=update_frequency, clear_end_date=clear_end_date, clear_pick_date=clear_pick_date)
+
+    def leave_game(self, user_id:int, game_id:int | str):
+        """Remove a participant and their picks from a game.
+
+        Game owners must transfer ownership or delete the game instead.  Stock
+        picks are removed by the schema's participant foreign-key cascade.
+        """
+        self.register(user_id)
+        game = self.be.get_game(game_id)
+        if game.owner_id == user_id:
+            raise PermissionError('Game owners must transfer ownership or delete the game instead.')
+        participant_id = self._participant_id(user_id=user_id, game_id=game_id)
+        self.be.remove_participant(participant_id)
 
     def remove_game(self, user_id:int, game_id:int | str, enforce_permissions:bool=True):
         """Remove a game
