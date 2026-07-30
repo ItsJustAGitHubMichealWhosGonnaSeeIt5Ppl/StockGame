@@ -1109,8 +1109,35 @@ class GameLogic: # Might move some of the control/running actions here
         ).utcoffset() or timedelta(0)
         return (market_offset - local_offset).total_seconds() / 3600
     
+    def _next_recurring_start(
+        self,
+        anchor: date,
+        recurring_period: int,
+        after: Optional[date] = None,
+    ) -> date:
+        """Next start date on a schedule anchored to ``anchor``.
+
+        The first occurrence is ``anchor``. Later ones are
+        ``anchor + n * recurring_period`` months. Adding months from the
+        original anchor (not the previous occurrence) keeps the intended
+        day-of-month when possible — e.g. the 30th each month, clamped to
+        Feb 28/29, then back to the 30th in March.
+        """
+        if after is None:
+            return anchor
+        months = 0
+        next_start = anchor
+        while next_start <= after:
+            months += recurring_period
+            next_start = anchor + relativedelta(months=months)
+        return next_start
+
     def recurring_games(self):
-        """Create each enabled template's next due game exactly once."""
+        """Create each enabled template's next due game exactly once.
+
+        ``template.start_date`` is the first game's start. Later games follow
+        every ``recurring_period`` months from that anchor date.
+        """
         today = datetime.today().date()
         try:
             templates = self.be.get_many_game_templates(status='enabled')
@@ -1124,12 +1151,15 @@ class GameLogic: # Might move some of the control/running actions here
                 filters={'template_id': template.id},
                 order={'start_date': 'DESC'},
             )
+            latest_start: Optional[date] = None
             if response.status == 'success':
                 assert isinstance(response.result, tuple)
                 latest_start = datetime.strptime(response.result[0]['start_date'], '%Y-%m-%d').date()
-                next_start_date = latest_start + relativedelta(months=template.recurring_period)
-            else:
-                next_start_date = template.start_date + relativedelta(months=template.recurring_period)
+            next_start_date = self._next_recurring_start(
+                anchor=template.start_date,
+                recurring_period=template.recurring_period,
+                after=latest_start,
+            )
 
             due_date = next_start_date - timedelta(days=template.create_days_in_advance)
             if due_date > today:
