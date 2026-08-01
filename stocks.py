@@ -155,10 +155,11 @@ class Backend:
         
         resp = self.sql.insert(table='users', items=items)
         if resp.status != 'success': #TODO errors
-            self.logger.error(f'Failed to add user: {user_id}. Reason: {resp}')
             if resp.reason == 'SQLITE_CONSTRAINT_PRIMARYKEY': # User already in the database
+                self.logger.debug(f'User {user_id} already registered.')
                 raise bexc.UserExistsError(user_id=user_id)
-            elif resp.reason == 'SQLITE_MISMATCH': # Invalid data in one of the fields
+            self.logger.error(f'Failed to add user: {user_id}. Reason: {resp}')
+            if resp.reason == 'SQLITE_MISMATCH': # Invalid data in one of the fields
                 raise bexc.WrongTypeError(table='users')
             else: # Can't think of any other issues you could have with this honestly
                 raise Exception(f'Failed to add user.', resp)
@@ -1810,6 +1811,31 @@ class Frontend: # This will be where a bot (like discord) interacts
             return True
         return today <= game.pick_date <= month_ahead
 
+    @staticmethod
+    def game_status_emoji(game: dtv.Game, today: date) -> str:
+        """Emoji for Discord game lists: pickable / locked / ended."""
+        if game.status == 'ended' or (game.end_date is not None and game.end_date < today):
+            return '🛑'
+        if game.pick_date is None or game.pick_date >= today:
+            return '💸'
+        return '📈'
+
+    def _rank_scored_games(
+        self,
+        scored: list[tuple[dtv.Game, int]],
+        today: date,
+    ) -> list[tuple[dtv.Game, int]]:
+        def bucket_key(item: tuple[dtv.Game, int]) -> tuple[int, int]:
+            game, player_count = item
+            prominent = 0 if self.game_is_time_prominent(game, today) else 1
+            return (prominent, -player_count)
+
+        recurring = [item for item in scored if item[0].template_id is not None]
+        others = [item for item in scored if item[0].template_id is None]
+        recurring.sort(key=bucket_key)
+        others.sort(key=bucket_key)
+        return recurring + others
+
     def list_games_ranked(
         self,
         include_public: bool = True,
@@ -1852,16 +1878,54 @@ class Frontend: # This will be where a bot (like discord) interacts
                 player_count = 0
             scored.append((game, player_count))
 
-        def bucket_key(item: tuple[dtv.Game, int]) -> tuple[int, int]:
-            game, player_count = item
-            prominent = 0 if self.game_is_time_prominent(game, today) else 1
-            return (prominent, -player_count)
+        return self._rank_scored_games(scored, today)
 
-        recurring = [item for item in scored if item[0].template_id is not None]
-        others = [item for item in scored if item[0].template_id is None]
-        recurring.sort(key=bucket_key)
-        others.sort(key=bucket_key)
-        return recurring + others
+    def list_my_games_ranked(
+        self,
+        user_id: int,
+        *,
+        include_ended: bool = True,
+        today: Optional[date] = None,
+    ) -> list[tuple[dtv.Game, int]]:
+        """Games the user participates in, ranked like ``/game-list``.
+
+        Includes private games the user is in. Ended games are included by
+        default so Discord can show the ended status emoji.
+        """
+        self.register(user_id)
+        try:
+            players = self.be.get_many_participants(user_id=user_id)
+        except LookupError as exc:
+            raise LookupError('Player is not in any games.') from exc
+
+        if today is None:
+            today = self.gl._today_et()
+
+        scored: list[tuple[dtv.Game, int]] = []
+        seen: set[str] = set()
+        for player in players:
+            if player.status not in ('active', 'pending'):
+                continue
+            game = self.be.get_game(player.game_id)
+            if game.status == 'ended' and not include_ended:
+                continue
+            game_key = str(game.id)
+            if game_key in seen:
+                continue
+            seen.add(game_key)
+            try:
+                participants = self.be.get_many_participants(game_id=game.id)
+                player_count = sum(
+                    1 for p in participants if p.status in ('active', 'pending')
+                )
+            except LookupError:
+                player_count = 0
+            scored.append((game, player_count))
+
+        if not scored:
+            raise LookupError('Player is not in any games.')
+
+        return self._rank_scored_games(scored, today)
     
     def game_info(self, game_id:int | str, show_leaderboard:bool=True) -> dtv.GameInfo: 
         """Get information and leaderboard for a game.

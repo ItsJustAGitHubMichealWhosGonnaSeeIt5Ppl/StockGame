@@ -253,7 +253,11 @@ def ensure_sp500_seeded(
         raise RuntimeError("Alpaca is not configured (ALPACA_API_KEY / ALPACA_SECRET_KEY).")
 
     constituents = get_sp500_constituents()
-    existing_raw = be.get_many_stocks(tickers_only=True)
+    try:
+        existing_raw = be.get_many_stocks(tickers_only=True)
+    except LookupError:
+        # Empty stocks table — Backend raises LookupError instead of returning [].
+        existing_raw = ()
     existing = {to_db_ticker(str(t)) for t in existing_raw}
     missing = [c for c in constituents if c.ticker not in existing]
 

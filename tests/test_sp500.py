@@ -148,3 +148,28 @@ def test_ensure_sp500_seeded_skips_existing_and_adds_missing():
     assert stats["added"] == 2
     assert stats["priced"] == 2
     assert be.add_stock.call_count == 2
+
+
+def test_ensure_sp500_seeded_handles_empty_stocks_table():
+    be = MagicMock()
+    be.get_many_stocks.side_effect = LookupError("No items found")
+    alpaca = MagicMock()
+    alpaca.configured = True
+    alpaca.get_latest_prices.return_value = {"AAPL": 1.0, "MSFT": 2.0}
+
+    import helpers.sp500 as sp500
+
+    monkey_list = [
+        Sp500Constituent("AAPL", "Apple"),
+        Sp500Constituent("MSFT", "Microsoft"),
+    ]
+    original = sp500.get_sp500_constituents
+    sp500.get_sp500_constituents = lambda **_: monkey_list
+    try:
+        stats = ensure_sp500_seeded(be, alpaca)
+    finally:
+        sp500.get_sp500_constituents = original
+
+    assert stats["existing"] == 0
+    assert stats["added"] == 2
+    assert stats["priced"] == 2

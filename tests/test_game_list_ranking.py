@@ -94,6 +94,51 @@ def test_game_is_time_prominent_pick_rules():
     ) is False
 
 
+def test_game_status_emoji():
+    from stocks import Frontend
+    from helpers.datatype_validation import Game
+    from datetime import datetime
+
+    today = date(2026, 8, 1)
+
+    def _game(**kwargs):
+        base = dict(
+            game_id="AAAAA",
+            name="G",
+            owner_user_id=1,
+            start_money=10000,
+            pick_count=10,
+            draft_mode=False,
+            private_game=False,
+            allow_selling=False,
+            update_frequency="alpaca",
+            start_date=today,
+            status="active",
+            datetime_created=datetime(2026, 1, 1),
+        )
+        base.update(kwargs)
+        return Game.model_validate(base)
+
+    assert Frontend.game_status_emoji(_game(pick_date=None), today) == "💸"
+    assert Frontend.game_status_emoji(_game(pick_date=date(2026, 8, 1)), today) == "💸"
+    assert Frontend.game_status_emoji(_game(pick_date=date(2026, 7, 1)), today) == "📈"
+    assert Frontend.game_status_emoji(
+        _game(status="ended", end_date=date(2026, 7, 1)), today
+    ) == "🛑"
+    assert Frontend.game_status_emoji(
+        _game(status="active", end_date=date(2026, 7, 31), pick_date=None), today
+    ) == "🛑"
+
+
+def test_list_my_games_ranked_filters_to_participant(fe):
+    fe.register(20)
+    mine = fe.new_game(user_id=10, name="Mine", start_date="2099-01-01")
+    fe.new_game(user_id=20, name="Theirs", start_date="2099-02-01")
+    ranked = fe.list_my_games_ranked(10, today=date(2026, 8, 1))
+    assert [g.id for g, _ in ranked] == [mine]
+    assert all(count >= 1 for _, count in ranked)
+
+
 def test_recurring_games_use_configured_bot_owner(be, mocker):
     from stocks import GameLogic
 
