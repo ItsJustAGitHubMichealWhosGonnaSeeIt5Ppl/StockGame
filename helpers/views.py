@@ -3,6 +3,7 @@
 
 import discord
 import datetime
+from collections.abc import Sequence
 from typing import Callable, Optional, List, Dict, Any, Union, TYPE_CHECKING, cast
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -11,10 +12,10 @@ if TYPE_CHECKING:
     from helpers.datatype_validation import GameInfo
 
 class Pagination(discord.ui.View):
-    def __init__(self, interaction: discord.Interaction, page_len:int, embed: discord.Embed, games: list[tuple[str,str]| str], mode: str = 'field', ephemeral: bool = True):
+    def __init__(self, interaction: discord.Interaction, page_len:int, embed: discord.Embed, games: Sequence[tuple[str, str] | str], mode: str = 'field', ephemeral: bool = True):
         # Mode field or codeblock
         self.interaction = interaction
-        self.games = games # Formatted pages
+        self.games = list(games) # Formatted pages
         self.embed = embed
         self.page_len = page_len if page_len <= 25 else 25 # Maximum page length must be 25
         self.total_pages =  self.compute_total_pages(total_results=len(self.games), results_per_page=self.page_len)
