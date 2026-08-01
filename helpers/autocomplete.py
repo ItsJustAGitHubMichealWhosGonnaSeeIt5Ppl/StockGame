@@ -1,10 +1,12 @@
 # WRITTEN MOSTLY BY CLAUDE
 
 import logging
+import re
 
 import discord
 from discord.app_commands import Choice # Explicitly import Choice for clarity
 from discord.interactions import Interaction # Explicitly import Interaction for clarity
+from helpers.alpaca_client import to_db_ticker
 from helpers.datatype_validation import StockPick
 from typing import TYPE_CHECKING
 
@@ -14,10 +16,25 @@ if TYPE_CHECKING:
 _fe: 'Frontend | None' = None
 logger = logging.getLogger(__name__)
 
+# Matches buy_stock's effective ticker length (DB form uses '-' for class shares).
+_TICKER_RE = re.compile(r"^[A-Z]{1,5}(?:[.\-][A-Z]{1,2})?$")
+
+
 def init_autocomplete(fe_instance: 'Frontend') -> None:
     """Inject the Frontend instance shared with the main bot module."""
     global _fe
     _fe = fe_instance
+
+
+def _normalize_typed_ticker(current: str) -> str | None:
+    """Return a DB-form ticker if ``current`` looks like a symbol the user can buy."""
+    raw = current.strip().upper().replace(" ", "")
+    if not raw or not _TICKER_RE.match(raw):
+        return None
+    ticker = to_db_ticker(raw)
+    if len(ticker) > 5:
+        return None
+    return ticker
 
 # Autocomplete function for stock symbols based on user's stocks in a specific game
 async def sell_ticker_autocomplete(
@@ -98,25 +115,60 @@ async def buy_ticker_autocomplete(
     interaction: Interaction,
     current: str,
 ) -> list[Choice[str]]:
-    """Suggest locally cached tickers without making a market-data request."""
+    """Suggest local tickers, and always offer the typed symbol if valid.
+
+    Discord clients generally require selecting an autocomplete choice. Without
+    including the typed ticker, symbols not already in the DB cannot be bought.
+    """
     try:
         if _fe is None:
             return []
 
-        needle = current.lower()
-        stocks = _fe.be.get_many_stocks()
-        choices = []
+        choices: list[Choice[str]] = []
+        seen: set[str] = set()
+
+        typed = _normalize_typed_ticker(current)
+        if typed:
+            # First choice = exactly what the user typed (may not be in DB yet).
+            choices.append(Choice(name=f"{typed} (verify on buy)", value=typed))
+            seen.add(typed)
+
+        needle = current.strip().lower()
+        try:
+            stocks = _fe.be.get_many_stocks()
+        except LookupError:
+            stocks = ()
+
         for stock in stocks:
             ticker = str(stock.ticker)
-            company_name = str(stock.company or '')
-            if needle not in ticker.lower() and needle not in company_name.lower():
+            company_name = str(getattr(stock, "company", "") or "")
+            if needle and needle not in ticker.lower() and needle not in company_name.lower():
                 continue
+            if ticker in seen:
+                # Prefer the richer DB label over the generic typed entry.
+                choices = [
+                    Choice(
+                        name=(f"{ticker} — {company_name}" if company_name else ticker)[:100],
+                        value=ticker,
+                    )
+                    if c.value == ticker
+                    else c
+                    for c in choices
+                ]
+                continue
+            seen.add(ticker)
             label = f"{ticker} — {company_name}" if company_name else ticker
             choices.append(Choice(name=label[:100], value=ticker))
+            if len(choices) >= 25:
+                break
+
         return choices[:25]
-    except LookupError:
-        return []
     except Exception:
+        logger.debug('Buy-ticker autocomplete failed.', exc_info=True)
+        # Last resort: still allow the typed ticker through.
+        typed = _normalize_typed_ticker(current)
+        if typed:
+            return [Choice(name=typed, value=typed)]
         return []
 
 # Autocomplete function for game_id parameter
