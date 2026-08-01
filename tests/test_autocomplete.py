@@ -28,7 +28,7 @@ def test_sell_ticker_autocomplete_accepts_string_game_ids():
     assert [(choice.name, choice.value) for choice in choices] == [("AAPL", "AAPL")]
 
 
-def test_buy_ticker_autocomplete_uses_only_local_cached_stocks():
+def test_buy_ticker_autocomplete_includes_typed_ticker_not_in_db():
     fake_frontend = SimpleNamespace(
         be=SimpleNamespace(
             get_many_stocks=lambda: (
@@ -39,8 +39,51 @@ def test_buy_ticker_autocomplete_uses_only_local_cached_stocks():
     )
     autocomplete.init_autocomplete(fake_frontend)
 
-    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "micro"))
+    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "nvda"))
 
-    assert [(choice.name, choice.value) for choice in choices] == [
+    assert choices[0].value == "NVDA"
+    assert "NVDA" in choices[0].name
+    # Local cache still suggested when it matches the needle
+    values = [c.value for c in choices]
+    assert "NVDA" in values
+    assert "AAPL" not in values
+    assert "MSFT" not in values
+
+
+def test_buy_ticker_autocomplete_prefers_db_label_for_known_ticker():
+    fake_frontend = SimpleNamespace(
+        be=SimpleNamespace(
+            get_many_stocks=lambda: (
+                SimpleNamespace(ticker="MSFT", company="Microsoft Corporation"),
+            ),
+        ),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "msft"))
+
+    assert [(c.name, c.value) for c in choices] == [
         ("MSFT — Microsoft Corporation", "MSFT"),
     ]
+
+
+def test_buy_ticker_autocomplete_works_when_db_empty():
+    fake_frontend = SimpleNamespace(
+        be=SimpleNamespace(get_many_stocks=lambda: (_ for _ in ()).throw(LookupError("No items found"))),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "TSLA"))
+
+    assert [(c.name, c.value) for c in choices] == [("TSLA (verify on buy)", "TSLA")]
+
+
+def test_buy_ticker_autocomplete_normalizes_class_share():
+    fake_frontend = SimpleNamespace(
+        be=SimpleNamespace(get_many_stocks=lambda: ()),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "brk.b"))
+
+    assert choices[0].value == "BRK-B"
