@@ -14,23 +14,115 @@ Dates use `YYYY-MM-DD`. Prices are stored to two decimal places.
 
 ## Quick start (Docker — recommended)
 
-1. Clone the repo and create a `.env` in the project root (see [Environment variables](#environment-variables)).
-2. Create the SQLite database (once):
+You need [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or Docker Engine + Compose plugin (Linux).
 
-   ```bash
-   pip install -r requirements.txt   # or use any Python 3.13 env
-   python sqlite_creator_real.py
-   ```
+### 1. Clone and configure
 
-3. Build and run (persist the DB under `./data`):
+```bash
+git clone https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame.git
+cd StockGame
+```
 
-   ```bash
-   mkdir -p data
-   docker build -t stockgame .
-   docker run -d --env-file .env -v "$(pwd)/data:/app/data" stockgame
-   ```
+Create a `.env` in the project root. Easiest: copy the example and edit values.
 
-   Use `DB_NAME=data/stockgame.db` in `.env` so the file lands on the mounted volume.
+**Linux / macOS / Git Bash**
+
+```bash
+cp .env.example .env
+```
+
+**Windows PowerShell**
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set at least:
+
+```env
+DISCORD_TOKEN=your_discord_bot_token
+DB_NAME=data/stockgame.db
+OWNER=123456789012345678
+ALPACA_API_KEY=your_alpaca_key
+ALPACA_SECRET_KEY=your_alpaca_secret
+```
+
+Use `DB_NAME=data/stockgame.db` with Docker so the database is stored on the host under `./data` (persists across rebuilds). See [Environment variables](#environment-variables) and the [wiki](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki).
+
+### 2. Build and run with Compose
+
+**Linux / macOS / Git Bash**
+
+```bash
+mkdir -p data logs
+docker compose up -d --build
+docker compose logs -f
+```
+
+**Windows PowerShell**
+
+```powershell
+New-Item -ItemType Directory -Force -Path data, logs | Out-Null
+docker compose up -d --build
+docker compose logs -f
+```
+
+The container:
+
+- Creates `data/stockgame.db` on first start if it does not exist
+- Writes logs under `./logs` on the host
+- Restarts automatically unless you stop it
+
+Useful commands:
+
+```bash
+docker compose ps
+docker compose logs -f bot
+docker compose restart
+docker compose down          # stop (keeps ./data)
+docker compose up -d --build # rebuild after code changes
+```
+
+
+
+### 3. Plain `docker` commands (Optional; no Compose)
+
+If you prefer not to use Compose:
+
+**Linux / macOS / Git Bash**
+
+```bash
+mkdir -p data logs
+docker build -t stockgame .
+docker run -d --name stockgame --env-file .env \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/logs:/app/logs" \
+  --restart unless-stopped \
+  stockgame
+```
+
+**Windows PowerShell**
+
+```powershell
+New-Item -ItemType Directory -Force -Path data, logs | Out-Null
+docker build -t stockgame .
+docker run -d --name stockgame --env-file .env `
+  -v "${PWD}/data:/app/data" `
+  -v "${PWD}/logs:/app/logs" `
+  --restart unless-stopped `
+  stockgame
+```
+
+
+
+### Docker notes
+
+- Do **not** bake secrets into the image; `.env` is excluded from the build and passed at runtime.
+- After changing code, rebuild: `docker compose up -d --build`.
+- If the bot cannot write the database on Linux, ensure `./data` is writable (the entrypoint tries to fix ownership on start).
+- Local Python is not required for Docker; the image runs schema creation on first boot.
+
+
 
 ## Quick start (local Python)
 
@@ -40,7 +132,8 @@ Requires **Python 3.13**.
 git clone https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame.git
 cd StockGame
 pip install -r requirements.txt
-# create .env (see below)
+cp .env.example .env   # Windows: Copy-Item .env.example .env
+# edit .env — for local runs DB_NAME=stockgame.db is fine
 python sqlite_creator_real.py
 python discord_bot.py
 ```
@@ -49,27 +142,31 @@ Contributors should use `pip install -r requirements-dev.txt` instead.
 
 ## Environment variables
 
-‼️‼️**For more assistance with `.env` keys [visit the wiki.](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki)**
+‼️‼️**For more assistance with** `.env` **keys [visit the wiki.](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki)**
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `DISCORD_TOKEN` | Yes | Discord bot token |
-| `DB_NAME` | Yes | SQLite database path (e.g. `stockgame.db`) |
-| `OWNER` | Yes | Your numeric Discord user ID |
-| `ALPACA_API_KEY` | Yes* | Alpaca API key |
-| `ALPACA_SECRET_KEY` | Yes* | Alpaca secret key |
 
-\*The bot starts without Alpaca keys, but price updates will not work until they are set.
+| Variable            | Required | Purpose                                                                                  |
+| ------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`     | Yes      | Discord bot token                                                                        |
+| `DB_NAME`           | Yes      | SQLite database path. Use `data/stockgame.db` for Docker; `stockgame.db` is fine locally |
+| `OWNER`             | Yes      | Your numeric Discord user ID                                                             |
+| `ALPACA_API_KEY`    | Yes*     | Alpaca API key                                                                           |
+| `ALPACA_SECRET_KEY` | Yes*     | Alpaca secret key                                                                        |
 
-`.env` example:
+
+The bot starts without Alpaca keys, but price updates will not work until they are set.
+
+`.env` example (Docker-friendly):
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
-DB_NAME=stockgame.db
+DB_NAME=data/stockgame.db
 OWNER=123456789012345678
 ALPACA_API_KEY=your_alpaca_key
 ALPACA_SECRET_KEY=your_alpaca_secret
 ```
+
+
 
 ## Discord Integrations (important)
 
@@ -89,3 +186,4 @@ python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers 
 python -m pyright
 python -m pytest -q
 ```
+

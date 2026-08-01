@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    image: stockgame:latest
+    container_name: stockgame
+    env_file:
+      - .env
+    volumes:
+      # SQLite DB (use DB_NAME=data/stockgame.db in .env)
+      - ./data:/app/data
+      # Optional: keep log files on the host
+      - ./logs:/app/logs
+    restart: unless-stopped

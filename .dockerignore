@@ -42,3 +42,6 @@ Dockerfile
 *.md
 README.md
 changelog.md
+
+# Keep compose/example env available to docs consumers; .env itself stays ignored.
+!.env.example
