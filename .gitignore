@@ -180,6 +180,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Temp files
+temp*/
+
 .DS_Store
 **.db
 ./settings.json

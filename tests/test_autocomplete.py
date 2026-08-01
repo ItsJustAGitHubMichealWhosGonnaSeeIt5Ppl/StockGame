@@ -26,3 +26,21 @@ def test_sell_ticker_autocomplete_accepts_string_game_ids():
         "show_sold": False,
     }]
     assert [(choice.name, choice.value) for choice in choices] == [("AAPL", "AAPL")]
+
+
+def test_buy_ticker_autocomplete_uses_only_local_cached_stocks():
+    fake_frontend = SimpleNamespace(
+        be=SimpleNamespace(
+            get_many_stocks=lambda: (
+                SimpleNamespace(ticker="AAPL", company="Apple Inc."),
+                SimpleNamespace(ticker="MSFT", company="Microsoft Corporation"),
+            ),
+        ),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "micro"))
+
+    assert [(choice.name, choice.value) for choice in choices] == [
+        ("MSFT — Microsoft Corporation", "MSFT"),
+    ]

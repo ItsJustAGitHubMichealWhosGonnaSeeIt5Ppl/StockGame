@@ -35,7 +35,7 @@ class Pagination(discord.ui.View):
             return False
         
     def get_page(self): # Return an embed object of current page
-        self.embed.set_footer(text=f"Page {self.index + 1} of {self.total_pages} | Dates are formatted as (YYYY/MM/DD)") # Set a footer
+        self.embed.set_footer(text=f"Page {self.index + 1} of {self.total_pages} | Dates are formatted as YYYY-MM-DD") # Set a footer
         emb = self.embed.copy()
         if self.mode == 'field':
             for game in self.games[self.page_len * self.index: self.page_len * (self.index +1)]: # Get only the subset of games we're after

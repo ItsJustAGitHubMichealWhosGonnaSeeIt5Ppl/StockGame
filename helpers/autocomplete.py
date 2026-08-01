@@ -1,5 +1,7 @@
 # WRITTEN MOSTLY BY CLAUDE
 
+import logging
+
 import discord
 from discord.app_commands import Choice # Explicitly import Choice for clarity
 from discord.interactions import Interaction # Explicitly import Interaction for clarity
@@ -10,6 +12,7 @@ if TYPE_CHECKING:
     from stocks import Frontend
 
 _fe: 'Frontend | None' = None
+logger = logging.getLogger(__name__)
 
 def init_autocomplete(fe_instance: 'Frontend') -> None:
     """Inject the Frontend instance shared with the main bot module."""
@@ -85,9 +88,35 @@ async def sell_ticker_autocomplete(
     except (LookupError, AttributeError) as e:
         # User has no stocks in this game or game doesn't exist
         return []
-    except Exception as e:
+    except Exception:
         # Handle any other errors gracefully
-        print(f"Error in stock autocomplete: {e}")
+        logger.debug('Stock-pick autocomplete failed.', exc_info=True)
+        return []
+
+
+async def buy_ticker_autocomplete(
+    interaction: Interaction,
+    current: str,
+) -> list[Choice[str]]:
+    """Suggest locally cached tickers without making a market-data request."""
+    try:
+        if _fe is None:
+            return []
+
+        needle = current.lower()
+        stocks = _fe.be.get_many_stocks()
+        choices = []
+        for stock in stocks:
+            ticker = str(stock.ticker)
+            company_name = str(stock.company or '')
+            if needle not in ticker.lower() and needle not in company_name.lower():
+                continue
+            label = f"{ticker} — {company_name}" if company_name else ticker
+            choices.append(Choice(name=label[:100], value=ticker))
+        return choices[:25]
+    except LookupError:
+        return []
+    except Exception:
         return []
 
 # Autocomplete function for game_id parameter
@@ -138,9 +167,9 @@ async def game_id_autocomplete(
     except LookupError:
         # User has no games, return empty list
         return []
-    except Exception as e:
+    except Exception:
         # Handle any other errors gracefully
-        print(f"Error in autocomplete: {e}")
+        logger.debug('Game autocomplete failed.', exc_info=True)
         return []
 
 async def all_games_autocomplete(
