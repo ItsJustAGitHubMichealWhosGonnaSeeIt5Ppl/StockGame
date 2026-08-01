@@ -371,6 +371,13 @@ async def on_ready():
         logger.error('Ready event fired without an authenticated bot user.')
         return
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
+    # Recurring series are owned by the bot account so `/game-list owner:@Bot` filters them.
+    try:
+        fe.register(user_id=bot.user.id, username=bot.user.name, source='discord')
+        fe.gl.recurring_game_owner_id = bot.user.id
+        logger.info('Recurring games will be owned by bot user id %s', bot.user.id)
+    except Exception:
+        logger.exception('Failed to register bot user for recurring-game ownership')
     if not scheduled_game_update.is_running():
         scheduled_game_update.start()
     try:
@@ -619,7 +626,15 @@ async def create_game(interaction: discord.Interaction):
                     # Create a response embed for join after start
                     private_embed = discord.Embed(
                         title="Do you want your game to be private?",
-                        description="If you select 'Yes', the game ID will be hidden in the game-list command. If you select 'No', it will be visible. All private games require owner approval for new users to join. **Owners will have to run the /manage-pending command to approve or deny new users.**",
+                        description=(
+                            "If you select 'Yes', the game ID will be hidden in the game-list command. "
+                            "If you select 'No', it will be visible. All private games require owner approval "
+                            "for new users to join. **Owners will have to run the /manage-pending command to "
+                            "approve or deny new users.**\n\n"
+                            "⚠️ **DM tip:** `/invite` delivers join buttons by DM. If the invited user has "
+                            "DMs from server members turned off, private invites may not work — ask them to "
+                            "enable DMs, or share the game ID privately."
+                        ),
                         color=discord.Color.blue()
                     )
 
@@ -911,6 +926,10 @@ async def create_recurring_game(
             # embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
             embed.add_field(name="🏷️ Updates", value="alpaca", inline=True)
             embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
+            if private_game:
+                embed.set_footer(
+                    text="Private invites need DMs from this server enabled — otherwise share the game ID manually."
+                )
 
             embed.set_footer(text=f"Created by {interaction.user.display_name}")
 
@@ -1162,11 +1181,11 @@ async def manage_game(
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 #TODO fix response to command
-@bot.tree.command(name="invite", description="Invite a user to a game")
+@bot.tree.command(name="invite", description="Invite a user to a game (requires their DMs from this server)")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to invite them to",
-    user="User to invite"
+    user="User to invite (must allow DMs from server members for the invite to arrive)"
 )
 async def invite_user(
     interaction: discord.Interaction, 
@@ -2080,13 +2099,12 @@ async def game_info(
                     display_name = (member.global_name or member.name)[:15] + "~"
                 player_data['display_name'] = display_name
             except (discord.HTTPException, LookupError):
+                # Prefer live Discord profile over any stored DB display name
                 try:
-                    db_user = fe.be.get_user(info.user_id)
-                    if db_user.display_name:
-                        player_data['display_name'] = db_user.display_name[:16]
-                    else:
-                        player_data['display_name'] = f'ID({info.user_id})'
-                except LookupError:
+                    discord_user = await bot.fetch_user(info.user_id)
+                    name = discord_user.display_name or discord_user.name
+                    player_data['display_name'] = name[:16] if len(name) <= 16 else name[:15] + "~"
+                except (discord.HTTPException, LookupError):
                     player_data['display_name'] = f'ID({info.user_id})'
             
             processed_leaderboard.append(player_data)
@@ -2112,12 +2130,9 @@ async def game_info(
                 game_data['owner_name'] = owner_member.display_name or owner_member.global_name or owner_member.name
             except (discord.HTTPException, LookupError):
                 try:
-                    db_owner = fe.be.get_user(game.owner_id)
-                    if db_owner.display_name:
-                        game_data['owner_name'] = db_owner.display_name[:16]
-                    else:
-                        game_data['owner_name'] = f'ID({game.owner_id})'
-                except LookupError:
+                    owner_user = await bot.fetch_user(game.owner_id)
+                    game_data['owner_name'] = (owner_user.display_name or owner_user.name)[:16]
+                except (discord.HTTPException, LookupError):
                     game_data['owner_name'] = f'ID({game.owner_id})'
             
             generator = LeaderboardImageGenerator(theme='discord_dark')
@@ -2165,40 +2180,57 @@ async def game_info(
 # TODO max page length cant be more than 25
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
-    page_length="The length of the list per page. Defaults to 9"
+    # page_length="The length of the list per page. Defaults to 9",  # debug only
+    owner="Only show games created by this user (use the bot to list recurring games)",
 )
 async def game_list(
     interaction: discord.Interaction,
-    page_length: app_commands.Range[int, 1, 25] = 9 # 9 looks nicer than 10
+    # page_length: app_commands.Range[int, 1, 25] = 9,  # commented out; keep default below
+    owner: discord.User | None = None,
 ):
+    page_length = 9  # default page size (page_length option disabled for production)
     embed = discord.Embed()
     error = False
     try:
-        games = fe.list_games(include_open=True, include_active=True) # Only get currently running games. Does not include private games
-        
-        embed = discord.Embed(title="Currently running games", description="")
-        formatted_games = [] # 
-        for game in games: # Make a field for each game
-            formatted_games.append(( 
-                f"{game.name[:name_cutoff]}: [{game.id}]", #TODO switch this to use the simpler formatting
-                '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{updates}\n{date_range}'.format(owner_id=game.owner_id,
-                pick_info=(
-                    f'\n> **Pick date:** {game.pick_date}'
-                    if game.pick_date
-                    else '\n> **Pick date:** none — buy anytime'
+        ranked = fe.list_games_ranked(
+            include_open=True,
+            include_active=True,
+            owner_id=owner.id if owner else None,
+        )
+
+        title = "Currently running games"
+        if owner is not None:
+            title = f"Games owned by {owner.display_name}"
+        embed = discord.Embed(title=title, description="")
+        formatted_games = []
+        for game, player_count in ranked:
+            pick_line = (
+                f'> **Pick date:** {game.pick_date}'
+                if game.pick_date
+                else '> **Pick date:** buy anytime'
+            )
+            end_line = f'\n> **End date:** `{game.end_date}`' if game.end_date else ''
+            recurring_tag = ' 🔁' if game.template_id is not None else ''
+            formatted_games.append((
+                f"{game.name[:name_cutoff]}{recurring_tag}: [{game.id}]",
+                (
+                    f'> **Owner:** <@{game.owner_id}>\n'
+                    f'> **Players:** {player_count}\n'
+                    f'> **Picks:** {game.pick_count}\n'
+                    f'> **Start date:** `{game.start_date}`\n'
+                    f'{pick_line}'
+                    f'{end_line}'
                 ),
-                start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
-                updates=f'> **Updates:** `{game.update_frequency}`',
-                date_range= '> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if  game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else ''
-                    )
-                ) # Tuple of game info
-                ) # Formatted games
+            ))
         await Pagination(interaction, page_len=page_length, embed=embed, games=formatted_games, ephemeral=ephemeral_test).navigate()
 
     except LookupError as e:
         error = True
         embed.title = 'No games found'
-        embed.description = 'There are no public open or active games'
+        if owner is not None:
+            embed.description = f'There are no public open or active games owned by {owner.mention}'
+        else:
+            embed.description = 'There are no public open or active games'
         embed.color = discord.Color.red()
         
     except Exception as e:
@@ -2283,27 +2315,6 @@ async def user_stats(
 
 # ABOUT, LOGS AND HELP COMMANDS
 
-@bot.tree.command(name="change-name", description="Change your display name used in leaderboards and game info")
-@app_commands.describe(
-    name="Your new display name"
-)
-async def change_name(
-    interaction: discord.Interaction,
-    name: app_commands.Range[str, 1, 32],
-):
-    try:
-        fe.change_name(user_id=interaction.user.id, name=name)
-        await interaction.response.send_message(
-            embed=simple_embed(status='success', title='Name Changed', desc=f'Your display name is now: {name}'),
-            ephemeral=ephemeral_test,
-        )
-    except Exception as e:
-        logger.exception(f'User {interaction.user.id} failed to change name', exc_info=e)
-        await interaction.response.send_message(
-            embed=simple_embed(status='failed', title='Failed', desc='Could not change your display name.'),
-            ephemeral=ephemeral_test,
-        )
-
 @bot.tree.command(name="about", description="About the bot and its creators")
 async def about(
     interaction: discord.Interaction,
@@ -2376,7 +2387,7 @@ All commands include built-in hints and help when you run them!
 - `/create-game-advanced` - Create a new stock game without a wizard
 - `/manage-game` - Manage an existing stock game
 - `/delete-game` - For owners and admins to delete games (with confirmation)
-- `/invite` - Invite a user to a game
+- `/invite` - Invite a user to a game (needs their DMs from this server enabled)
 - `/manage-pending` - Approve or deny pending users for your private game
 - `/leave-game` - Leave a game you've joined
 
@@ -2385,11 +2396,10 @@ All commands include built-in hints and help when you run them!
 - `/buy-stock` - Buy a stock in a game
 - `/remove-stock` - Cancel a pending stock purchase (not yet owned)
 - `/my-stocks` - View your stocks in a game as a visual portfolio
-- `/change-name` - Change your display name
 
 ### Information & Stats
 - `/game-info` - View information about a game
-- `/game-list` - View a list of all public games
+- `/game-list` - View public games (optional owner filter; pick the bot to see recurring games)
 - `/my-games` - View your games and their status
 - `/user-stats` - Shows global statistics of a user. Shows yours by default
 - `/about` - About the bot and its creators
