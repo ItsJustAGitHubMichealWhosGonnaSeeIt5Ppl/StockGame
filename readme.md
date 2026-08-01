@@ -1,142 +1,90 @@
 # Stock Game
-## Overall Concept
-- Users will get a certain amount of starting money, and a set amount of stock picks.  The money will then be divided evenly between the picks
-- Historical data for each ticker will be stored from close price daily
-- Price should be saved to the second decimal
-- By default, buys will happen hourly
-- Date format: YYYY-MM-DD
-- Track the users total gain (and percent) after game completion
-- Track the users last 7 days of gain
-- Monthly recurring games
-- Winner/top places get a role
-- Overall leaderboard
-- Per user leaderboard
 
-## First Time Setup
+A Discord bot for fantasy stock-picking games inspired by [DougDoug](https://dougdoug.com/stocks). Players get starting cash and a fixed number of picks; cash is split evenly across picks. Prices come from [Alpaca](https://alpaca.markets/) market data. Games can be one-off or recurring.
 
-### Prerequisites
-- Python 3.13 installed
-- pip (Python package installer)
-- A Discord bot token (get from [Discord Developer Portal](https://discord.com/developers/applications))
+## Features
 
-### Installation Steps
+- Create and join public or private games
+- Buy stocks (optional pick deadline; otherwise buy anytime)
+- Per-game leaderboards and portfolio views
+- Recurring game templates (moderators)
+- Live price updates via Alpaca (stocks only; no crypto)
 
-1. Clone the repository
+Dates use `YYYY-MM-DD`. Prices are stored to two decimal places.
 
-2. Install required Python packages:
+## Quick start (Docker — recommended)
+
+1. Clone the repo and create a `.env` in the project root (see [Environment variables](#environment-variables)).
+2. Create the SQLite database (once):
+
    ```bash
-   pip install -r requirements.txt
-   ```
-   This will install:
-   - discord.py (Discord bot library)
-   - python-dotenv (Environment variable management)
-   - pydantic (Data validation)
-   - pytz (Timezone support)
-   - python-dateutil (Date utilities)
-   - Pillow (Image generation / leaderboards)
-   - pandas, beautifulsoup4, requests (helpers / seeding scripts)
-   - Alpaca market data via HTTP (`helpers/alpaca_client.py`; requires `ALPACA_API_KEY` / `ALPACA_SECRET_KEY`)
-
-   Contributors should install the development dependencies instead:
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
-
-**Before running the bot, ensure:**
-- **Your `.env` file has the correct Discord token**
-- Your `.env` file includes both `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` Alpaca keys
-  - Go to the [Alpaca Setup](#)
-- The database has been set up
-- You've invited the bot to your test Discord server with the necessary permissions
-
-3. Create a `.env` file in the root directory with your Discord bot token and your personal database name (ending in .db):
-   ```
-   DISCORD_TOKEN="your_discord_bot_token_here"
-   DB_NAME="test.db"
-    OWNER="123456789012345678"
-   ```
-
-4. Set up the database:
-   ```bash
+   pip install -r requirements.txt   # or use any Python 3.13 env
    python sqlite_creator_real.py
    ```
 
-### Discord Bot Setup
+3. Build and run (persist the DB under `./data`):
 
-1. Create a Discord Application:
-   - Go to [Discord Developer Portal](https://discord.com/developers/applications)
-   - Click "New Application" and give it a name
-   - Go to the "Bot" section in the left sidebar
-   - Click "Add Bot"
-   - Under "Privileged Gateway Intents", enable:
-     - MESSAGE CONTENT INTENT
-     - SERVER MEMBERS INTENT
-     - PRESENCE INTENT
-   - Click "Reset Token" to get your bot token
-   - Copy the token and add it to your `.env` file as `DISCORD_TOKEN`
-
-2. Add the bot to your server:
-   - In the Developer Portal, go to "OAuth2" → "URL Generator"
-   - Under "Scopes", select:
-     - `bot`
-     - `applications.commands`
-   - Under "Bot Permissions", select:
-     - `Send Messages`
-     - `Read Messages`
-     - `View Channels`
-     - `Use Slash Commands`
-     - `Embed Links`
-     - `Attach Files`
-     - `Read Message History`
-     - `Add Reactions`
-   - Copy the generated URL and open it in your browser
-   - Select your server and authorize the bot
-
-3. Get your Discord User ID:
-   - Enable Developer Mode in Discord (User Settings → Advanced → Developer Mode)
-   - Right-click your username and select "Copy ID"
-   - Add this ID to your `.env` file as `OWNER`
-
-4. Adding the bot to your server:
-   - Make sure you have "Manage Server" permissions in your Discord server
-   - Use the OAuth2 URL generated in step 2 to add the bot
-   - After adding, the bot should appear in your server's member list
-   - The bot will be offline until you start it using `python discord_bot.py`
-   - Once started, you should see the bot come online with a green status indicator
-   - Try using `/` in any channel to see if the bot's commands appear
-   - If commands don't appear, wait a few minutes as Discord can take time to register slash commands
-   - You can verify the bot is working by using `/game-list` or `/create-game`
-
-### Running the Bot
-
-#### Python (local)
-
-1. Run the Discord bot:
    ```bash
-   python discord_bot.py
-   ```
-
-#### Docker
-
-1. Build the image:
-   ```bash
+   mkdir -p data
    docker build -t stockgame .
+   docker run -d --env-file .env -v "$(pwd)/data:/app/data" stockgame
    ```
 
-2. Run the container (mount your `.env` and database file):
-   ```bash
-   docker run -d --env-file .env -v $(pwd)/data:/app/data stockgame
-   ```
-   The bot will look for `DB_NAME` inside `.env`; make sure your database path is relative to `/app` or mounted accordingly.
+   Use `DB_NAME=data/stockgame.db` in `.env` so the file lands on the mounted volume.
 
-Run the local quality checks with:
+## Quick start (local Python)
+
+Requires **Python 3.13**.
+
 ```bash
+git clone https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame.git
+cd StockGame
+pip install -r requirements.txt
+# create .env (see below)
+python sqlite_creator_real.py
+python discord_bot.py
+```
+
+Contributors should use `pip install -r requirements-dev.txt` instead.
+
+## Environment variables
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DISCORD_TOKEN` | Yes | Discord bot token |
+| `DB_NAME` | Yes | SQLite database path (e.g. `stockgame.db`) |
+| `OWNER` | Yes | Your numeric Discord user ID |
+| `ALPACA_API_KEY` | Yes* | Alpaca API key |
+| `ALPACA_SECRET_KEY` | Yes* | Alpaca secret key |
+
+\*The bot starts without Alpaca keys, but price updates will not work until they are set.
+
+`.env` example:
+
+```env
+DISCORD_TOKEN=your_discord_bot_token
+DB_NAME=stockgame.db
+OWNER=123456789012345678
+ALPACA_API_KEY=your_alpaca_key
+ALPACA_SECRET_KEY=your_alpaca_secret
+```
+
+## Setup guides (Wiki)
+
+Long-form setup and troubleshooting live on the [GitHub Wiki](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki). Drafts you can copy into the wiki are also in [`docs/wiki/`](docs/wiki/):
+
+| Topic | Draft |
+|-------|--------|
+| Discord app, intents, invite, command sync | [Discord Bot Setup](docs/wiki/Discord-Bot-Setup.md) |
+| Who can use commands / which channels | [Discord Integrations](docs/wiki/Discord-Integrations.md) |
+| Alpaca keys and price-data troubleshooting | [Alpaca Setup](docs/wiki/Alpaca-Setup.md) |
+| Full `.env` notes | [Environment Variables](docs/wiki/Environment-Variables.md) |
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
 python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers scripts tests
 python -m pyright
 python -m pytest -q
 ```
-
-## Contributors
-- [EpicSadFace](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl)
-- [nje331](https://github.com/nje331)
-- [TheDrewtopian](https://github.com/TheDrewtopian)
