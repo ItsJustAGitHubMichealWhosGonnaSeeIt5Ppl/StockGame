@@ -7,6 +7,13 @@ MODULE_NAME_FOR_PATCHING = "stocks"
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests
 MOCK_DATE_STR = "2025-05-21" # Fixed date for tests
 
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "live_discord: hits the real Discord API (opt-in via STOCKGAME_LIVE_CRITICAL_DM=1)",
+    )
+
 @pytest.fixture(scope="function", autouse=True)
 def mock_iso8601_fixed(mocker):
     """Mocks the _iso8601 helper for consistent timestamps in Backend methods."""

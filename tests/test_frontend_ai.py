@@ -304,17 +304,6 @@ class TestFrontend:
         assert other.change_dollars == -1_000
         assert other.change_percent == -10
 
-    # # CHANGE_NAME # #
-    def test_change_name_success(self, fe: Frontend):
-        user_id = 10 # Owner user from fixture
-        new_name = "NewDisplayName"
-
-        fe.change_name(user_id=user_id, name=new_name)
-
-        user = fe.be.get_user(user_id=user_id)
-        assert user.display_name == new_name
-
-
     # # JOIN_GAME # #
     def test_join_game_success(self, fe: Frontend):
         owner_id = 10

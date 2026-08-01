@@ -1130,6 +1130,10 @@ class GameLogic: # Might move some of the control/running actions here
         self.market_close_est = datetime.strptime(market_close_est,"%H:%M")
         self.est_offset = self._market_time_offset()
         self.alpaca = AlpacaMarketData()
+        # When set (e.g. Discord bot user id), spawned recurring games use this
+        # owner so `/game-list owner:@Bot` can filter to recurring series.
+        # Defaults to each template's owner_id when unset (tests / non-Discord).
+        self.recurring_game_owner_id: Optional[int] = None
         if not self.alpaca.configured:
             self.logger.warning(
                 'Alpaca credentials missing; stock price updates will fail until '
@@ -1265,8 +1269,13 @@ class GameLogic: # Might move some of the control/running actions here
                             months=template.game_length, days=-1
                         )
 
+                    owner_id = (
+                        self.recurring_game_owner_id
+                        if self.recurring_game_owner_id is not None
+                        else template.owner_id
+                    )
                     self.be.add_game(
-                        user_id=template.owner_id,
+                        user_id=owner_id,
                         name=game_name,
                         start_date=next_start_date,
                         end_date=end_date,
@@ -1741,7 +1750,7 @@ class Frontend: # This will be where a bot (like discord) interacts
         return game_id
        
     
-    def list_games(self, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False): 
+    def list_games(self, include_public:bool=True, include_private:bool=False, include_open:bool=True, include_active:bool=True, include_ended:bool=False, owner_id:Optional[int]=None): 
         """List games
         
         Args:
@@ -1750,11 +1759,87 @@ class Frontend: # This will be where a bot (like discord) interacts
             include_open (bool, optional): Include open games in results. Defaults to True.
             include_active (bool, optional): Include active games in results. Defaults to True.
             include_ended (bool, optional): Include ended games in results. Defaults to False.
+            owner_id (int, optional): Only games owned by this user ID.
         Returns:
             list: List of games
         """
-        games = self.be.get_many_games(include_private=include_private, include_public=include_public, include_active=include_active, include_open=include_open, include_ended=include_ended)
+        games = self.be.get_many_games(
+            include_private=include_private,
+            include_public=include_public,
+            include_active=include_active,
+            include_open=include_open,
+            include_ended=include_ended,
+            owner_id=owner_id,
+        )
         return games
+
+    @staticmethod
+    def game_is_time_prominent(game: dtv.Game, today: date) -> bool:
+        """Whether a game is 'nearby' for /game-list ranking.
+
+        Start date within ±1 month of today, and pick deadline is either unset
+        (buy anytime) or still upcoming within the next month (not past).
+        """
+        month_ago = today - relativedelta(months=1)
+        month_ahead = today + relativedelta(months=1)
+        if not (month_ago <= game.start_date <= month_ahead):
+            return False
+        if game.pick_date is None:
+            return True
+        return today <= game.pick_date <= month_ahead
+
+    def list_games_ranked(
+        self,
+        include_public: bool = True,
+        include_private: bool = False,
+        include_open: bool = True,
+        include_active: bool = True,
+        include_ended: bool = False,
+        owner_id: Optional[int] = None,
+        today: Optional[date] = None,
+    ) -> list[tuple[dtv.Game, int]]:
+        """List games ordered for Discord ``/game-list``.
+
+        Order:
+        1. Recurring games (``template_id`` set), then non-recurring
+        2. Within each group: time-prominent games first, then the rest
+        3. Within each prominence bucket: higher player count first
+
+        Returns:
+            list of ``(game, player_count)`` where player_count is active+pending.
+        """
+        games = self.list_games(
+            include_public=include_public,
+            include_private=include_private,
+            include_open=include_open,
+            include_active=include_active,
+            include_ended=include_ended,
+            owner_id=owner_id,
+        )
+        if today is None:
+            today = self.gl._today_et()
+
+        scored: list[tuple[dtv.Game, int]] = []
+        for game in games:
+            try:
+                participants = self.be.get_many_participants(game_id=game.id)
+                player_count = sum(
+                    1 for p in participants if p.status in ('active', 'pending')
+                )
+            except LookupError:
+                player_count = 0
+            scored.append((game, player_count))
+
+        def bucket_key(item: tuple[dtv.Game, int]) -> tuple[int, int]:
+            game, player_count = item
+            prominent = 0 if self.game_is_time_prominent(game, today) else 1
+            return (prominent, -player_count)
+
+        recurring = [item for item in scored if item[0].template_id is not None]
+        others = [item for item in scored if item[0].template_id is None]
+        recurring.sort(key=bucket_key)
+        others.sort(key=bucket_key)
+        return recurring + others
     
     def game_info(self, game_id:int | str, show_leaderboard:bool=True) -> dtv.GameInfo: 
         """Get information and leaderboard for a game.
@@ -1814,20 +1899,6 @@ class Frontend: # This will be where a bot (like discord) interacts
         except bexc.UserExistsError: # user already exists
             return "User already registered"
 
-    def change_name(self, user_id:int, name:str):
-        """Change your display name (nickname).
-
-        Args:
-            user_id (int): User ID.
-            name (str): New name.
-        
-        Raises:
-            update_user > bexc.DoesntExistError: Attempted to update a user who doesn't exist.
-        """
-         
-        self.register(user_id) # Must try to register user
-        self.be.update_user(user_id=int(user_id), display_name=str(name)) 
-    
     def join_game(self, user_id:int, game_id:int | str, name:Optional[str]=None):
         """Join a game.
 

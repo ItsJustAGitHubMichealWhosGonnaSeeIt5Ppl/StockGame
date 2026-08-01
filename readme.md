@@ -49,6 +49,8 @@ Contributors should use `pip install -r requirements-dev.txt` instead.
 
 ## Environment variables
 
+‼️‼️**For more assistance with `.env` keys [visit the wiki.](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki)**
+
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `DISCORD_TOKEN` | Yes | Discord bot token |
@@ -69,16 +71,15 @@ ALPACA_API_KEY=your_alpaca_key
 ALPACA_SECRET_KEY=your_alpaca_secret
 ```
 
-## Setup guides (Wiki)
+## Discord Integrations (important)
 
-Long-form setup and troubleshooting live on the [GitHub Wiki](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki). Drafts you can copy into the wiki are also in [`docs/wiki/`](docs/wiki/):
+After the bot is invited, **configure command permissions in Discord** so only the right roles and channels can use sensitive commands (`/create-recurring-game`, `/manage-recurring-games`, `/update`, `/logs`, etc.).
 
-| Topic | Draft |
-|-------|--------|
-| Discord app, intents, invite, command sync | [Discord Bot Setup](docs/wiki/Discord-Bot-Setup.md) |
-| Who can use commands / which channels | [Discord Integrations](docs/wiki/Discord-Integrations.md) |
-| Alpaca keys and price-data troubleshooting | [Alpaca Setup](docs/wiki/Alpaca-Setup.md) |
-| Full `.env` notes | [Environment Variables](docs/wiki/Environment-Variables.md) |
+Do this in **Server Settings → Integrations → your bot → Command Permissions**. That is the main way to control access. The bot still double-checks Discord **Administrator** (and the configured `OWNER`) if someone can invoke a privileged command.
+
+Step-by-step with screenshots: [Discord Integrations wiki](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki/Discord-Integrations)
+
+Other setup guides: [Wiki home](https://github.com/ItsJustAGitHubMichealWhosGonnaSeeIt5Ppl/StockGame/wiki)
 
 ## Development
 
