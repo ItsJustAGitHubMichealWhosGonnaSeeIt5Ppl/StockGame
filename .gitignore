@@ -185,6 +185,7 @@ temp*/
 
 .DS_Store
 **.db
+**.bak
 ./settings.json
 settings.json
 testPIL.py

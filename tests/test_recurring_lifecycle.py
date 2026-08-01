@@ -495,3 +495,217 @@ def test_unique_name_collision_chain(be, mocker):
     spawned = _spawned(be, owner_id)
     assert len(spawned) == 1
     assert spawned[0].name == "series #3"
+
+
+# ---------------------------------------------------------------------------
+# Stop / resume edge cases (manage-recurring-games behavior at Backend layer)
+# ---------------------------------------------------------------------------
+
+
+def test_stop_before_first_spawn_never_creates_until_resume(be, mocker):
+    """Disabled from day one: no games until Resume, then catch-up applies."""
+    owner_id = 740
+    be.add_user(owner_id, "testing")
+    tpl = _template(
+        be,
+        owner_id,
+        name="pre-stopped",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+        game_length=1,
+    )
+    be.update_game_template(template_id=tpl.id, status="disabled")
+
+    logic = _logic(be, mocker, date(2026, 3, 1))
+    logic.recurring_games()
+    with pytest.raises(LookupError):
+        be.get_many_games(owner_id=owner_id, include_private=True)
+
+    be.update_game_template(template_id=tpl.id, status="enabled")
+    logic.recurring_games()
+    starts = sorted(g.start_date for g in _spawned(be, owner_id, include_ended=True))
+    assert starts == [date(2026, 1, 1), date(2026, 2, 1), date(2026, 3, 1)]
+
+
+def test_resume_after_multi_month_gap_catches_up_all_missed(be, mocker):
+    """While stopped, periods are skipped; Resume creates every overdue start."""
+    owner_id = 741
+    be.add_user(owner_id, "testing")
+    tpl = _template(
+        be,
+        owner_id,
+        name="gap-catchup",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+        game_length=1,
+    )
+    logic = _logic(be, mocker, date(2026, 1, 1))
+    logic.recurring_games()
+    assert len(_spawned(be, owner_id)) == 1
+
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    for day in (date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)):
+        mocker.patch.object(logic, "_today_et", return_value=day)
+        logic.recurring_games()
+    assert len(_spawned(be, owner_id, include_ended=True)) == 1
+
+    be.update_game_template(template_id=tpl.id, status="enabled")
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 4, 1))
+    logic.recurring_games()
+    starts = sorted(g.start_date for g in _spawned(be, owner_id, include_ended=True))
+    assert starts == [
+        date(2026, 1, 1),
+        date(2026, 2, 1),
+        date(2026, 3, 1),
+        date(2026, 4, 1),
+    ]
+
+
+def test_resume_when_next_period_not_due_creates_nothing(be, mocker):
+    owner_id = 742
+    be.add_user(owner_id, "testing")
+    tpl = _template(
+        be,
+        owner_id,
+        name="not-due-yet",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+        game_length=1,
+    )
+    logic = _logic(be, mocker, date(2026, 1, 1))
+    logic.recurring_games()
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    be.update_game_template(template_id=tpl.id, status="enabled")
+
+    # Mid-month: Feb occurrence not due until Feb 1
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 1, 15))
+    logic.recurring_games()
+    assert len(_spawned(be, owner_id)) == 1
+
+
+def test_stop_and_resume_are_idempotent(be, mocker):
+    owner_id = 743
+    be.add_user(owner_id, "testing")
+    tpl = _template(be, owner_id, name="idem-stop", start_date="2026-06-01")
+
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    assert be.get_game_template(tpl.id).status == "disabled"
+
+    be.update_game_template(template_id=tpl.id, status="enabled")
+    be.update_game_template(template_id=tpl.id, status="enabled")
+    assert be.get_game_template(tpl.id).status == "enabled"
+
+    logic = _logic(be, mocker, date(2026, 6, 1))
+    logic.recurring_games()
+    assert len(_spawned(be, owner_id)) == 1
+
+
+def test_disabled_sibling_does_not_block_enabled_template(be, mocker):
+    owner_id = 744
+    be.add_user(owner_id, "testing")
+    stopped = _template(
+        be,
+        owner_id,
+        name="sibling-stopped",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+    )
+    be.update_game_template(template_id=stopped.id, status="disabled")
+    _template(
+        be,
+        owner_id,
+        name="sibling-live",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+    )
+
+    logic = _logic(be, mocker, date(2026, 1, 1))
+    logic.recurring_games()
+    spawned = _spawned(be, owner_id)
+    assert len(spawned) == 1
+    assert spawned[0].name == "sibling-live"
+    assert spawned[0].template_id != stopped.id
+
+
+def test_manage_listing_includes_enabled_and_disabled(be):
+    """manage-recurring-games loads status=None so Stopped templates stay visible."""
+    owner_id = 745
+    be.add_user(owner_id, "testing")
+    live = _template(be, owner_id, name="list-live", start_date="2026-01-01")
+    stopped = _template(be, owner_id, name="list-stopped", start_date="2026-02-01")
+    be.update_game_template(template_id=stopped.id, status="disabled")
+
+    all_tpls = be.get_many_game_templates(status=None)
+    by_id = {t.id: t for t in all_tpls}
+    assert by_id[live.id].status == "enabled"
+    assert by_id[stopped.id].status == "disabled"
+
+    only_enabled = be.get_many_game_templates(status="enabled")
+    assert all(t.status == "enabled" for t in only_enabled)
+    assert stopped.id not in {t.id for t in only_enabled}
+
+
+def test_stop_then_delete_keeps_existing_game_running(be, mocker):
+    owner_id = 746
+    be.add_user(owner_id, "testing")
+    tpl = _template(
+        be,
+        owner_id,
+        name="stop-then-delete",
+        start_date="2026-01-01",
+        create_days_in_advance=0,
+        recurring_period=1,
+        game_length=1,
+    )
+    logic = _logic(be, mocker, date(2026, 1, 1))
+    logic.recurring_games()
+    game = _spawned(be, owner_id)[0]
+
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    be.remove_game_template(tpl.id)
+
+    refreshed = be.get_game(game.id)
+    assert refreshed.template_id is None
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 1, 1))
+    logic.update_game_statuses()
+    assert be.get_game(game.id).status == "active"
+
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 3, 1))
+    logic.recurring_games()
+    assert len(be.get_many_games(owner_id=owner_id, include_private=True, include_ended=True)) == 1
+
+
+def test_resume_respects_create_days_in_advance_after_stop(be, mocker):
+    owner_id = 747
+    be.add_user(owner_id, "testing")
+    tpl = _template(
+        be,
+        owner_id,
+        name="advance-resume",
+        start_date="2026-05-10",
+        create_days_in_advance=5,
+        recurring_period=1,
+        game_length=1,
+    )
+    logic = _logic(be, mocker, date(2026, 5, 5))
+    logic.recurring_games()
+    assert len(_spawned(be, owner_id)) == 1
+
+    be.update_game_template(template_id=tpl.id, status="disabled")
+    be.update_game_template(template_id=tpl.id, status="enabled")
+
+    # June start is 2026-06-10; with 5 days advance, due on 2026-06-05
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 6, 4))
+    logic.recurring_games()
+    assert len(_spawned(be, owner_id)) == 1
+
+    mocker.patch.object(logic, "_today_et", return_value=date(2026, 6, 5))
+    logic.recurring_games()
+    starts = sorted(g.start_date for g in _spawned(be, owner_id))
+    assert starts == [date(2026, 5, 10), date(2026, 6, 10)]
