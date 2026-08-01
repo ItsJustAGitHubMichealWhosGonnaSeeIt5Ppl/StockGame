@@ -186,3 +186,27 @@ def test_find_stock_raises_when_alpaca_misses(be, mocker):
     mocker.patch.object(logic.alpaca, "get_us_equity", side_effect=LookupError("nope"))
     with pytest.raises(ValueError, match="Unable to find stock"):
         logic.find_stock("NOSUCH")
+
+
+def test_find_stock_falls_back_to_market_data_when_assets_unauthorized(be, mocker):
+    logic = GameLogic(be.sql.db)
+    mocker.patch.object(
+        logic.alpaca,
+        "get_us_equity",
+        side_effect=RuntimeError("Alpaca trading API unauthorized (401)"),
+    )
+    mocker.patch.object(logic.alpaca, "equity_is_priced", return_value=True)
+    assert logic.find_stock("RACE") == "RACE"
+    assert be.get_stock("RACE").ticker == "RACE"
+
+
+def test_find_stock_fallback_still_fails_when_unpriced(be, mocker):
+    logic = GameLogic(be.sql.db)
+    mocker.patch.object(
+        logic.alpaca,
+        "get_us_equity",
+        side_effect=RuntimeError("Alpaca trading API unauthorized (401)"),
+    )
+    mocker.patch.object(logic.alpaca, "equity_is_priced", return_value=False)
+    with pytest.raises(ValueError, match="Unable to find stock"):
+        logic.find_stock("FAKE")

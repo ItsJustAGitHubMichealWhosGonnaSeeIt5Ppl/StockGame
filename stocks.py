@@ -1561,6 +1561,10 @@ class GameLogic: # Might move some of the control/running actions here
     def find_stock(self, ticker:str) -> str: 
         """Find and add a US equity to the database via Alpaca.
 
+        Prefers the trading ``/v2/assets`` metadata endpoint. If that API is
+        unavailable (common with market-data-only keys → HTTP 401), falls back to
+        verifying the symbol via the market-data snapshot feed.
+
         Args:
             ticker (str): Stock ticker.  Eg: 'MSFT' or 'BRK.B'.
 
@@ -1582,15 +1586,32 @@ class GameLogic: # Might move some of the control/running actions here
             except LookupError:
                 pass
 
+        exchange = "UNKNOWN"
+        company_name = db_ticker
         try:
             asset = self.alpaca.get_us_equity(alpaca_ticker)
+            exchange = str(asset.get("exchange") or "UNKNOWN")
+            company_name = str(asset.get("name") or db_ticker)
+        except ValueError:
+            # Explicitly not tradeable (crypto, inactive, etc.)
+            raise
         except LookupError as e:
             raise ValueError("Unable to find stock") from e
-        except RuntimeError as e:
-            raise ValueError("Unable to find stock") from e
+        except Exception as e:
+            # Trading API often 401s with data-only keys; price feed still works.
+            self.logger.warning(
+                "Alpaca asset lookup failed for %s (%s); verifying via market data",
+                alpaca_ticker,
+                e,
+            )
+            try:
+                if not self.alpaca.equity_is_priced(db_ticker):
+                    raise ValueError("Unable to find stock") from e
+            except ValueError:
+                raise
+            except Exception as price_exc:
+                raise ValueError("Unable to find stock") from price_exc
 
-        exchange = str(asset.get("exchange") or "UNKNOWN")
-        company_name = str(asset.get("name") or db_ticker)
         self.be.add_stock(
             ticker=db_ticker,
             exchange=exchange,

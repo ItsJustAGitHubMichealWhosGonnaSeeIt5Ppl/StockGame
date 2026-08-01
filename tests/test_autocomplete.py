@@ -75,7 +75,7 @@ def test_buy_ticker_autocomplete_works_when_db_empty():
 
     choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "TSLA"))
 
-    assert [(c.name, c.value) for c in choices] == [("TSLA (verify on buy)", "TSLA")]
+    assert [(c.name, c.value) for c in choices] == [("TSLA", "TSLA")]
 
 
 def test_buy_ticker_autocomplete_normalizes_class_share():

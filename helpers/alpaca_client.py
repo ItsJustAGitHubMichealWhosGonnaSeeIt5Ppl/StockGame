@@ -105,18 +105,23 @@ class AlpacaMarketData:
 
     def get_us_equity(self, ticker: str) -> dict[str, Any]:
         """
-        Look up a US equity asset on Alpaca.
+        Look up a US equity asset on Alpaca's trading API.
 
         Raises:
             LookupError: Symbol not found.
             ValueError: Not an active tradable US equity (e.g. crypto).
-            RuntimeError: Missing credentials.
+            RuntimeError: Missing credentials or trading API unauthorized/unavailable.
         """
         self._require_configured()
         symbol = to_alpaca_symbol(ticker)
         r = self._get(f"{self.trading_base}/v2/assets/{quote(symbol, safe='')}")
         if r.status_code == 404:
             raise LookupError(f"Unable to find stock: {ticker}")
+        if r.status_code in (401, 403):
+            raise RuntimeError(
+                f"Alpaca trading API unauthorized ({r.status_code}); "
+                "market-data keys cannot use /v2/assets"
+            )
         r.raise_for_status()
         asset = r.json()
         if not isinstance(asset, dict):
@@ -129,6 +134,12 @@ class AlpacaMarketData:
             raise ValueError("Stock is not tradeable")
 
         return asset
+
+    def equity_is_priced(self, ticker: str) -> bool:
+        """True if market data returns a usable price for this symbol."""
+        self._require_configured()
+        prices = self.get_latest_prices([to_db_ticker(ticker)])
+        return to_db_ticker(ticker) in prices
 
     def fetch_snapshots(self, symbols: list[str]) -> dict[str, Any]:
         """Fetch IEX snapshots for a batch of Alpaca symbols."""

@@ -130,7 +130,8 @@ async def buy_ticker_autocomplete(
         typed = _normalize_typed_ticker(current)
         if typed:
             # First choice = exactly what the user typed (may not be in DB yet).
-            choices.append(Choice(name=f"{typed} (verify on buy)", value=typed))
+            # Discord requires selecting a choice; label stays the bare ticker.
+            choices.append(Choice(name=typed, value=typed))
             seen.add(typed)
 
         needle = current.strip().lower()
