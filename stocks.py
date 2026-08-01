@@ -1358,9 +1358,22 @@ class GameLogic: # Might move some of the control/running actions here
             self.logger.exception('Alpaca price fetch failed', exc_info=e)
             return
 
-        # Floor to the minute so frequent polls don't collide on UNIQUE(stock_id, datetime)
+        requested = {t.upper() for t in tickers}
+        received = {t.upper() for t in prices}
+        missing_tickers = sorted(requested - received)
+        if missing_tickers:
+            self.logger.error(
+                'Price update dropped %s/%s tickers after Alpaca retries: %s',
+                len(missing_tickers),
+                len(requested),
+                ', '.join(missing_tickers[:50]) + ('...' if len(missing_tickers) > 50 else ''),
+            )
+
+        # Floor to the minute so repeated polls in the same minute don't collide
+        # on UNIQUE(stock_id, datetime). 15-minute schedule still fits this.
         price_dt = datetime.now().strftime("%Y-%m-%d %H:%M:00")
         updated = 0
+        write_failures: list[str] = []
         for ticker, price in prices.items():
             try:
                 self.be.add_stock_price(ticker_or_id=ticker, price=price, datetime=price_dt)
@@ -1372,15 +1385,24 @@ class GameLogic: # Might move some of the control/running actions here
                 blob = f'{e} {reason}'.upper()
                 if 'UNIQUE' in blob or 'CONSTRAINT' in blob:
                     self.logger.debug('Price already stored for %s at %s', ticker, price_dt)
+                    updated += 1  # already present this minute — not a drop
                 else:
+                    write_failures.append(ticker)
                     self.logger.exception('Failed to update price for %s', ticker, exc_info=e)
 
-        missing = len(tickers) - len(prices)
+        if write_failures:
+            self.logger.error(
+                'Failed to persist prices for %s ticker(s): %s',
+                len(write_failures),
+                ', '.join(write_failures[:50]),
+            )
+
         self.logger.info(
-            'Alpaca price update: %s/%s tickers priced (%s missing from feed) at %s',
+            'Alpaca price update: %s/%s tickers priced (%s missing from feed, %s write failures) at %s',
             updated,
             len(tickers),
-            missing,
+            len(missing_tickers),
+            len(write_failures),
             price_dt,
         )
     
