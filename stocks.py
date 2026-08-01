@@ -563,7 +563,7 @@ class Backend:
     # # GAME TEMPLATE ACTIONS # #
     def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca'):
         #TODO support basic variables in the game name
-        if start_date and not self._validate_date(start_date):
+        if not start_date or not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
         if recurring_period < 1:
             raise ValueError('`recurring_period` must be at least 1.')

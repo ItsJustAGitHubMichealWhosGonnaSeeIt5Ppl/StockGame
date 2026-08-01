@@ -6,10 +6,11 @@
 # BUILT-IN
 from datetime import datetime, timedelta
 import asyncio
+import io
 import logging
 import os
 import sys
-from typing import Any, Mapping, Optional, cast # 3.13 +
+from typing import Any, Literal, Mapping, Optional, cast # 3.13 +
 
 # EXTERNAL
 import discord
@@ -22,6 +23,12 @@ from dotenv import load_dotenv
 from helpers.datatype_validation import GameLeaderboard
 from helpers.views import Pagination, LeaderboardImageGenerator, StockPortfolioImageGenerator
 import helpers.autocomplete as ac
+from helpers.logging_setup import (
+    attach_critical_dm_bot,
+    flush_critical_dm_queue,
+    latest_log_path,
+    setup_app_logging,
+)
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
 
@@ -52,28 +59,7 @@ ephemeral_test = True # Set to False for testing, True for production
 name_cutoff = 25 # Cut names off at 25 characters
 dev_role_id = 1412173045350666271
 
-# Logger thing
-now = datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
-def setup_logging(level): 
-    global console, logger
-    frmt = logging.Formatter(fmt='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S') #Format that I like
-    logger = logging.getLogger('DiscordBot') # Logger name
-    console = logging.StreamHandler(stream=sys.stderr)
-    console.setLevel(logging.DEBUG) 
-    console.setFormatter(frmt)
-    logger.addHandler(console)
-    
-    try:
-        os.mkdir('logs')
-    except FileExistsError:
-        pass # Folder already exists
-    
-    logging.basicConfig(filename=f'logs/stock_game{now}.log',filemode='w',
-        format='%(asctime)s %(name)s %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
-        level=logging.DEBUG)
-    logger.setLevel(level)
-    
-setup_logging(level=logging.DEBUG) # debug for now
+logger = setup_app_logging(console_level=logging.INFO, root_level=logging.DEBUG)
 
 def has_permission(user:discord.member.Member):
     """Check if a user has permission to create/manage games
@@ -366,6 +352,8 @@ async def wait_for_scheduled_update():
 @bot.event
 async def on_ready():
     """Prints a message to the console when the bot is online and syncs slash commands."""
+    attach_critical_dm_bot(bot)
+    await flush_critical_dm_queue()
     if bot.user is None:
         logger.error('Ready event fired without an authenticated bot user.')
         return
@@ -2311,14 +2299,35 @@ async def about(
 
 @bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
 async def logs(
-    interaction: discord.Interaction,
+  interaction: discord.Interaction,
+  kind: Literal['debug', 'error'] = 'debug',
 ):
     
     if is_moderator(interaction): # Check if user is an admin
         title = "Logs"
         status = 'success'
-        logfile = discord.File(fp=f'logs/stock_game{now}.log', filename='log-latest.log')
-        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=''), file=logfile, ephemeral=ephemeral_test)
+        path = latest_log_path(kind)
+        if path is None or not os.path.isfile(path):
+            await interaction.response.send_message(
+                embed=simple_embed(status='failed', title='No Logs', desc=f'No {kind} log file found yet.'),
+                ephemeral=True,
+            )
+            return
+        # Discord attachment limit ~25MB; truncate from end if needed for safety
+        max_bytes = 8 * 1024 * 1024
+        size = os.path.getsize(path)
+        if size > max_bytes:
+            with open(path, 'rb') as f:
+                f.seek(size - max_bytes)
+                data = f.read()
+            logfile = discord.File(fp=io.BytesIO(data), filename=f'log-{kind}-latest.log')
+        else:
+            logfile = discord.File(fp=path, filename=f'log-{kind}-latest.log')
+        await interaction.response.send_message(
+            embed=simple_embed(status=status, title=title, desc=f'Sending latest {kind} log.'),
+            file=logfile,
+            ephemeral=ephemeral_test,
+        )
 
     else:
         title = "Not Allowed"
@@ -2379,12 +2388,20 @@ Use `/help` to see this message again, or contact a moderator if you encounter a
 if __name__ == '__main__':
     if TOKEN:
         try:
-            bot.run(TOKEN)
+            attach_critical_dm_bot(bot)
+            bot.run(TOKEN, log_handler=None)
         except discord.errors.LoginFailure:
-            logger.exception("Login Failed: Improper token has been passed.")
+            logger.critical(
+                "Discord login failed: invalid DISCORD_TOKEN. Check .env / secrets.",
+                exc_info=True,
+            )
         except discord.errors.PrivilegedIntentsRequired:
-            logger.exception("Privileged Intents Required: Make sure Message Content Intent is enabled on the Discord Developer Portal.")
+            logger.critical(
+                "Discord privileged intents required. Enable Message Content / Members "
+                "in the Discord Developer Portal.",
+                exc_info=True,
+            )
         except Exception as e:
-            logger.exception(f"An error occurred while running the bot: {e}")
+            logger.critical("Bot crashed while starting/running: %s", e, exc_info=True)
     else:
-        logger.error("DISCORD_TOKEN environment variable not found.  Set DISCORD_TOKEN environment variable before running.")
+        logger.critical("DISCORD_TOKEN environment variable not found. Bot cannot start.")

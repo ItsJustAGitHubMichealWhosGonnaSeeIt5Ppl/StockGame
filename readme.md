@@ -1,23 +1,16 @@
 # Stock Game
-DEVELOPMENT BRANCH
 ## Overall Concept
 - Users will get a certain amount of starting money, and a set amount of stock picks.  The money will then be divided evenly between the picks
 - Historical data for each ticker will be stored from close price daily
 - Price should be saved to the second decimal
-- By default, buys will happen at the end of each day (same as tracking)
+- By default, buys will happen hourly
 - Date format: YYYY-MM-DD
-- Track the users total gain (and percent)
+- Track the users total gain (and percent) after game completion
 - Track the users last 7 days of gain
-- Monthly recurring games,
-- Winner/top places get a role,
-- Overall leaderboard,
+- Monthly recurring games
+- Winner/top places get a role
+- Overall leaderboard
 - Per user leaderboard
-
-### Additional ideas
-- Draft style picks - users cannot pick the same stocks
-- Rolling 12 month start to allow more people to join
-- Multiple games (leagues) allowed
-- If mid-game sells are allowed, use a ticker called "CASH" or something?
 
 ## First Time Setup
 
@@ -48,6 +41,13 @@ DEVELOPMENT BRANCH
    ```bash
    pip install -r requirements-dev.txt
    ```
+
+**Before running the bot, ensure:**
+- **Your `.env` file has the correct Discord token**
+- Your `.env` file includes both `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` Alpaca keys
+  - Go to the [Alpaca Setup](#)
+- The database has been set up
+- You've invited the bot to your test Discord server with the necessary permissions
 
 3. Create a `.env` file in the root directory with your Discord bot token and your personal database name (ending in .db):
    ```
@@ -128,11 +128,6 @@ DEVELOPMENT BRANCH
    docker run -d --env-file .env -v $(pwd)/data:/app/data stockgame
    ```
    The bot will look for `DB_NAME` inside `.env`; make sure your database path is relative to `/app` or mounted accordingly.
-
-Before running the bot, ensure:
-- Your `.env` file has the correct Discord token
-- The database has been set up
-- You've invited the bot to your test Discord server with the necessary permissions
 
 Run the local quality checks with:
 ```bash
