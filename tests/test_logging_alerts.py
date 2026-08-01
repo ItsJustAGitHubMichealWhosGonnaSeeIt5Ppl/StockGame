@@ -1,12 +1,23 @@
-"""Logging setup, dual files, and CRITICAL Discord DM routing."""
+"""Logging setup, dual files, and CRITICAL Discord DM routing.
+
+Unit tests mock Discord. To receive a real DM on Discord, run the live test:
+
+  set STOCKGAME_LIVE_CRITICAL_DM=1
+  python -m pytest tests/test_logging_alerts.py::test_live_critical_dm_to_allowlisted_user -v
+
+Requires DISCORD_TOKEN in .env, and that you share a server with the bot
+(and allow DMs from server members).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from dotenv import load_dotenv
 
 from helpers.logging_setup import (
     CRITICAL_ALERT_USER_IDS,
@@ -274,3 +285,91 @@ def test_prepare_log_for_upload_truncates(tmp_path):
 
 def test_latest_log_path_none_when_missing(tmp_path):
     assert latest_log_path("debug", log_dir=str(tmp_path / "empty")) is None
+
+
+@pytest.mark.live_discord
+def test_live_critical_dm_to_allowlisted_user(tmp_path):
+    """Opt-in: log CRITICAL with a real Discord bot and DM the allowlisted user.
+
+    Skipped unless STOCKGAME_LIVE_CRITICAL_DM=1. Uses DISCORD_TOKEN from the
+    environment / .env. You should get a Discord DM from the bot.
+    """
+    from pathlib import Path
+
+    # Fixture chdirs into tmp_path; load .env from the repo root explicitly.
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+    if os.getenv("STOCKGAME_LIVE_CRITICAL_DM", "").strip() != "1":
+        pytest.skip(
+            "Opt-in live Discord DM test. Run with STOCKGAME_LIVE_CRITICAL_DM=1 "
+            "and a valid DISCORD_TOKEN (bot must share a server with the allowlisted user)."
+        )
+
+    token = (os.getenv("DISCORD_TOKEN") or "").strip()
+    if not token:
+        pytest.skip("DISCORD_TOKEN is required for the live CRITICAL DM test.")
+
+    import discord
+    from discord.ext import commands
+
+    setup_app_logging(
+        log_dir=str(tmp_path / "logs"),
+        force=True,
+        console_level=logging.INFO,
+    )
+
+    intents = discord.Intents.default()
+    bot = commands.Bot(command_prefix="!", intents=intents)
+    attach_critical_dm_bot(bot)
+
+    # Queue before ready — same path as production startup failures
+    live_message = (
+        "LIVE TEST CRITICAL from tests/test_logging_alerts.py — "
+        "safe to ignore; confirms Discord DM alerts work."
+    )
+    logging.getLogger("LiveCriticalDM").critical(live_message)
+
+    handler = get_critical_handler()
+    assert handler is not None
+    assert len(handler._pending) >= 1
+
+    errors: list[BaseException] = []
+    delivered = {"ok": False}
+
+    @bot.event
+    async def on_ready():
+        try:
+            user = await bot.fetch_user(ALLOWED_CRITICAL_USER)
+            assert user.id == ALLOWED_CRITICAL_USER
+
+            # Production path: queued CRITICAL → flush while ready
+            await flush_critical_dm_queue()
+
+            # Direct send so this test fails hard if Discord rejects the DM
+            # (CriticalDmHandler._deliver swallows send errors into the error log).
+            await user.send(
+                "**CRITICAL alert** (live pytest)\n"
+                f"```\n{live_message}\n```"
+            )
+            delivered["ok"] = True
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            await bot.close()
+
+    bot.run(token, log_handler=None)
+
+    assert not errors, (
+        f"Live CRITICAL DM failed: {errors!r}\n"
+        "Common causes: bot does not share a server with that user, "
+        "or the user blocks DMs from server members."
+    )
+    assert delivered["ok"] is True
+    assert handler._pending == []
+
+    error_path = latest_log_path("error", log_dir=str(tmp_path / "logs"))
+    if error_path is not None:
+        error_text = error_path.read_text(encoding="utf-8")
+        assert "Failed to DM CRITICAL alert" not in error_text, (
+            "Handler logged a DM failure during flush:\n" + error_text
+        )

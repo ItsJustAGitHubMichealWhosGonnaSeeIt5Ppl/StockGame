@@ -57,26 +57,39 @@ intents.members = True
 # Testing variables
 ephemeral_test = True # Set to False for testing, True for production
 name_cutoff = 25 # Cut names off at 25 characters
+# Legacy optional fallback only. Prefer Discord Server Settings → Integrations
+# to decide who can see/run sensitive commands (see wiki: Discord Integrations).
 dev_role_id = 1412173045350666271
 
 logger = setup_app_logging(console_level=logging.INFO, root_level=logging.DEBUG)
 
-def has_permission(user:discord.member.Member):
-    """Check if a user has permission to create/manage games
-    
-    Currently only checks for admin
+def has_permission(user: discord.Member) -> bool:
+    """In-bot safety check for privileged actions.
+
+    Primary access control should be Discord **Integrations** (who can invoke
+    the slash command at all). This function is a secondary gate:
+
+    1. Guild **Administrator** permission (preferred in-bot check)
+    2. Optional hardcoded ``dev_role_id`` (legacy; kept for compatibility)
 
     Args:
-        user (discord.member.Member): Member (user) object.
-        
+        user: Guild member running the command.
+
     Returns:
-        bool: True if allowed
+        True if the member passes the in-bot checks.
     """
-    
-    return user.guild_permissions.administrator or dev_role_id in [role.id for role in user.roles]
+    if user.guild_permissions.administrator:
+        return True
+    # Legacy role fallback — not the main reliance; Integrations should gate access.
+    return any(role.id == dev_role_id for role in user.roles)
 
 def is_moderator(interaction: discord.Interaction) -> bool:
-    """Return whether the interaction author may run moderator commands."""
+    """Whether the caller may run privileged bot actions.
+
+    Who can *see* these commands should be configured via Discord Integrations.
+    This check still runs if someone can invoke the command: bot OWNER, then
+    Administrator (or the legacy ``dev_role_id`` fallback).
+    """
     if interaction.user.id == OWNER_ID:
         return True
     return isinstance(interaction.user, discord.Member) and has_permission(interaction.user)
@@ -776,7 +789,7 @@ async def create_game(interaction: discord.Interaction):
     # Set the button callback
     game_creation_wizard_start.callback = game_creation_wizard_start_callback    
 
-@bot.tree.command(name="create-recurring-game", description="Create a recurring game template (Moderator Only)")
+@bot.tree.command(name="create-recurring-game", description="Create a recurring game template (restrict via Integrations; admins only)")
 @app_commands.describe(
     name="Name of the game template",
     start_date="First game start date (YYYY-MM-DD). Later games repeat monthly from this day",
@@ -811,7 +824,11 @@ async def create_recurring_game(
         await interaction.response.defer(ephemeral=ephemeral_test)
 
         if not is_moderator(interaction):
-            await interaction.followup.send("You do not have permission to create recurring games.", ephemeral=True)
+            await interaction.followup.send(
+                "You do not have permission to create recurring games. "
+                "Ask a server admin to grant access via Integrations, or use an Administrator account.",
+                ephemeral=True,
+            )
             return
 
 
@@ -1645,12 +1662,13 @@ async def leave_game(
             ephemeral=ephemeral_test,
         )
 
-@bot.tree.command(name="manage-recurring-games", description="Browse, stop, or delete recurring game templates (Moderator Only)")
+@bot.tree.command(name="manage-recurring-games", description="Browse, stop, or delete recurring templates (restrict via Integrations; admins only)")
 async def manage_recurring_games(interaction: discord.Interaction):
     """Paginate through your recurring templates with stop/delete controls."""
     if not is_moderator(interaction):
         await interaction.response.send_message(
-            "You do not have permission to manage recurring games.",
+            "You do not have permission to manage recurring games. "
+            "Ask a server admin to grant access via Integrations, or use an Administrator account.",
             ephemeral=True,
         )
         return
@@ -1690,7 +1708,7 @@ async def manage_recurring_games(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="update", description="Force-update all stock prices and game portfolios (Moderator Only)")
+@bot.tree.command(name="update", description="Force-update all stock prices and portfolios (restrict via Integrations; admins only)")
 @app_commands.describe(
     # A future command option may expose targeted updates; the backend supports it.
 )
@@ -1702,7 +1720,10 @@ async def update(
     embed = discord.Embed()
     if not is_moderator(interaction):
         embed.title = "Failed"
-        embed.description = "You do not have permission to update games"
+        embed.description = (
+            "You do not have permission to update games. "
+            "Ask a server admin to grant access via Integrations, or use an Administrator account."
+        )
         embed.color = discord.Color.red()
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
         return
@@ -2296,7 +2317,7 @@ async def about(
     embed.add_field(name="Special Thanks", value="<@394012218729168907>: Gave the idea\n<@204414583203430400>: Chaotic Project Tester")
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="logs", description="(Moderator Only) For admins to get logs") # For debugging, get logs
+@bot.tree.command(name="logs", description="Download bot logs (restrict via Integrations; admins only)")
 async def logs(
   interaction: discord.Interaction,
   kind: Literal['debug', 'error'] = 'debug',
@@ -2331,7 +2352,10 @@ async def logs(
     else:
         title = "Not Allowed"
         status = 'failed'
-        logs = 'Must be admin to get logs'
+        logs = (
+            'Must be a Discord Administrator (or bot OWNER) to get logs. '
+            'Also restrict /logs via Server Settings → Integrations.'
+        )
         await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=logs), ephemeral=True)
 
 @bot.tree.command(name="help", description="Get help with StockBot")
@@ -2372,14 +2396,15 @@ All commands include built-in hints and help when you run them!
 """
     if is_moderator(interaction):
         help_text += """
-### Moderator Commands
-- `/create-recurring-game` - Create a recurring game template (Moderator only)
-- `/manage-recurring-games` - Browse, stop, or delete recurring templates (Moderator only)
-- `/update` - Force-update stock prices and game portfolios (Moderator only)
-- `/logs` - For admins to get logs (Moderator only)
+### Privileged Commands
+These should be limited with **Server Settings → Integrations** (who can see/run them). The bot also requires Discord Administrator (or the bot OWNER) as a safety check.
+- `/create-recurring-game` - Create a recurring game template
+- `/manage-recurring-games` - Browse, stop, or delete recurring templates
+- `/update` - Force-update stock prices and game portfolios
+- `/logs` - Download bot logs
 
 ## Need Help?
-Use `/help` to see this message again, or contact a moderator if you encounter any issues!"""
+Use `/help` to see this message again, or contact a server admin if you encounter any issues!"""
     await interaction.response.send_message(embed=simple_embed(status='success', title=title, desc=help_text), ephemeral=ephemeral_test)
 
 # Run the bot using the token
