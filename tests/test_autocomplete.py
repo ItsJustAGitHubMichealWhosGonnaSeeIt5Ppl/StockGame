@@ -67,6 +67,23 @@ def test_buy_ticker_autocomplete_prefers_db_label_for_known_ticker():
     ]
 
 
+def test_buy_ticker_autocomplete_bare_ticker_when_company_missing():
+    fake_frontend = SimpleNamespace(
+        be=SimpleNamespace(
+            get_many_stocks=lambda: (
+                SimpleNamespace(ticker="RACE", company="RACE"),
+                SimpleNamespace(ticker="PHYS", company=""),
+            ),
+        ),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    race = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "race"))
+    phys = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "phys"))
+    assert [(c.name, c.value) for c in race if c.value == "RACE"] == [("RACE", "RACE")]
+    assert [(c.name, c.value) for c in phys if c.value == "PHYS"] == [("PHYS", "PHYS")]
+
+
 def test_buy_ticker_autocomplete_works_when_db_empty():
     fake_frontend = SimpleNamespace(
         be=SimpleNamespace(get_many_stocks=lambda: (_ for _ in ()).throw(LookupError("No items found"))),
