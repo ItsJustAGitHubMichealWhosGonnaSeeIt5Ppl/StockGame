@@ -2054,33 +2054,30 @@ async def my_stocks(
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
-    show_leaderboard="Whether to display the leaderboard or not, will by default"
 )
 async def game_info(
     interaction: discord.Interaction,
     game_id: str,
-    show_leaderboard: bool = True
 ):
     await interaction.response.defer(ephemeral=ephemeral_test)
     
     try:
-        game_info_obj = fe.game_info(game_id, show_leaderboard=show_leaderboard)
+        game_info_obj = fe.game_info(game_id, show_leaderboard=True)
         game = game_info_obj.game
         leaderboard = game_info_obj.leaderboard or []
         
         # Basic embed for game info
-        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{updates}\n{date_range}\n{participants}'.format(
+        description_str = '> **Owner:** <@{owner_id}>{pick_info}\n{start_cash}\n{pick_count}\n{date_range}\n{participants}'.format(
             owner_id=game.owner_id,
             pick_info=(
                 f'\n> **Pick date:** {game.pick_date}'
                 if game.pick_date
-                else '\n> **Pick date:** none — buy anytime'
+                else '\n> **Pick date:** buy anytime'
             ),
             start_cash=f'> **Starting Cash:** ${int(game.start_money)}',
             pick_count=f'> **Pick Count:** `{game.pick_count}`',
-            updates=f'> **Updates:** `{game.update_frequency}`',
             date_range='> ' + str('Started' if game.status != 'open' else 'Starting') + f' `{game.start_date}`' + str(str(', ends' if game.status != 'ended' else ', ended') + f' `{game.end_date}`') if game.end_date else '',
-            participants=f'> **Participants:** `{len(leaderboard)}`' if show_leaderboard else '> **Participants:** hidden',
+            participants=f'> **Participants:** `{len(leaderboard)}`',
         )
         
         embed = discord.Embed(
@@ -2088,10 +2085,6 @@ async def game_info(
             description=description_str
         )
         embed.set_footer(text="Dates are formatted as (YYYY-MM-DD)")
-        
-        if not show_leaderboard:
-            await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-            return
         
         # Limit leaderboard to top 10
         # lb_limit = 10
@@ -2202,6 +2195,33 @@ async def game_info(
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
 # TODO max page length cant be more than 25
+def _format_listed_game(
+    game,
+    player_count: int,
+    *,
+    status_emoji: str | None = None,
+) -> tuple[str, str]:
+    """Shared title/body formatting for /game-list and /my-games."""
+    pick_line = (
+        f'> **Pick date:** {game.pick_date}'
+        if game.pick_date
+        else '> **Pick date:** buy anytime'
+    )
+    end_line = f'\n> **End date:** `{game.end_date}`' if game.end_date else ''
+    recurring_tag = ' 🔁' if game.template_id is not None else ''
+    emoji_prefix = f'{status_emoji} ' if status_emoji else ''
+    title = f"{emoji_prefix}{game.name[:name_cutoff]}{recurring_tag}: [{game.id}]"
+    body = (
+        f'> **Owner:** <@{game.owner_id}>\n'
+        f'> **Players:** {player_count}\n'
+        f'> **Picks:** {game.pick_count}\n'
+        f'> **Start date:** `{game.start_date}`\n'
+        f'{pick_line}'
+        f'{end_line}'
+    )
+    return title, body
+
+
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
     # page_length="The length of the list per page. Defaults to 6",  # debug only
@@ -2226,26 +2246,10 @@ async def game_list(
         if owner is not None:
             title = f"Games owned by {owner.display_name}"
         embed = discord.Embed(title=title, description="")
-        formatted_games = []
-        for game, player_count in ranked:
-            pick_line = (
-                f'> **Pick date:** {game.pick_date}'
-                if game.pick_date
-                else '> **Pick date:** buy anytime'
-            )
-            end_line = f'\n> **End date:** `{game.end_date}`' if game.end_date else ''
-            recurring_tag = ' 🔁' if game.template_id is not None else ''
-            formatted_games.append((
-                f"{game.name[:name_cutoff]}{recurring_tag}: [{game.id}]",
-                (
-                    f'> **Owner:** <@{game.owner_id}>\n'
-                    f'> **Players:** {player_count}\n'
-                    f'> **Picks:** {game.pick_count}\n'
-                    f'> **Start date:** `{game.start_date}`\n'
-                    f'{pick_line}'
-                    f'{end_line}'
-                ),
-            ))
+        formatted_games = [
+            _format_listed_game(game, player_count)
+            for game, player_count in ranked
+        ]
         await Pagination(interaction, page_len=page_length, embed=embed, games=formatted_games, ephemeral=ephemeral_test).navigate()
 
     except LookupError as e:
@@ -2266,49 +2270,47 @@ async def game_list(
     if error:
         await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="my-games", description="View your games and their status") #TODO could be renamed to simply games
+@bot.tree.command(name="my-games", description="View your games (same layout as game-list)")
 async def my_games(
     interaction: discord.Interaction
 ):
-    embed = discord.Embed(
-        title="Your Games",
-        color=discord.Color.blue()
-    )
+    page_length = 6
+    embed = discord.Embed()
+    error = False
     try:
-        games = fe.my_games(interaction.user.id)
-        game_description: str = ""
-        # Add each game to the embed
-        for game in games.games: #TODO provide more info here
-            participant_status = 'active'
-            try:
-                participant_status = fe.be.get_participant(fe._participant_id(user_id=interaction.user.id, game_id=game.id)).status
-            except (DoesntExistError, LookupError):
-                logger.warning('Could not resolve participation status for user %s in game %s.', interaction.user.id, game.id)
-            if participant_status == 'pending':
-                status_emoji = '🟡'
-                status_text = 'approval pending'
-            elif game.status == 'ended':
-                status_emoji = '🔴'
-                status_text = 'ended'
-            else:
-                status_emoji = '🟢'
-                status_text = game.status
-
-            game_description += f"{status_emoji} **{game.name[:name_cutoff]}** — #{game.id} ({status_text})\n"
-
-        embed.description = game_description
-        embed.set_footer(text=f"Use /game-info <game_id> for more details")
+        today = fe.gl._today_et()
+        ranked = fe.list_my_games_ranked(interaction.user.id, include_ended=True, today=today)
+        embed = discord.Embed(title="Your games", description="")
+        formatted_games = [
+            _format_listed_game(
+                game,
+                player_count,
+                status_emoji=fe.game_status_emoji(game, today),
+            )
+            for game, player_count in ranked
+        ]
+        await Pagination(
+            interaction,
+            page_len=page_length,
+            embed=embed,
+            games=formatted_games,
+            ephemeral=ephemeral_test,
+        ).navigate()
 
     except LookupError:
-        embed.description = "You are not currently in any games."
+        error = True
+        embed.title = 'No games found'
+        embed.description = 'You are not currently in any games.'
         embed.color = discord.Color.orange()
     except Exception as e:
+        error = True
         logger.exception(f'User: {interaction.user.id} tried to get their games. Error: {e}')
-        embed.description = "Unable to retrieve your games. Please try again."
+        embed.title = 'Error'
+        embed.description = 'Unable to retrieve your games. Please try again.'
         embed.color = discord.Color.red()
-    
-    # Send the response
-    await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
+
+    if error:
+        await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
 @bot.tree.command(name="user-stats", description="Shows global statistics of a user. Shows yours by default.")
 @app_commands.describe(
@@ -2424,7 +2426,7 @@ All commands include built-in hints and help when you run them!
 ### Information & Stats
 - `/game-info` - View information about a game
 - `/game-list` - View public games (optional owner filter; pick the bot to see recurring games)
-- `/my-games` - View your games and their status
+- `/my-games` - View your games (same layout as `/game-list`, with status emojis)
 - `/user-stats` - Shows global statistics of a user. Shows yours by default
 - `/about` - About the bot and its creators
 """
