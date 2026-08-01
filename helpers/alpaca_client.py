@@ -142,9 +142,11 @@ class AlpacaMarketData:
 
     def get_latest_prices(self, tickers: list[str]) -> dict[str, float]:
         """
-        Return {db_ticker: price} for as many symbols as Alpaca provides.
+        Return {db_ticker: price} for every requested ticker that Alpaca can price.
 
-        Respects free-tier limits by batching and sleeping between requests.
+        Batches requests under free-tier limits. Failed batches are retried, then
+        any still-missing symbols are fetched individually so a single bad
+        response cannot drop the rest of the universe.
         """
         self._require_configured()
         if not tickers:
@@ -161,25 +163,75 @@ class AlpacaMarketData:
             ordered_alpaca.append(alpaca)
 
         prices: dict[str, float] = {}
+        unresolved: list[str] = []
+
         for i in range(0, len(ordered_alpaca), BATCH_SIZE):
             batch = ordered_alpaca[i : i + BATCH_SIZE]
-            try:
-                data = self.fetch_snapshots(batch)
-            except Exception:
-                logger.exception("Alpaca snapshot batch failed (offset %s)", i)
-                time.sleep(SLEEP_BETWEEN_BATCHES)
-                continue
-
-            for alpaca_sym in batch:
-                snap = data.get(alpaca_sym)
-                if not snap:
-                    continue
-                price = price_from_snapshot(snap)
-                if price is None:
-                    continue
-                prices[alpaca_to_db[alpaca_sym]] = price
+            data = self._fetch_snapshots_with_retries(batch, attempts=3)
+            if data is None:
+                unresolved.extend(batch)
+            else:
+                for alpaca_sym in batch:
+                    snap = data.get(alpaca_sym)
+                    price = price_from_snapshot(snap) if isinstance(snap, dict) else None
+                    if price is None:
+                        unresolved.append(alpaca_sym)
+                    else:
+                        prices[alpaca_to_db[alpaca_sym]] = price
 
             if i + BATCH_SIZE < len(ordered_alpaca):
                 time.sleep(SLEEP_BETWEEN_BATCHES)
 
+        # Second pass: never leave a ticker unchecked after a batch miss/failure.
+        still_missing: list[str] = []
+        for alpaca_sym in unresolved:
+            if alpaca_to_db[alpaca_sym] in prices:
+                continue
+            data = self._fetch_snapshots_with_retries([alpaca_sym], attempts=3)
+            if data is None:
+                still_missing.append(alpaca_sym)
+                continue
+            snap = data.get(alpaca_sym)
+            price = price_from_snapshot(snap) if isinstance(snap, dict) else None
+            if price is None:
+                still_missing.append(alpaca_sym)
+            else:
+                prices[alpaca_to_db[alpaca_sym]] = price
+            time.sleep(SLEEP_BETWEEN_BATCHES)
+
+        if still_missing:
+            missing_db = [alpaca_to_db[s] for s in still_missing]
+            logger.error(
+                "Alpaca price fetch incomplete after retries: %s/%s tickers missing: %s",
+                len(missing_db),
+                len(ordered_alpaca),
+                ", ".join(missing_db[:50]) + ("..." if len(missing_db) > 50 else ""),
+            )
+
         return prices
+
+    def _fetch_snapshots_with_retries(
+        self, symbols: list[str], *, attempts: int = 3
+    ) -> Optional[dict[str, Any]]:
+        """Fetch snapshots, retrying on HTTP/network errors. Returns None if all attempts fail."""
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.fetch_snapshots(symbols)
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Alpaca snapshot fetch failed (attempt %s/%s, symbols=%s): %s",
+                    attempt,
+                    attempts,
+                    len(symbols),
+                    exc,
+                )
+                time.sleep(SLEEP_BETWEEN_BATCHES * attempt)
+        if last_exc is not None:
+            logger.exception(
+                "Alpaca snapshot fetch exhausted retries for %s symbol(s)",
+                len(symbols),
+                exc_info=last_exc,
+            )
+        return None

@@ -31,6 +31,8 @@ from helpers.logging_setup import (
 )
 from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
+from helpers.sp500 import ensure_sp500_seeded
+from helpers.alpaca_client import AlpacaMarketData
 
 
 load_dotenv()
@@ -344,9 +346,9 @@ ac.init_autocomplete(fe)  # Inject the shared Frontend instance into autocomplet
 # Prevent overlapping update_all runs if a cycle takes longer than the loop interval.
 _game_update_lock = asyncio.Lock()
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=15)
 async def scheduled_game_update():
-    """Refresh prices (Alpaca) and game portfolios without blocking Discord commands."""
+    """Refresh prices (Alpaca) and game portfolios every 15 minutes without blocking Discord."""
     if _game_update_lock.locked():
         logger.debug('Skipping scheduled update; previous cycle still running.')
         return
@@ -360,6 +362,26 @@ async def scheduled_game_update():
 @scheduled_game_update.before_loop
 async def wait_for_scheduled_update():
     await bot.wait_until_ready()
+
+async def _seed_sp500_on_startup() -> None:
+    """Idempotently load S&P 500 tickers in a worker thread; never block Discord."""
+    try:
+        alpaca = AlpacaMarketData()
+        if not alpaca.configured:
+            logger.warning('Skipping S&P 500 seed: Alpaca credentials not configured.')
+            return
+        stats = await asyncio.to_thread(ensure_sp500_seeded, fe.be, alpaca, log=logger)
+        logger.info(
+            'S&P 500 startup seed: listed=%s existing=%s added=%s priced=%s failed=%s',
+            stats['listed'],
+            stats['existing'],
+            stats['added'],
+            stats['priced'],
+            stats['failed'],
+        )
+    except Exception:
+        logger.exception('S&P 500 startup seed failed; continuing without blocking the bot')
+
 
 # Event: Called when the bot is ready and connected to Discord
 @bot.event
@@ -380,6 +402,8 @@ async def on_ready():
         logger.exception('Failed to register bot user for recurring-game ownership')
     if not scheduled_game_update.is_running():
         scheduled_game_update.start()
+    # Keep the equity universe current without delaying command sync.
+    asyncio.create_task(_seed_sp500_on_startup())
     try:
         # Sync commands globally
         synced = await bot.tree.sync()
@@ -2180,15 +2204,15 @@ async def game_info(
 # TODO max page length cant be more than 25
 @bot.tree.command(name="game-list", description="View a list of all games") # TODO rename to list-games, all-games, or games-list?
 @app_commands.describe(
-    # page_length="The length of the list per page. Defaults to 9",  # debug only
+    # page_length="The length of the list per page. Defaults to 6",  # debug only
     owner="Only show games created by this user (use the bot to list recurring games)",
 )
 async def game_list(
     interaction: discord.Interaction,
-    # page_length: app_commands.Range[int, 1, 25] = 9,  # commented out; keep default below
+    # page_length: app_commands.Range[int, 1, 25] = 6,  # commented out; keep default below
     owner: discord.User | None = None,
 ):
-    page_length = 9  # default page size (page_length option disabled for production)
+    page_length = 6  # default page size (page_length option disabled for production)
     embed = discord.Embed()
     error = False
     try:
