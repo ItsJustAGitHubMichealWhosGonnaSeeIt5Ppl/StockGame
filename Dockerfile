@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Create a non-privileged user.
+# Create a non-privileged user that the process drops to at runtime.
 ARG UID=10001
 RUN adduser \
     --disabled-password \
@@ -22,10 +22,11 @@ RUN adduser \
     --uid "${UID}" \
     appuser
 
-# Install system dependencies including fonts.
+# System deps: fonts for portfolio/leaderboard images; gosu to drop root in entrypoint.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     fonts-liberation \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies (cached layer).
@@ -36,11 +37,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy the source code into the container.
 COPY . .
 
-# Ensure logs directory exists and set permissions.
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app && chmod -R 755 /app
+# Persistable dirs + executable entrypoint. Image starts as root so the
+# entrypoint can chown bind mounts, then drops to appuser via gosu.
+RUN mkdir -p /app/data /app/logs \
+    && chown -R appuser:appuser /app \
+    && chmod +x /app/scripts/docker-entrypoint.sh
 
-# Switch to non-privileged user.
-USER appuser
-
-# Run the bot.
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["python3", "discord_bot.py"]

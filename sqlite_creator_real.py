@@ -211,6 +211,9 @@ def create(db_name:str, upgrade:bool=True):
     """    
     
     preexisting_tables: set[str] = set()
+    db_path = Path(db_name)
+    if db_path.parent != Path('.'):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
     if os.path.exists(db_name) and os.path.getsize(db_name) > 0:
         inspection = sqlite3.connect(db_name)
         preexisting_tables = {

@@ -1,5 +1,6 @@
 # WRITTEN MOSTLY BY CLAUDE
 
+import asyncio
 import logging
 import re
 
@@ -8,6 +9,7 @@ from discord.app_commands import Choice # Explicitly import Choice for clarity
 from discord.interactions import Interaction # Explicitly import Interaction for clarity
 from helpers.alpaca_client import to_db_ticker
 from helpers.datatype_validation import StockPick
+from helpers.equity_meta import autocomplete_label
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -130,8 +132,20 @@ async def buy_ticker_autocomplete(
         typed = _normalize_typed_ticker(current)
         if typed:
             # First choice = exactly what the user typed (may not be in DB yet).
-            # Discord requires selecting a choice; label stays the bare ticker.
-            choices.append(Choice(name=typed, value=typed))
+            typed_label = typed
+            try:
+                existing = _fe.be.get_stock(typed)
+                typed_label = autocomplete_label(str(existing.ticker), existing.company)
+                # Stocks bought before name lookup may still store ticker-as-name.
+                if typed_label == typed and getattr(_fe, "gl", None) is not None:
+                    await asyncio.to_thread(_fe.gl._ensure_company_name, existing)
+                    existing = _fe.be.get_stock(typed)
+                    typed_label = autocomplete_label(str(existing.ticker), existing.company)
+            except LookupError:
+                pass
+            except Exception:
+                logger.debug('Typed-ticker name refresh failed for %s', typed, exc_info=True)
+            choices.append(Choice(name=typed_label[:100], value=typed))
             seen.add(typed)
 
         needle = current.strip().lower()
@@ -143,22 +157,18 @@ async def buy_ticker_autocomplete(
         for stock in stocks:
             ticker = str(stock.ticker)
             company_name = str(getattr(stock, "company", "") or "")
-            if needle and needle not in ticker.lower() and needle not in company_name.lower():
+            label = autocomplete_label(ticker, company_name)
+            searchable = f"{ticker} {company_name}".lower()
+            if needle and needle not in searchable:
                 continue
             if ticker in seen:
                 # Prefer the richer DB label over the generic typed entry.
                 choices = [
-                    Choice(
-                        name=(f"{ticker} — {company_name}" if company_name else ticker)[:100],
-                        value=ticker,
-                    )
-                    if c.value == ticker
-                    else c
+                    Choice(name=label[:100], value=ticker) if c.value == ticker else c
                     for c in choices
                 ]
                 continue
             seen.add(ticker)
-            label = f"{ticker} — {company_name}" if company_name else ticker
             choices.append(Choice(name=label[:100], value=ticker))
             if len(choices) >= 25:
                 break

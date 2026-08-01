@@ -1,5 +1,0 @@
-DISCORD_TOKEN = <Bot Token>
-OWNER = <Your Discord ID>
-DB_NAME = <Database name>.db
-ALPACA_API_KEY = <Alpaca API Key ID>
-ALPACA_SECRET_KEY = <Alpaca Secret Key>

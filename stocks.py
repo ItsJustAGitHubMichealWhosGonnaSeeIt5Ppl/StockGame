@@ -70,7 +70,8 @@ class Backend:
                 raise LookupError(f'Expected one item, but got {len(resp.result)}.')
             
         elif resp.reason == 'NO ROWS RETURNED': # Response is not success so can just check what the error is
-            self.logger.error(f'Failed to get item - Not found. {resp}' )
+            # Expected control flow for existence checks (e.g. add_stock before insert).
+            self.logger.debug('Get item not found. %s', resp)
             raise LookupError(f'Item not found.')
         else:
             raise Exception('Failed to get item.', resp)
@@ -716,6 +717,24 @@ class Backend:
                 raise ValueError(f'Stock with ticker {ticker} already exists.')
             else:
                 raise Exception(f'Failed to add stock.', resp)
+
+    def update_stock(
+        self,
+        ticker_or_id: str | int,
+        *,
+        company_name: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> None:
+        """Update mutable stock metadata (company name / exchange)."""
+        stock = self.get_stock(ticker_or_id)
+        updates: dict[str, str] = {}
+        if company_name is not None:
+            updates['company_name'] = company_name
+        if exchange is not None:
+            updates['exchange'] = exchange
+        if not updates:
+            return
+        self._update_single(table='stocks', id_column='stock_id', item_id=stock.id, **updates)
     
     def get_stock(self, ticker_or_id:str | int)-> dtv.Stock:
         """Get a stock
@@ -1559,11 +1578,11 @@ class GameLogic: # Might move some of the control/running actions here
         self.update_participants_and_games(game_id=game_id) # Update participants (set their total value, etc.)
             
     def find_stock(self, ticker:str) -> str: 
-        """Find and add a US equity to the database via Alpaca.
+        """Find and add a US equity to the database via Alpaca market data.
 
-        Prefers the trading ``/v2/assets`` metadata endpoint. If that API is
-        unavailable (common with market-data-only keys → HTTP 401), falls back to
-        verifying the symbol via the market-data snapshot feed.
+        Verifies the symbol the same way ``update_stock_prices`` does: ask the
+        IEX snapshot feed for a price. Does not use the trading ``/v2/assets``
+        API (often 401 with market-data-only keys).
 
         Args:
             ticker (str): Stock ticker.  Eg: 'MSFT' or 'BRK.B'.
@@ -1572,7 +1591,6 @@ class GameLogic: # Might move some of the control/running actions here
             str: Canonical ticker as stored in the database (e.g. ``BRK-B``).
             
         Raises:
-            ValueError: Stock is not tradeable
             ValueError: Unable to find stock
         """        
         #TODO regex the subimissions to check for invalid characters and save time.
@@ -1582,42 +1600,66 @@ class GameLogic: # Might move some of the control/running actions here
         for candidate in dict.fromkeys([db_ticker, alpaca_ticker]):
             try:
                 existing = self.be.get_stock(ticker_or_id=candidate)
+                self._ensure_company_name(existing)
                 return existing.ticker
             except LookupError:
                 pass
 
-        exchange = "UNKNOWN"
-        company_name = db_ticker
         try:
-            asset = self.alpaca.get_us_equity(alpaca_ticker)
-            exchange = str(asset.get("exchange") or "UNKNOWN")
-            company_name = str(asset.get("name") or db_ticker)
-        except ValueError:
-            # Explicitly not tradeable (crypto, inactive, etc.)
-            raise
-        except LookupError as e:
-            raise ValueError("Unable to find stock") from e
+            prices = self.alpaca.get_latest_prices([db_ticker])
         except Exception as e:
-            # Trading API often 401s with data-only keys; price feed still works.
-            self.logger.warning(
-                "Alpaca asset lookup failed for %s (%s); verifying via market data",
-                alpaca_ticker,
-                e,
-            )
-            try:
-                if not self.alpaca.equity_is_priced(db_ticker):
-                    raise ValueError("Unable to find stock") from e
-            except ValueError:
-                raise
-            except Exception as price_exc:
-                raise ValueError("Unable to find stock") from price_exc
+            self.logger.exception('Alpaca price lookup failed for %s', db_ticker, exc_info=e)
+            raise ValueError("Unable to find stock") from e
+
+        price = prices.get(db_ticker)
+        if price is None:
+            raise ValueError("Unable to find stock")
+
+        company_name = db_ticker
+        exchange = "UNKNOWN"
+        try:
+            from helpers.equity_meta import lookup_company_name
+
+            resolved_name = lookup_company_name(db_ticker, alpaca=self.alpaca)
+            if resolved_name:
+                company_name = resolved_name
+        except Exception:
+            self.logger.debug('Company name lookup failed for %s', db_ticker, exc_info=True)
 
         self.be.add_stock(
             ticker=db_ticker,
             exchange=exchange,
             company_name=company_name,
         )
+        try:
+            self.be.add_stock_price(
+                ticker_or_id=db_ticker,
+                price=price,
+                datetime=datetime.now().strftime("%Y-%m-%d %H:%M:00"),
+            )
+        except Exception:
+            # Price row is nice-to-have; the stock itself is what buy_stock needs.
+            self.logger.debug('Could not store initial price for %s', db_ticker, exc_info=True)
         return db_ticker
+
+    def _ensure_company_name(self, stock: dtv.Stock) -> None:
+        """Backfill company_name when it was stored as a ticker placeholder."""
+        from helpers.equity_meta import lookup_company_name, autocomplete_label
+
+        if autocomplete_label(str(stock.ticker), stock.company) != str(stock.ticker):
+            return
+        try:
+            resolved = lookup_company_name(str(stock.ticker), alpaca=self.alpaca)
+        except Exception:
+            self.logger.debug('Company name backfill failed for %s', stock.ticker, exc_info=True)
+            return
+        if not resolved:
+            return
+        try:
+            self.be.update_stock(stock.id, company_name=resolved)
+            self.logger.info('Backfilled company name for %s: %s', stock.ticker, resolved)
+        except Exception:
+            self.logger.debug('Failed to persist company name for %s', stock.ticker, exc_info=True)
 # # FRONTEND INTERACTIONS. # #
 # This is where things like preventing users from joining a game too late, etc. will take place.
 class Frontend: # This will be where a bot (like discord) interacts
