@@ -104,3 +104,25 @@ def test_buy_ticker_autocomplete_normalizes_class_share():
     choices = asyncio.run(autocomplete.buy_ticker_autocomplete(SimpleNamespace(), "brk.b"))
 
     assert choices[0].value == "BRK-B"
+
+
+def test_join_game_autocomplete_uses_game_list_order_and_marks_recurring():
+    calls = []
+    recurring = SimpleNamespace(id="REC01", name="Monthly", template_id=7)
+    regular = SimpleNamespace(id="ONE01", name="One Off", template_id=None)
+    fake_frontend = SimpleNamespace(
+        list_games_ranked=lambda **kwargs: calls.append(kwargs) or [
+            (recurring, 2),
+            (regular, 10),
+        ],
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    interaction = SimpleNamespace(user=SimpleNamespace(id=42))
+    choices = asyncio.run(autocomplete.join_games_autocomplete(interaction, ""))
+
+    assert calls == [{"include_open": True, "include_active": True}]
+    assert [(choice.name, choice.value) for choice in choices] == [
+        ("🔁 Monthly (ID: REC01)", "REC01"),
+        ("One Off (ID: ONE01)", "ONE01"),
+    ]

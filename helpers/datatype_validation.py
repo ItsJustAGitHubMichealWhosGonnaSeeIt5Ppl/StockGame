@@ -57,6 +57,7 @@ class Game(BaseModel):
     current_value: Optional[float] = Field(default=None, validation_alias=AliasChoices('aggregate_value'))
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
+    leaderboard_message_id: Optional[str] = None
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
@@ -85,6 +86,8 @@ class GameTemplate(BaseModel):
     create_days_in_advance: int
     recurring_period: int
     game_length: int
+    push_leaderboard: bool = False
+    leaderboard_channel_id: Optional[str] = None
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
     last_updated: Optional[datetime] = None # YYYY-MM-DD HH:MM:SS
 
@@ -144,6 +147,7 @@ class GameParticipant(BaseModel):
     current_value: Optional[float] = None
     change_dollars: Optional[float] = None
     change_percent: Optional[float] = None
+    days_in_first: int = 0
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
     
 GameParticipants = TypeAdapter(list[GameParticipant])
@@ -162,6 +166,7 @@ class StockPick(BaseModel):
     change_percent: Optional[float] = None
     status: PickStatus = 'pending_buy'
     stock_ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker')) # Allow ticker to be added in here.  Purely for ease of use
+    company_name: Optional[str] = None
     datetime_created: datetime # YYYY-MM-DD HH:MM:SS
     last_updated: Optional[datetime] = Field(default=None, validation_alias=AliasChoices('datetime_updated', 'last_updated')) # YYYY-MM-DD HH:MM:SS
 
@@ -179,6 +184,8 @@ class GameLeaderboard(BaseModel):
     joined: datetime
     change_dollars: float
     change_percent: float
+    days_in_first: int = 0
+    display_name: Optional[str] = None
     last_updated: datetime | None = None
 
 class GameInfo(BaseModel):

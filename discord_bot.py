@@ -10,6 +10,7 @@ import io
 import logging
 import os
 import sys
+import time
 from typing import Any, Literal, Mapping, Optional, cast # 3.13 +
 
 # EXTERNAL
@@ -22,6 +23,10 @@ from dotenv import load_dotenv
 # LOCAL
 from helpers.datatype_validation import GameLeaderboard
 from helpers.views import Pagination, LeaderboardImageGenerator, StockPortfolioImageGenerator
+from helpers.leaderboard_push import (
+    bot_can_push_to_channel,
+    push_all_recurring_leaderboards,
+)
 import helpers.autocomplete as ac
 from helpers.logging_setup import (
     attach_critical_dm_bot,
@@ -346,6 +351,29 @@ ac.init_autocomplete(fe)  # Inject the shared Frontend instance into autocomplet
 # Prevent overlapping update_all runs if a cycle takes longer than the loop interval.
 _game_update_lock = asyncio.Lock()
 
+# In-memory /leaderboard image cache: game_id -> (png_bytes, generated_at_monotonic-ish timestamp)
+_leaderboard_image_cache: dict[str, tuple[bytes, float]] = {}
+_LEADERBOARD_CACHE_TTL_SEC = 600.0  # align with long-lived view timeout
+
+
+def invalidate_leaderboard_cache(game_ids: Optional[list[str]] = None) -> None:
+    if game_ids is None:
+        _leaderboard_image_cache.clear()
+        return
+    for gid in game_ids:
+        _leaderboard_image_cache.pop(str(gid), None)
+
+
+async def _run_update_and_push(*, force: bool = False) -> None:
+    """Run GameLogic.update_all off-loop, then push recurring leaderboards on Discord."""
+    if force:
+        await asyncio.to_thread(fe.gl.update_all, None, True)
+    else:
+        await asyncio.to_thread(fe.gl.update_all)
+    invalidate_leaderboard_cache()
+    await push_all_recurring_leaderboards(bot, fe)
+
+
 @tasks.loop(minutes=15)
 async def scheduled_game_update():
     """Refresh prices (Alpaca) and game portfolios every 15 minutes without blocking Discord."""
@@ -354,8 +382,7 @@ async def scheduled_game_update():
         return
     async with _game_update_lock:
         try:
-            # Blocking HTTP + SQLite work stays off the event loop.
-            await asyncio.to_thread(fe.gl.update_all)
+            await _run_update_and_push(force=False)
         except Exception:
             logger.exception('Scheduled game update failed.')
 
@@ -390,7 +417,7 @@ async def on_ready():
     attach_critical_dm_bot(bot)
     await flush_critical_dm_queue()
     if bot.user is None:
-        logger.error('Ready event fired without an authenticated bot user.')
+        logger.critical('Ready event fired without an authenticated bot user.')
         return
     logger.info(f'Logged in as {bot.user.name} (ID: {bot.user.id})')
     # Recurring series are owned by the bot account so `/game-list owner:@Bot` filters them.
@@ -411,7 +438,7 @@ async def on_ready():
         for command in synced:
             logger.info(f"   - {command.name}: {command.description}")
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}") #TODO should this be higher severity?
+        logger.critical(f"Failed to sync commands: {e}")
 
 
 # GAME INTERACTION RELATED
@@ -826,7 +853,69 @@ async def create_game(interaction: discord.Interaction):
         initial_wizard_modal.on_submit = initial_wizard_callback
 
     # Set the button callback
-    game_creation_wizard_start.callback = game_creation_wizard_start_callback    
+    game_creation_wizard_start.callback = game_creation_wizard_start_callback
+
+
+class LeaderboardChannelSelect(discord.ui.View):
+    """Ephemeral channel picker after enabling push_leaderboard on a template."""
+
+    def __init__(self, template_id: int):
+        super().__init__(timeout=180)
+        self.template_id = template_id
+        self.select = discord.ui.ChannelSelect(
+            placeholder="Choose a text channel for leaderboard posts",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+        )
+        self.select.callback = self._on_select  # type: ignore[method-assign]
+        self.add_item(self.select)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("This can only be used in a server.", ephemeral=True)
+            return
+        values = self.select.values
+        if not values:
+            await interaction.response.send_message("No channel selected.", ephemeral=True)
+            return
+        channel = values[0]
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message("Please pick a text channel.", ephemeral=True)
+            return
+        me = interaction.guild.me
+        if me is None or not bot_can_push_to_channel(channel, me):
+            try:
+                fe.be.update_game_template(
+                    template_id=self.template_id,
+                    push_leaderboard=False,
+                    clear_leaderboard_channel=True,
+                )
+            except Exception:
+                logger.exception("Failed to clear push settings after permission check")
+            await interaction.response.send_message(
+                "I need **View Channel**, **Send Messages**, **Embed Links**, and **Attach Files** "
+                f"in {channel.mention}. Push stays off until you fix permissions and re-enable it.",
+                ephemeral=True,
+            )
+            self.stop()
+            return
+        try:
+            fe.be.update_game_template(
+                template_id=self.template_id,
+                push_leaderboard=True,
+                leaderboard_channel_id=str(channel.id),
+            )
+        except Exception:
+            logger.exception("Failed to save leaderboard channel for template %s", self.template_id)
+            await interaction.response.send_message("❌ Could not save that channel. Try again.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"✅ Leaderboard posts will go to {channel.mention}.",
+            ephemeral=True,
+        )
+        self.stop()
+
 
 @bot.tree.command(name="create-recurring-game", description="Create a recurring game template (restrict via Integrations; admins only)")
 @app_commands.describe(
@@ -840,8 +929,7 @@ async def create_game(interaction: discord.Interaction):
     private_game="Make the game private (optional, default: False)",
     total_picks="Maximum number of picks per player (optional, default: 10)",
     exclusive_picks="Enable exclusive picks: each stock can only be picked once (optional, default: False)",
-    # sell_during_game="Allow selling owned stocks during the game (optional, default: False)",  # not implemented yet
-    # update_frequency="How often to update game data ('daily', 'hourly') (optional, default: daily)"
+    push_leaderboard="Post/edit a live leaderboard image in a channel (default: False)",
 )
 async def create_recurring_game(
     interaction: discord.Interaction,
@@ -855,8 +943,7 @@ async def create_recurring_game(
     private_game: bool = False,
     total_picks: app_commands.Range[int, 1, 1000] = 10,
     exclusive_picks: bool = False,
-    # sell_during_game: bool = False,  # not implemented yet
-    # update_frequency: Literal['daily', 'hourly'] = "daily"
+    push_leaderboard: bool = False,
 ):
         """Create a recurring game template"""
 
@@ -905,7 +992,7 @@ async def create_recurring_game(
             user_id = interaction.user.id
             fe.register(user_id=user_id, username=interaction.user.display_name)
 
-            fe.be.add_game_template(
+            template_id = fe.be.add_game_template(
                 user_id=user_id,
                 name=name,
                 start_date=start_date,
@@ -946,18 +1033,27 @@ async def create_recurring_game(
                 embed.add_field(name="📝 Pick Deadline", value="None — buy anytime", inline=True)
 
             embed.add_field(name="🎯 Exclusive Picks", value="Yes" if exclusive_picks else "No", inline=True)
-            # embed.add_field(name="💸 Selling Allowed", value="Yes" if sell_during_game else "No", inline=True)  # not implemented yet
-            # embed.add_field(name="🔄 Update Frequency", value=update_frequency.title(), inline=True)
             embed.add_field(name="🏷️ Updates", value="alpaca", inline=True)
             embed.add_field(name="⏰ Create in Advance", value=f"{create_days_in_advance} days", inline=True)
+            embed.add_field(
+                name="📣 Push Leaderboard",
+                value="Choose a channel below" if push_leaderboard else "No",
+                inline=True,
+            )
             if private_game:
                 embed.set_footer(
                     text="Private invites need DMs from this server enabled — otherwise share the game ID manually."
                 )
 
-            embed.set_footer(text=f"Created by {interaction.user.display_name}")
+            embed.set_footer(text=f"Created by {interaction.user.display_name} · Template ID {template_id}")
 
             await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
+            if push_leaderboard:
+                await interaction.followup.send(
+                    "Select the channel where I should post the live leaderboard:",
+                    view=LeaderboardChannelSelect(template_id),
+                    ephemeral=True,
+                )
 
         except AlreadyExistsError:
             await interaction.followup.send(
@@ -981,8 +1077,8 @@ async def create_recurring_game(
             error_message = "❌ Failed to create recurring game template. Please try again or contact a moderator."
             await interaction.followup.send(error_message, ephemeral=ephemeral_test)
 
-# TODO Handle more specific errors when implemented (private game, invalid game id, etc)
 @bot.tree.command(name="join-game", description="Join an existing stock game")
+@app_commands.autocomplete(game_id=ac.join_games_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to join",
     name="Name to display for your picks (optional)"
@@ -1204,7 +1300,6 @@ async def manage_game(
 
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-#TODO fix response to command
 @bot.tree.command(name="invite", description="Invite a user to a game (requires their DMs from this server)")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
@@ -1456,12 +1551,26 @@ class RecurringTemplateManager(discord.ui.View):
             toggle_btn = discord.ui.Button(label="Stop", style=discord.ButtonStyle.secondary)
             toggle_btn.callback = self._stop  # type: ignore[method-assign]
 
+        push_on = bool(self.templates and self.templates[self.index].push_leaderboard)
+        if push_on:
+            push_btn = discord.ui.Button(label="Disable Push", style=discord.ButtonStyle.secondary)
+            push_btn.callback = self._disable_push  # type: ignore[method-assign]
+            channel_btn = discord.ui.Button(label="Set Channel", style=discord.ButtonStyle.primary)
+            channel_btn.callback = self._set_channel  # type: ignore[method-assign]
+        else:
+            push_btn = discord.ui.Button(label="Enable Push", style=discord.ButtonStyle.success)
+            push_btn.callback = self._enable_push  # type: ignore[method-assign]
+            channel_btn = None
+
         prev_btn.callback = self._previous  # type: ignore[method-assign]
         next_btn.callback = self._next  # type: ignore[method-assign]
         delete_btn.callback = self._ask_delete  # type: ignore[method-assign]
         self.add_item(prev_btn)
         self.add_item(next_btn)
         self.add_item(toggle_btn)
+        self.add_item(push_btn)
+        if channel_btn is not None:
+            self.add_item(channel_btn)
         self.add_item(delete_btn)
 
     def _pick_deadline_text(self, template) -> str:
@@ -1504,6 +1613,11 @@ class RecurringTemplateManager(discord.ui.View):
         embed.add_field(name="📝 Pick Deadline", value=self._pick_deadline_text(template), inline=True)
         embed.add_field(name="🔒 Private", value="Yes" if template.private_game else "No", inline=True)
         embed.add_field(name="🎯 Exclusive", value="Yes" if template.draft_mode else "No", inline=True)
+        push_txt = "Off"
+        if template.push_leaderboard:
+            ch = template.leaderboard_channel_id
+            push_txt = f"On → <#{ch}>" if ch else "On (no channel yet)"
+        embed.add_field(name="📣 Push Leaderboard", value=push_txt, inline=False)
         embed.set_footer(text=f"Template ID: {template.id}")
         return embed
 
@@ -1620,6 +1734,46 @@ class RecurringTemplateManager(discord.ui.View):
                     "❌ Failed to resume this template. Please try again or contact a moderator.",
                     ephemeral=True,
                 )
+
+    async def _enable_push(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        await interaction.response.send_message(
+            f"Pick a channel for **{template.name}** leaderboard posts:",
+            view=LeaderboardChannelSelect(template.id),
+            ephemeral=True,
+        )
+        # Refresh after a short delay is awkward; reload on next navigation.
+        try:
+            self.templates[self.index] = fe.be.get_game_template(template.id)
+        except Exception:
+            pass
+
+    async def _disable_push(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        try:
+            fe.be.update_game_template(
+                template_id=template.id,
+                push_leaderboard=False,
+                clear_leaderboard_channel=True,
+            )
+            self.templates[self.index] = fe.be.get_game_template(template.id)
+            self._sync_buttons()
+            await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            await interaction.followup.send(
+                f"📣 Leaderboard push disabled for **{template.name}**.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            logger.exception("disable push failed | template_id=%s", template.id, exc_info=exc)
+            await interaction.response.send_message("❌ Failed to disable push.", ephemeral=True)
+
+    async def _set_channel(self, interaction: discord.Interaction) -> None:
+        template = self.templates[self.index]
+        await interaction.response.send_message(
+            f"Pick a new channel for **{template.name}**:",
+            view=LeaderboardChannelSelect(template.id),
+            ephemeral=True,
+        )
 
     async def _ask_delete(self, interaction: discord.Interaction) -> None:
         self.confirming_delete = True
@@ -1777,6 +1931,8 @@ async def update(
                 user_id=interaction.user.id,
                 enforce_permissions=False,
             )
+            invalidate_leaderboard_cache()
+            await push_all_recurring_leaderboards(bot, fe)
         embed.title = "Success"
         embed.description = f"All games have been successfully updated"
         embed.color = discord.Color.green()
@@ -1953,7 +2109,169 @@ async def remove_stock(interaction: discord.Interaction, game_id: str, ticker: s
 
 # TODO Add buttons for buying stocks?
 # TODO Add buttons for buying/selling stocks?  # selling not implemented yet
-# TODO Add last updated date/time in footer
+
+class UserLeaderboardView(discord.ui.View):
+    """Paginate leaderboard images for games the invoking user is in."""
+
+    def __init__(self, interaction: discord.Interaction, pages: list[dict]):
+        super().__init__(timeout=600)
+        self.interaction = interaction
+        self.pages = pages
+        self.index = 0
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        self.clear_items()
+        if len(self.pages) <= 1:
+            return
+        prev_btn = discord.ui.Button(emoji="◀️", style=discord.ButtonStyle.blurple, disabled=self.index <= 0)
+        next_btn = discord.ui.Button(
+            emoji="▶️",
+            style=discord.ButtonStyle.blurple,
+            disabled=self.index >= len(self.pages) - 1,
+        )
+        prev_btn.callback = self._previous  # type: ignore[method-assign]
+        next_btn.callback = self._next  # type: ignore[method-assign]
+        self.add_item(prev_btn)
+        self.add_item(next_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.interaction.user.id:
+            return True
+        await interaction.response.send_message("Only you can flip these pages.", ephemeral=True)
+        return False
+
+    def _page_payload(self) -> tuple[discord.Embed, discord.File]:
+        page = self.pages[self.index]
+        embed = discord.Embed(
+            title=page["title"],
+            description=page["description"],
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"Game {self.index + 1} of {len(self.pages)}")
+        embed.set_image(url=f"attachment://{page['filename']}")
+        file = discord.File(io.BytesIO(page["png"]), filename=page["filename"])
+        return embed, file
+
+    async def _previous(self, interaction: discord.Interaction) -> None:
+        self.index = max(0, self.index - 1)
+        self._sync_buttons()
+        embed, file = self._page_payload()
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    async def _next(self, interaction: discord.Interaction) -> None:
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        self._sync_buttons()
+        embed, file = self._page_payload()
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    async def on_timeout(self) -> None:
+        try:
+            message = await self.interaction.original_response()
+            await message.edit(view=None)
+        except discord.HTTPException:
+            pass
+
+
+def _cached_game_info_leaderboard_png(game_id: str, game_data: dict, processed_leaderboard: list) -> bytes:
+    now = time.monotonic()
+    cached = _leaderboard_image_cache.get(str(game_id))
+    if cached and (now - cached[1]) < _LEADERBOARD_CACHE_TTL_SEC:
+        return cached[0]
+    generator = LeaderboardImageGenerator(theme="discord_dark")
+    buf = generator.create_leaderboard_image(game_data, processed_leaderboard)
+    data = buf.getvalue()
+    _leaderboard_image_cache[str(game_id)] = (data, now)
+    return data
+
+
+@bot.tree.command(name="leaderboard", description="Your rank and leaderboard for games you're in")
+async def leaderboard_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=ephemeral_test)
+    user_id = interaction.user.id
+    try:
+        ranked = fe.list_my_games_ranked(user_id)
+    except LookupError:
+        await interaction.followup.send(
+            embed=simple_embed(
+                status="failed",
+                title="No games",
+                desc="You're not in any games yet. Try `/game-list` then `/join-game`.",
+            ),
+            ephemeral=ephemeral_test,
+        )
+        return
+    except Exception as exc:
+        logger.exception("leaderboard failed | user=%s", user_id, exc_info=exc)
+        await interaction.followup.send(
+            embed=simple_embed(status="failed", title="Error", desc="Could not load your games."),
+            ephemeral=ephemeral_test,
+        )
+        return
+
+    pages: list[dict] = []
+    for game, _player_count in ranked:
+        try:
+            info = fe.game_info(game.id, show_leaderboard=True)
+        except Exception:
+            continue
+        leaderboard = info.leaderboard or []
+        rank_desc = "You're not on the board yet."
+        for i, entry in enumerate(leaderboard, start=1):
+            if entry.user_id == user_id:
+                d_chg = float(entry.change_dollars or 0)
+                p_chg = float(entry.change_percent or 0)
+                rank_desc = f"Your rank: **#{i}** · ${d_chg:+,.2f} ({p_chg:+.2f}%)"
+                break
+        processed = []
+        for entry in leaderboard[:15]:
+            processed.append(
+                {
+                    "user_id": entry.user_id,
+                    "display_name": (entry.display_name or f"ID({entry.user_id})")[:16],
+                    "current_value": entry.current_value,
+                    "joined": entry.joined,
+                    "change_dollars": entry.change_dollars,
+                    "change_percent": entry.change_percent,
+                    "last_updated": entry.last_updated,
+                }
+            )
+        game_data = {
+            "name": game.name,
+            "id": game.id,
+            "owner": game.owner_id,
+            "starting_money": game.start_money,
+            "start_date": str(game.start_date),
+            "end_date": str(game.end_date) if game.end_date else None,
+            "status": game.status,
+        }
+        png = await asyncio.to_thread(
+            _cached_game_info_leaderboard_png,
+            str(game.id),
+            game_data,
+            processed,
+        )
+        pages.append(
+            {
+                "title": f"{game.name} [{game.id}]",
+                "description": rank_desc,
+                "png": png,
+                "filename": f"leaderboard_{game.id}.png",
+            }
+        )
+
+    if not pages:
+        await interaction.followup.send(
+            embed=simple_embed(status="failed", title="No leaderboards", desc="No games with leaderboard data."),
+            ephemeral=ephemeral_test,
+        )
+        return
+
+    view = UserLeaderboardView(interaction, pages)
+    embed, file = view._page_payload()
+    await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=ephemeral_test)
+
+
 @bot.tree.command(name="my-stocks", description="View your stocks in a game as a visual portfolio")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
@@ -1998,18 +2316,45 @@ async def my_stocks(
         # Generate image
         generator = StockPortfolioImageGenerator(theme='discord_dark')
         image_buffer = generator.create_portfolio_image(user_data, game_data, stock_picks, info)
-        
+
         # Create Discord file
         file = discord.File(image_buffer, filename=f"portfolio_{user_id}_{game_id}.png")
-        
-        # Send image with a simple message
-        await interaction.followup.send(
-            content=(
-                f'{fe.pick_capacity(user_id, game_id)[0]} of {info.game.pick_count} picks remaining '
-                f'(${float(info.game.start_money) / int(info.game.pick_count):,.2f} allocated per pick).'
+
+        game = info.game
+        rank_line = "Not ranked yet"
+        if info.leaderboard:
+            for i, entry in enumerate(info.leaderboard, start=1):
+                if entry.user_id == user_id:
+                    d_chg = float(entry.change_dollars or 0)
+                    p_chg = float(entry.change_percent or 0)
+                    rank_line = f"**#{i}** · ${d_chg:+,.2f} ({p_chg:+.2f}%)"
+                    break
+
+        remaining, total = fe.pick_capacity(user_id, game_id)
+        status_label = game.status
+        pick_line = (
+            f"Pick deadline: `{game.pick_date}`"
+            if game.pick_date
+            else "Buy anytime"
+        )
+        embed = discord.Embed(
+            title=f"{game.name}",
+            description=(
+                f"Game `{game.id}` · **{status_label}**\n"
+                f"{pick_line}\n"
+                f"Your rank: {rank_line}\n"
+                f"Picks remaining: **{remaining}** / {game.pick_count} "
+                f"(${float(game.start_money) / int(game.pick_count):,.2f} per pick)"
             ),
+            color=discord.Color.blurple(),
+        )
+        embed.set_image(url=f"attachment://portfolio_{user_id}_{game_id}.png")
+        embed.set_footer(text="More detail: /game-info")
+
+        await interaction.followup.send(
+            embed=embed,
             file=file,
-            ephemeral=ephemeral_test
+            ephemeral=ephemeral_test,
         )
         
     except DoesntExistError:
@@ -2194,7 +2539,6 @@ async def game_info(
 
 # TODO add buttons for joining games?
 # TODO add a joinable parameter?
-# TODO max page length cant be more than 25
 def _format_listed_game(
     game,
     player_count: int,
@@ -2399,48 +2743,32 @@ async def logs(
 async def help(interaction: discord.Interaction):
     title = "Stock Game Bot - Help"
     help_text = """
-## Available Commands
-All commands include built-in hints and help when you run them!
+## First 60 seconds
+1. `/game-list` — find a game
+2. `/join-game` — hop in
+3. `/buy-stock` — make your picks
+4. `/my-stocks` or `/leaderboard` — check how you're doing
 
-## How to Play
-1. **Find a game** using `/game-list` or **create your own** with `/create-game`
-2. **Join a game** using `/join-game`
-3. **Buy stocks** using `/buy-stock`
-4. **Watch the leaderboard** and see how your picks perform!
+## Playing
+- `/buy-stock` · `/remove-stock` (cancel pending only)
+- `/my-stocks` · `/leaderboard` · `/my-games`
+- `/game-info` · `/game-list` · `/user-stats`
 
-### Game Management
-- `/create-game` - Guided setup for stock game creation
-- `/create-game-advanced` - Create a new stock game without a wizard
-- `/manage-game` - Manage an existing stock game
-- `/delete-game` - For owners and admins to delete games (with confirmation)
-- `/invite` - Invite a user to a game (needs their DMs from this server enabled)
-- `/manage-pending` - Approve or deny pending users for your private game
-- `/leave-game` - Leave a game you've joined
-
-### Playing Games
-- `/join-game` - Join an existing stock game
-- `/buy-stock` - Buy a stock in a game
-- `/remove-stock` - Cancel a pending stock purchase (not yet owned)
-- `/my-stocks` - View your stocks in a game as a visual portfolio
-
-### Information & Stats
-- `/game-info` - View information about a game
-- `/game-list` - View public games (optional owner filter; pick the bot to see recurring games)
-- `/my-games` - View your games (same layout as `/game-list`, with status emojis)
-- `/user-stats` - Shows global statistics of a user. Shows yours by default
-- `/about` - About the bot and its creators
+## Games
+- `/create-game` (wizard) · `/create-game-advanced`
+- `/manage-game` · `/delete-game` · `/leave-game`
+- `/invite` · `/manage-pending` (private games)
 """
     if is_moderator(interaction):
         help_text += """
-### Privileged Commands
-These should be limited with **Server Settings → Integrations** (who can see/run them). The bot also requires Discord Administrator (or the bot OWNER) as a safety check.
-- `/create-recurring-game` - Create a recurring game template
-- `/manage-recurring-games` - Browse, stop, or delete recurring templates
-- `/update` - Force-update stock prices and game portfolios
-- `/logs` - Download bot logs
-
-## Need Help?
-Use `/help` to see this message again, or contact a server admin if you encounter any issues!"""
+## Moderators
+Restrict these under **Server Settings → Integrations**. Also requires Discord Administrator (or bot OWNER).
+- `/create-recurring-game` — optional live leaderboard push to a channel
+- `/manage-recurring-games` — stop/resume/delete + push channel
+- `/update` — force price/portfolio refresh (+ push)
+- `/logs` — download bot logs
+"""
+    help_text += "\nNeed more? Ask a server admin, or run `/about`."
     await interaction.response.send_message(embed=simple_embed(status='success', title=title, desc=help_text), ephemeral=ephemeral_test)
 
 # Run the bot using the token

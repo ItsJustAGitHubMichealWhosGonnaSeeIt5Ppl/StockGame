@@ -241,6 +241,47 @@ async def all_games_autocomplete(
 ) -> list[Choice[str]]:
     return await game_id_autocomplete(interaction, current, owner_only=False)
 
+
+async def join_games_autocomplete(
+    interaction: Interaction,
+    current: str,
+) -> list[Choice[str]]:
+    """Suggest public joinable games in the same order as ``/game-list``."""
+    try:
+        if _fe is None:
+            return []
+
+        ranked_games = _fe.list_games_ranked(
+            include_open=True,
+            include_active=True,
+        )
+        needle = current.strip().lower()
+        choices: list[Choice[str]] = []
+
+        for game, _player_count in ranked_games:
+            game_id = str(game.id)
+            searchable = f"{game.name} {game_id}".lower()
+            if needle and needle not in searchable:
+                continue
+
+            recurring = "🔁 " if game.template_id is not None else ""
+            choices.append(
+                Choice(
+                    name=f"{recurring}{game.name} (ID: {game_id})"[:100],
+                    value=game_id,
+                )
+            )
+            if len(choices) >= 25:
+                break
+
+        return choices
+    except LookupError:
+        return []
+    except Exception:
+        logger.debug('Join-game autocomplete failed.', exc_info=True)
+        return []
+
+
 async def owner_games_autocomplete(
     interaction: Interaction,
     current: str,

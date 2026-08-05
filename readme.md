@@ -122,6 +122,24 @@ docker run -d --name stockgame --env-file .env `
 - If the bot cannot write the database on Linux, ensure `./data` is writable (the entrypoint tries to fix ownership on start).
 - Local Python is not required for Docker; the image runs schema creation on first boot.
 
+### Database version, remake, and backups
+
+SQLite schema version is tracked in `database_info`. On startup / `create()`, if the file’s `current_version` does **not** match the code’s `db_ver`, the bot **backs up** the file under `data/backups/` then **remakes an empty schema** (no row migration yet). Expect to lose live game data on a version bump unless you restore from backup.
+
+Automatic backups (also under `data/backups/`):
+
+| Kind | When | Retention |
+|------|------|-----------|
+| `remake` | Before a version-mismatch remake | last 10 |
+| `daily` | Once per calendar day (on `update_all`) | last 7 |
+| `hourly` | Once per clock hour (on `update_all`) | last 24 |
+
+**Restore:** stop the bot → copy a `.db` backup over `DB_NAME` → start the bot.
+
+### Recurring leaderboard push
+
+On `/create-recurring-game`, set `push_leaderboard` and pick a text channel (bot needs View Channel, Send Messages, Embed Links, Attach Files). Manage later with `/manage-recurring-games` (Enable/Disable Push, Set Channel). After each scheduled `/update` cycle, the bot edits the stored leaderboard message in place (or re-sends if that message was deleted).
+
 
 
 ## Quick start (local Python)

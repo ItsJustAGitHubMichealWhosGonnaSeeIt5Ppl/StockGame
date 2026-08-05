@@ -2,7 +2,7 @@
 # Docker entrypoint: ensure data dirs exist, create SQLite DB if missing, then run CMD.
 set -e
 
-mkdir -p /app/data /app/logs
+mkdir -p /app/data /app/data/backups /app/logs
 
 prepare_database() {
   if [ -z "${DB_NAME:-}" ]; then
@@ -13,6 +13,7 @@ prepare_database() {
   if [ "$db_dir" != "." ]; then
     mkdir -p "$db_dir"
   fi
+  mkdir -p "$(dirname "$DB_NAME")/backups" 2>/dev/null || mkdir -p /app/data/backups
   if [ ! -f "$DB_NAME" ]; then
     echo "No database at ${DB_NAME}; creating schema..."
     python3 sqlite_creator_real.py
@@ -30,14 +31,14 @@ if [ "$(id -u)" = "0" ]; then
     fi
   fi
   gosu appuser sh -ec '
-    mkdir -p /app/data /app/logs
+    mkdir -p /app/data /app/data/backups /app/logs
     if [ -z "${DB_NAME:-}" ]; then
       echo "DB_NAME is not set; refusing to start." >&2
       exit 1
     fi
     db_dir=$(dirname "$DB_NAME")
     if [ "$db_dir" != "." ]; then
-      mkdir -p "$db_dir"
+      mkdir -p "$db_dir" "$db_dir/backups"
     fi
     if [ ! -f "$DB_NAME" ]; then
       echo "No database at ${DB_NAME}; creating schema..."
