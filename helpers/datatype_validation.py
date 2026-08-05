@@ -141,7 +141,6 @@ class GameParticipant(BaseModel):
     id: int = Field(validation_alias=AliasChoices('participation_id'))
     user_id: int
     game_id: int | str
-    name: Optional[str] = None
     status: ParticipantStatus = 'active'
     datetime_joined: datetime # YYYY-MM-DD HH:MM:SS 
     current_value: Optional[float] = None

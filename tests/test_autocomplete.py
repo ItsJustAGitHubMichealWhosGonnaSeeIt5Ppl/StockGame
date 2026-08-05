@@ -126,3 +126,50 @@ def test_join_game_autocomplete_uses_game_list_order_and_marks_recurring():
         ("🔁 Monthly (ID: REC01)", "REC01"),
         ("One Off (ID: ONE01)", "ONE01"),
     ]
+
+
+def test_leaderboard_autocomplete_groups_accessible_games():
+    my_recurring = SimpleNamespace(id="MYREC", name="My Monthly", template_id=7)
+    my_regular = SimpleNamespace(id="MYONE", name="My One Off", template_id=None)
+    other_recurring = SimpleNamespace(id="PUBRC", name="Public Monthly", template_id=8)
+    other_regular = SimpleNamespace(id="PUB01", name="Public One Off", template_id=None)
+    # Public listing may contain games already present in the user's list.
+    fake_frontend = SimpleNamespace(
+        list_my_games_ranked=lambda *args, **kwargs: [
+            (my_recurring, 3),
+            (my_regular, 2),
+        ],
+        list_games_ranked=lambda **kwargs: [
+            (my_recurring, 3),
+            (other_recurring, 8),
+            (my_regular, 2),
+            (other_regular, 12),
+        ],
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+    interaction = SimpleNamespace(user=SimpleNamespace(id=42))
+
+    choices = asyncio.run(autocomplete.leaderboard_games_autocomplete(interaction, ""))
+
+    assert [(choice.name, choice.value) for choice in choices] == [
+        ("My Monthly (ID: MYREC) [YOUR GAME · RECURRING]", "MYREC"),
+        ("My One Off (ID: MYONE) [YOUR GAME]", "MYONE"),
+        ("Public Monthly (ID: PUBRC) [RECURRING]", "PUBRC"),
+        ("Public One Off (ID: PUB01)", "PUB01"),
+    ]
+
+
+def test_leaderboard_autocomplete_searches_name_and_id():
+    game = SimpleNamespace(id="ZXCVB", name="Moon League", template_id=None)
+    fake_frontend = SimpleNamespace(
+        list_my_games_ranked=lambda *args, **kwargs: (_ for _ in ()).throw(LookupError()),
+        list_games_ranked=lambda **kwargs: [(game, 4)],
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+    interaction = SimpleNamespace(user=SimpleNamespace(id=42))
+
+    by_name = asyncio.run(autocomplete.leaderboard_games_autocomplete(interaction, "moon"))
+    by_id = asyncio.run(autocomplete.leaderboard_games_autocomplete(interaction, "xcv"))
+
+    assert [choice.value for choice in by_name] == ["ZXCVB"]
+    assert [choice.value for choice in by_id] == ["ZXCVB"]

@@ -251,8 +251,8 @@ class TestParticipants:
     def test_participant_crud_and_filters(self, be: Backend):
         owner_id, game = _owner_game(be, name="PartGame")
         be.add_user(700, "testing", display_name="Joiner")
-        be.add_participant(owner_id, game.id, team_name="OwnerTeam")
-        be.add_participant(700, game.id, team_name="TeamB")
+        be.add_participant(owner_id, game.id)
+        be.add_participant(700, game.id)
         parts = be.get_many_participants(game_id=game.id)
         assert len(parts) == 2
         by_user = be.get_many_participants(user_id=700, game_id=game.id)[0]
@@ -260,13 +260,11 @@ class TestParticipants:
         assert fetched.user_id == 700
         be.update_participant(
             by_user.id,
-            team_name="Renamed",
             current_value=1234.5,
             change_dollars=34.5,
             change_percent=2.8,
         )
         updated = be.get_participant(by_user.id)
-        assert updated.name == "Renamed"
         assert updated.current_value == 1234.5
         sorted_parts = be.get_many_participants(game_id=game.id, sort_by_value=True)
         assert sorted_parts[0].current_value >= (sorted_parts[1].current_value or 0)

@@ -1054,7 +1054,7 @@ class Backend:
         
 
     # # GAME PARTICIPATION ACTIONS # #
-    def add_participant(self, user_id:int, game_id:int | str, team_name:Optional[str]=None):
+    def add_participant(self, user_id:int, game_id:int | str):
         """Add a game participant
         
         Cannot add participant to a game that has already started.
@@ -1062,7 +1062,6 @@ class Backend:
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
-            team_name (Optional[str], optional): Nickname for this specific game.
         
         Raises:
             ValueError('`pick_date` has passed.'): The pick date for the game has already passed, so the player cannot be added.
@@ -1078,7 +1077,6 @@ class Backend:
         items = {
             'user_id':user_id, 
             'game_id':game_id,
-            'name': team_name,
             'status': status,
             'datetime_joined': _iso8601()
             }
@@ -1134,12 +1132,11 @@ class Backend:
         resp = self.sql.get(table='game_participants', order=order, filters=filters, ) 
         return self._many_get(typeadapter=dtv.GameParticipants, resp=resp)
     
-    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, days_in_first:Optional[int]=None):
+    def update_participant(self, participant_id:int, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, days_in_first:Optional[int]=None):
         """Update a game participant
 
         Args:
             participant_id (int): Participant ID.
-            name (Optional[str], optional): Team name.
             status (Optional[str], optional): Status ('pending', 'active', 'inactive').
             current_value (Optional[float], optional): Current portfolio value.
             change_dollars (float, optional): current_value - (starting_money / total_picks).  Rounded to two decimal points.
@@ -1151,7 +1148,6 @@ class Backend:
             table='game_participants',
             id_column='participation_id',
             item_id=participant_id,
-            name = team_name,
             status = status,
             current_value = current_value,
             change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
@@ -2086,8 +2082,6 @@ class Frontend: # This will be where a bot (like discord) interacts
     
     def game_info(self, game_id:int | str, show_leaderboard:bool=True) -> dtv.GameInfo: 
         """Get information and leaderboard for a game.
-        
-        If user has set a nickname for a game that will be returned, otherwise their username will be used
 
         Args:
             game_id (int): Game ID
@@ -2144,20 +2138,19 @@ class Frontend: # This will be where a bot (like discord) interacts
         except bexc.UserExistsError: # user already exists
             return "User already registered"
 
-    def join_game(self, user_id:int, game_id:int | str, name:Optional[str]=None):
+    def join_game(self, user_id:int, game_id:int | str):
         """Join a game.
 
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
-            name (str, optional): Team name/nickname for game.
         
         Raises:
             add_participant > bexc.DoesntExistError: Attempted to join a game that doesn't exist
         """
-        self.register(user_id, username=name) # Must try to register user
+        self.register(user_id) # Must try to register user
         try:
-            self.be.add_participant(user_id=int(user_id), game_id=game_id, team_name=name)
+            self.be.add_participant(user_id=int(user_id), game_id=game_id)
         except LookupError:
             raise LookupError('Game not found.')
             

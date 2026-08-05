@@ -1,9 +1,13 @@
-"""Rich recurring-leaderboard image + height-budget helpers."""
+"""Rich recurring-leaderboard image + height-budget helpers.
+
+Each player occupies one block: a two-line stat panel on the left and a grid of
+holding chips filling the right. Chips are ordered best performer first, reading
+left to right and then down.
+"""
 
 from __future__ import annotations
 
 import math
-from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -13,19 +17,81 @@ from helpers.views import LeaderboardImageGenerator
 
 LEADERBOARD_N_CANDIDATES = (5, 10, 15, 20, 25, 30)
 DEFAULT_MAX_IMAGE_HEIGHT = 3500
-CHIPS_PER_ROW = 10
+
+CHIPS_PER_ROW = 5
+CHIP_HEIGHT = 48
+CHIP_GAP = 8
+CHIP_BLOCK_PADDING = 20
+
+STAT_BOX_HEIGHT = 38
+STAT_BOX_GAP = 6
+STAT_BOX_TOP = 38
+# Name row plus a 2x2 grid of stat boxes sets the floor for every block.
+MIN_PLAYER_BLOCK = STAT_BOX_TOP + STAT_BOX_HEIGHT * 2 + STAT_BOX_GAP + 8
+
+TITLE_BLOCK = 66
+HEADER_BLOCK = 32
+FOOTER_BLOCK = 44
+
+IMAGE_WIDTH = 1100
+PANEL_WIDTH = 340
+
+_REGULAR_FONTS = (
+    "arial.ttf",
+    "Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+)
+_BOLD_FONTS = (
+    "arialbd.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+) + _REGULAR_FONTS
+
+# name -> (size, bold)
+_FONT_SPEC = {
+    "title": (26, True),
+    "header": (16, True),
+    "name": (17, True),
+    "text": (16, False),
+    "stat": (15, True),
+    "label": (10, False),
+    "ticker": (14, True),
+    "pct": (12, False),
+    "company": (11, False),
+    "small": (12, False),
+}
+
+
+def player_block_height(
+    pick_count: int,
+    *,
+    chip_row_height: int = CHIP_HEIGHT,
+    chip_gap: int = CHIP_GAP,
+    chips_per_row: int = CHIPS_PER_ROW,
+    min_block: int = MIN_PLAYER_BLOCK,
+) -> int:
+    """Height of one player's block; the stat panel sets the floor."""
+    rows = math.ceil(pick_count / chips_per_row) if pick_count > 0 else 0
+    if rows <= 0:
+        return min_block
+    grid = rows * chip_row_height + (rows - 1) * chip_gap + CHIP_BLOCK_PADDING
+    return max(min_block, grid)
+
+
+def sort_picks_by_performance(picks: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Best performer first, so chips read top-left to bottom-right."""
+    return sorted(picks, key=lambda p: float(p.get("change_percent") or 0), reverse=True)
 
 
 def estimate_recurring_leaderboard_height(
     n_players: int,
     picks_per_player: Union[Sequence[int], int],
     *,
-    base_height: int = 120,
-    header_row_height: int = 50,
-    chip_row_height: int = 50,
-    chips_per_row: int = CHIPS_PER_ROW,
-    title_block: int = 60,
-    footer_block: int = 40,
+    title_block: int = TITLE_BLOCK,
+    header_block: int = HEADER_BLOCK,
+    footer_block: int = FOOTER_BLOCK,
+    **block_kwargs: Any,
 ) -> int:
     """Estimate PNG height for N players given pick counts (list or uniform int)."""
     if isinstance(picks_per_player, int):
@@ -34,10 +100,9 @@ def estimate_recurring_leaderboard_height(
         picks = list(picks_per_player)[:n_players]
         while len(picks) < n_players:
             picks.append(0)
-    height = base_height + title_block + footer_block
+    height = title_block + header_block + footer_block
     for count in picks:
-        chip_rows = math.ceil(count / chips_per_row) if count > 0 else 0
-        height += header_row_height + chip_rows * chip_row_height
+        height += player_block_height(count, **block_kwargs)
     return height
 
 
@@ -71,54 +136,76 @@ def select_leaderboard_n(
 
 
 class RecurringLeaderboardImageGenerator:
-    """Rich leaderboard with stock chips for recurring channel pushes."""
+    """Split-panel leaderboard with holding chips for recurring channel pushes."""
 
     def __init__(
         self,
-        width: int = 1100,
+        width: int = IMAGE_WIDTH,
         theme: str = "discord_dark",
-        header_row_height: int = 50,
-        chip_row_height: int = 50,
+        panel_width: int = PANEL_WIDTH,
+        chip_row_height: int = CHIP_HEIGHT,
         chips_per_row: int = CHIPS_PER_ROW,
         max_height: int = DEFAULT_MAX_IMAGE_HEIGHT,
     ):
         self.width = width
         self.theme = theme
-        self.header_row_height = header_row_height
+        self.panel_width = panel_width
         self.chip_row_height = chip_row_height
         self.chips_per_row = chips_per_row
         self.max_height = max_height
         self._simple = LeaderboardImageGenerator(width=width, theme=theme)
         self.colors = dict(self._simple.colors)
         self.colors["chip_bg"] = (64, 68, 75)
-        self.fonts = dict(self._simple.fonts)
-        self.font_sizes = {
-            "title": 22,
-            "header": 14,
-            "text": 13,
-            "small": 10,
-            "ticker": 12,
-        }
-        self._load_extra_fonts()
+        self.colors["muted"] = (185, 187, 190)
+        self.fonts: Dict[str, Any] = {}
+        self._load_fonts()
 
-    def _load_extra_fonts(self) -> None:
-        font_paths = [
-            "arial.ttf",
-            "Arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-        for name, size in self.font_sizes.items():
-            loaded = False
-            for path in font_paths:
+    def _load_fonts(self) -> None:
+        for name, (size, bold) in _FONT_SPEC.items():
+            for path in (_BOLD_FONTS if bold else _REGULAR_FONTS):
                 try:
                     self.fonts[name] = ImageFont.truetype(path, size)
-                    loaded = True
                     break
                 except (OSError, IOError):
                     continue
-            if not loaded and name not in self.fonts:
+            else:
                 self.fonts[name] = ImageFont.load_default()
+
+    # -- text helpers ----------------------------------------------------- #
+
+    def _width(self, text: str, font: Any) -> float:
+        return font.getlength(text)
+
+    def _truncate(self, text: str, font: Any, max_width: float) -> str:
+        if self._width(text, font) <= max_width:
+            return text
+        while text and self._width(text + "~", font) > max_width:
+            text = text[:-1]
+        return text + "~"
+
+    def _wrap(self, text: str, font: Any, max_width: float, max_lines: int) -> List[str]:
+        lines: List[str] = []
+        current = ""
+        for word in text.split():
+            candidate = f"{current} {word}".strip()
+            if self._width(candidate, font) <= max_width or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+                if len(lines) == max_lines:
+                    break
+        if current and len(lines) < max_lines:
+            lines.append(current)
+        if not lines:
+            return []
+        lines[-1] = self._truncate(lines[-1], font, max_width)
+        return lines[:max_lines]
+
+    def _change_color(self, value: float):
+        return self.colors["positive"] if value >= 0 else self.colors["negative"]
+
+    # -- drawing ---------------------------------------------------------- #
 
     def create_image(
         self,
@@ -132,7 +219,6 @@ class RecurringLeaderboardImageGenerator:
             picks_counts,
             max_height=self.max_height,
             target=target_n,
-            header_row_height=self.header_row_height,
             chip_row_height=self.chip_row_height,
             chips_per_row=self.chips_per_row,
         )
@@ -140,52 +226,46 @@ class RecurringLeaderboardImageGenerator:
         height = estimate_recurring_leaderboard_height(
             len(players),
             [len(p.get("picks") or []) for p in players],
-            header_row_height=self.header_row_height,
             chip_row_height=self.chip_row_height,
             chips_per_row=self.chips_per_row,
         )
+
         img = Image.new("RGB", (self.width, height), self.colors["bg"])
         draw = ImageDraw.Draw(img)
-        y = 20
+
         title = f"{game_data.get('name', 'Game')} (ID: {game_data.get('id', 'N/A')})"
-        y = self._simple._draw_centered_text(draw, title, y, self.fonts["title"], self.colors["text"])
-        y += 10
-        y = self._draw_column_header(draw, y)
+        draw.text(
+            ((self.width - self._width(title, self.fonts["title"])) / 2, 18),
+            title,
+            fill=self.colors["text"],
+            font=self.fonts["title"],
+        )
+
+        y = TITLE_BLOCK
+        draw.rectangle([0, y, self.width, y + HEADER_BLOCK], fill=self.colors["header"])
+        draw.text((18, y + 7), "Investor", fill=self.colors["text"], font=self.fonts["header"])
+        draw.text(
+            (self.panel_width + 18, y + 7),
+            "Holdings",
+            fill=self.colors["text"],
+            font=self.fonts["header"],
+        )
+        y += HEADER_BLOCK
+
         for idx, player in enumerate(players):
             y = self._draw_player_block(draw, player, idx, y)
+
         draw.text(
-            (20, height - 28),
+            (20, height - 26),
             "StockBot · recurring leaderboard",
             fill=self.colors["footer"],
             font=self.fonts["small"],
         )
+
         buf = BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
         return buf
-
-    def _draw_column_header(self, draw: ImageDraw.ImageDraw, y: int) -> int:
-        draw.rectangle([0, y, self.width, y + 36], fill=self.colors["header"])
-        cols = [
-            (16, "Rank"),
-            (70, "Investor"),
-            (280, "Portfolio"),
-            (420, "$"),
-            (520, "%"),
-            (620, "Days #1"),
-            (720, "Joined"),
-        ]
-        for x, label in cols:
-            draw.text((x, y + 8), label, fill=self.colors["text"], font=self.fonts["header"])
-        return y + 36
-
-    def _draw_arrow(self, draw: ImageDraw.ImageDraw, x: int, y: int, up: bool) -> None:
-        color = self.colors["positive"] if up else self.colors["negative"]
-        if up:
-            points = [(x + 5, y), (x, y + 10), (x + 10, y + 10)]
-        else:
-            points = [(x, y), (x + 10, y), (x + 5, y + 10)]
-        draw.polygon(points, fill=color)
 
     def _draw_player_block(
         self,
@@ -194,42 +274,104 @@ class RecurringLeaderboardImageGenerator:
         idx: int,
         y: int,
     ) -> int:
+        picks = sort_picks_by_performance(list(player.get("picks") or []))
+        block_h = player_block_height(
+            len(picks),
+            chip_row_height=self.chip_row_height,
+            chips_per_row=self.chips_per_row,
+        )
         row_bg = self.colors["row_bg_1"] if idx % 2 == 0 else self.colors["row_bg_2"]
-        draw.rectangle([0, y, self.width, y + self.header_row_height], fill=row_bg)
-        rank_color = self._simple._get_rank_color(idx)
-        draw.text((16, y + 15), f"{idx + 1}.", fill=rank_color, font=self.fonts["text"])
-        name = str(player.get("display_name") or f"ID({player.get('user_id')})")
-        if len(name) > 18:
-            name = name[:17] + "~"
-        draw.text((70, y + 15), name, fill=self.colors["text"], font=self.fonts["text"])
-        value = float(player.get("current_value") or 0)
-        draw.text((280, y + 15), f"${value:,.2f}", fill=self.colors["text"], font=self.fonts["text"])
-        d_chg = float(player.get("change_dollars") or 0)
-        d_color = self.colors["positive"] if d_chg >= 0 else self.colors["negative"]
-        draw.text((420, y + 15), f"${d_chg:+,.2f}", fill=d_color, font=self.fonts["text"])
-        p_chg = float(player.get("change_percent") or 0)
-        p_color = self.colors["positive"] if p_chg >= 0 else self.colors["negative"]
-        draw.text((520, y + 15), f"{p_chg:+.2f}%", fill=p_color, font=self.fonts["text"])
-        days = int(player.get("days_in_first") or 0)
-        draw.text((620, y + 15), str(days), fill=self.colors["text"], font=self.fonts["text"])
-        joined = player.get("joined")
-        if isinstance(joined, (datetime, date)):
-            joined_s = joined.strftime("%Y-%m-%d")
-        else:
-            joined_s = str(joined or "")[:10]
-        draw.text((720, y + 15), joined_s, fill=self.colors["text"], font=self.fonts["text"])
-        y += self.header_row_height
+        draw.rectangle([0, y, self.width, y + block_h], fill=row_bg)
 
-        picks = list(player.get("picks") or [])
-        for row_i in range(0, len(picks), self.chips_per_row):
-            row_picks = picks[row_i : row_i + self.chips_per_row]
-            draw.rectangle([0, y, self.width, y + self.chip_row_height], fill=row_bg)
-            chip_w = (self.width - 24) // self.chips_per_row
-            for ci, pick in enumerate(row_picks):
-                x0 = 12 + ci * chip_w
-                self._draw_chip(draw, x0, y + 4, chip_w - 6, self.chip_row_height - 8, pick)
-            y += self.chip_row_height
-        return y
+        place = int(player.get("rank") or idx + 1)
+        rank = f"{place}."
+        draw.text(
+            (18, y + 9),
+            rank,
+            fill=self._simple._get_rank_color(place - 1),
+            font=self.fonts["name"],
+        )
+        name_x = 18 + max(self._width(rank, self.fonts["name"]), 22) + 10
+        name = str(player.get("display_name") or f"ID({player.get('user_id')})")
+        draw.text(
+            (name_x, y + 9),
+            self._truncate(name, self.fonts["name"], self.panel_width - name_x - 18),
+            fill=self.colors["text"],
+            font=self.fonts["name"],
+        )
+
+        value = float(player.get("current_value") or 0)
+        d_chg = float(player.get("change_dollars") or 0)
+        p_chg = float(player.get("change_percent") or 0)
+        days = int(player.get("days_in_first") or 0)
+        stats = (
+            ("Total Value", f"${value:,.2f}", self.colors["text"]),
+            ("Gain ($)", f"${d_chg:+,.2f}", self._change_color(d_chg)),
+            ("Gain (%)", f"{p_chg:+.2f}%", self._change_color(p_chg)),
+            ("Days in First", str(days), self.colors["gold"] if days else self.colors["text"]),
+        )
+        box_w = (self.panel_width - 36 - STAT_BOX_GAP) // 2
+        for i, (label, text, color) in enumerate(stats):
+            row, col = divmod(i, 2)
+            self._draw_stat_box(
+                draw,
+                18 + col * (box_w + STAT_BOX_GAP),
+                y + STAT_BOX_TOP + row * (STAT_BOX_HEIGHT + STAT_BOX_GAP),
+                box_w,
+                STAT_BOX_HEIGHT,
+                label,
+                text,
+                color,
+            )
+
+        draw.line(
+            [(self.panel_width, y + 8), (self.panel_width, y + block_h - 8)],
+            fill=self.colors["bg"],
+            width=2,
+        )
+
+        grid_width = self.width - self.panel_width - 36
+        chip_w = (grid_width - CHIP_GAP * (self.chips_per_row - 1)) // self.chips_per_row
+        for index, pick in enumerate(picks):
+            row, col = divmod(index, self.chips_per_row)
+            self._draw_chip(
+                draw,
+                self.panel_width + 18 + col * (chip_w + CHIP_GAP),
+                y + 10 + row * (self.chip_row_height + CHIP_GAP),
+                chip_w,
+                self.chip_row_height,
+                pick,
+            )
+        return y + block_h
+
+    def _draw_stat_box(
+        self,
+        draw: ImageDraw.ImageDraw,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        label: str,
+        value: str,
+        value_color,
+    ) -> None:
+        """Labelled stat tile so each number says what it is."""
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=5, fill=self.colors["chip_bg"])
+        draw.text((x + 8, y + 5), label, fill=self.colors["muted"], font=self.fonts["label"])
+        draw.text(
+            (x + 8, y + 17),
+            self._truncate(value, self.fonts["stat"], w - 16),
+            fill=value_color,
+            font=self.fonts["stat"],
+        )
+
+    def _draw_arrow(self, draw: ImageDraw.ImageDraw, x: float, y: float, up: bool, size: int = 8) -> None:
+        color = self.colors["positive"] if up else self.colors["negative"]
+        half = size / 2
+        if up:
+            draw.polygon([(x + half, y), (x, y + size), (x + size, y + size)], fill=color)
+        else:
+            draw.polygon([(x, y), (x + size, y), (x + half, y + size)], fill=color)
 
     def _draw_chip(
         self,
@@ -240,18 +382,41 @@ class RecurringLeaderboardImageGenerator:
         h: int,
         pick: Dict[str, Any],
     ) -> None:
+        """Ticker, arrow and percent share the top line; company wraps beneath."""
         draw.rounded_rectangle([x, y, x + w, y + h], radius=6, fill=self.colors["chip_bg"])
-        ticker = str(pick.get("ticker") or pick.get("stock_ticker") or "?")[:8]
-        company = str(pick.get("company") or pick.get("company_name") or "")[:14]
+        pad = 8
+        inner = w - pad * 2
+        left = x + pad
+
         pct = float(pick.get("change_percent") or 0)
-        draw.text(
-            (x + 6, y + 4),
-            ticker,
-            fill=self.colors["text"],
-            font=self.fonts.get("ticker", self.fonts["small"]),
+        pct_text = f"{pct:+.1f}%"
+        pct_w = self._width(pct_text, self.fonts["pct"])
+        arrow_size = 8
+        gap = 5
+
+        ticker_budget = max(inner - pct_w - arrow_size - gap * 2, 10)
+        ticker = self._truncate(
+            str(pick.get("ticker") or pick.get("stock_ticker") or "?"),
+            self.fonts["ticker"],
+            ticker_budget,
         )
+        draw.text((left, y + 4), ticker, fill=self.colors["text"], font=self.fonts["ticker"])
+
+        arrow_x = left + self._width(ticker, self.fonts["ticker"]) + gap
+        self._draw_arrow(draw, arrow_x, y + 8, up=pct >= 0, size=arrow_size)
+        draw.text(
+            (arrow_x + arrow_size + 3, y + 6),
+            pct_text,
+            fill=self._change_color(pct),
+            font=self.fonts["pct"],
+        )
+
+        company = str(pick.get("company") or pick.get("company_name") or "")
         if company:
-            draw.text((x + 6, y + 18), company, fill=self.colors["footer"], font=self.fonts["small"])
-        self._draw_arrow(draw, x + w - 36, y + 8, up=pct >= 0)
-        pct_color = self.colors["positive"] if pct >= 0 else self.colors["negative"]
-        draw.text((x + w - 24, y + 6), f"{pct:+.1f}", fill=pct_color, font=self.fonts["small"])
+            for i, line in enumerate(self._wrap(company, self.fonts["company"], inner, max_lines=2)):
+                draw.text(
+                    (left, y + 23 + i * 12),
+                    line,
+                    fill=self.colors["muted"],
+                    font=self.fonts["company"],
+                )
