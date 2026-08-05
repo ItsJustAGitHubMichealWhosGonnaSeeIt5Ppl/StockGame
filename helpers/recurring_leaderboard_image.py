@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -211,11 +212,11 @@ class RecurringLeaderboardImageGenerator:
         draw.text((520, y + 15), f"{p_chg:+.2f}%", fill=p_color, font=self.fonts["text"])
         days = int(player.get("days_in_first") or 0)
         draw.text((620, y + 15), str(days), fill=self.colors["text"], font=self.fonts["text"])
-        joined = player.get("joined") or ""
-        if hasattr(joined, "strftime"):
+        joined = player.get("joined")
+        if isinstance(joined, (datetime, date)):
             joined_s = joined.strftime("%Y-%m-%d")
         else:
-            joined_s = str(joined)[:10]
+            joined_s = str(joined or "")[:10]
         draw.text((720, y + 15), joined_s, fill=self.colors["text"], font=self.fonts["text"])
         y += self.header_row_height
 

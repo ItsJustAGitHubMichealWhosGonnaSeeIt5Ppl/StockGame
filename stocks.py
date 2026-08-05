@@ -632,8 +632,9 @@ class Backend:
         if isinstance(template_id, int):
             return template_id
         fetched = self.sql.get(table='game_templates', filters={'game_name': name})
-        if fetched.status == 'success' and fetched.result:
-            return int(fetched.result[0]['template_id'])
+        if fetched.status == 'success' and isinstance(fetched.result, tuple) and fetched.result:
+            row = cast(dict[str, Any], fetched.result[0])
+            return int(row['template_id'])
         raise Exception('Template created but id could not be resolved.', resp)
 
     def get_game_template(self, template_id:int):
