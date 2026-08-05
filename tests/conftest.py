@@ -4,6 +4,16 @@ import tempfile
 # PART GEMINI BUT IT DIDNT REALLY WORK 
 MODULE_NAME_FOR_PATCHING = "stocks"
 
+# discord_bot validates these at import time and builds a Frontend from DB_NAME.
+# Seed them here so the suite never needs a .env and never opens the real database.
+# load_dotenv() does not override existing values, so a local .env stays out of tests.
+for _key, _value in (
+    ("DISCORD_TOKEN", "fake-token-for-tests"),
+    ("DB_NAME", os.path.join(tempfile.mkdtemp(prefix="stockgame-tests-"), "bot_test.sqlite")),
+    ("OWNER", "10"),
+):
+    os.environ.setdefault(_key, _value)
+
 MOCK_DATETIME_STR = "2025-05-21 10:00:00" # Fixed timestamp for tests
 MOCK_DATE_STR = "2025-05-21" # Fixed date for tests
 
