@@ -19,6 +19,7 @@ import helpers.datatype_validation as dtv
 import helpers.exceptions as bexc
 from helpers.alpaca_client import AlpacaMarketData, to_alpaca_symbol, to_db_ticker
 from helpers.sqlhelper import SqlHelper, _iso8601, Status
+from helpers.db_backup import maybe_daily_backup, maybe_hourly_backup
 from sqlite_creator_real import create as create_db
 
 load_dotenv() 
@@ -471,7 +472,7 @@ class Backend:
         
         raise Exception('Failed to repair games', e)
         
-    def update_game(self, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, clear_end_date:bool=False, clear_pick_date:bool=False):
+    def update_game(self, game_id:int | str, owner:Optional[int]=None, name:Optional[str]=None, start_date:Optional[str]=None, end_date:Optional[str]=None, status:Optional[str]=None, starting_money:Optional[float]=None, pick_date:Optional[str]=None, private_game:Optional[bool]=None, total_picks:Optional[int]=None, exclusive_picks:Optional[bool]=None, sell_during_game:Optional[bool]=None, update_frequency:Optional[dtv.UpdateFrequency]=None, aggregate_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, leaderboard_message_id:Optional[str]=None, clear_leaderboard_message:bool=False, clear_end_date:bool=False, clear_pick_date:bool=False):
         """Update an existing game
         
         Args:
@@ -491,6 +492,8 @@ class Backend:
             aggregate_value (float, optional): Total value of all game participants stocks.  Shouldn't be changed manually.
             change_dollars (float, optional): aggregate_value - (starting_money * total participants).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
+            leaderboard_message_id (Optional[str], optional): Discord message id for recurring leaderboard push.
+            clear_leaderboard_message (bool, optional): Clear stored leaderboard message id.
             clear_end_date (bool, optional): Remove the optional end date.
             clear_pick_date (bool, optional): Remove the optional pick deadline.
         """
@@ -539,6 +542,7 @@ class Backend:
                 aggregate_value = aggregate_value,
                 change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
                 change_percent = round(change_percent, 2) if change_percent is not None else None,
+                leaderboard_message_id = 'NULL' if clear_leaderboard_message else leaderboard_message_id,
                 last_updated = _iso8601()
             )
         except ValueError as e: # Raised when Constraint check fails
@@ -563,7 +567,7 @@ class Backend:
                 self.get_game(game['game_id']) 
     
     # # GAME TEMPLATE ACTIONS # #
-    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca'):
+    def add_game_template(self, user_id:int, name:str, start_date:str, create_days_in_advance:int=0, recurring_period:int=1, game_length:int=1, starting_money:float=10000.00, pick_date:Optional[int]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca') -> int:
         #TODO support basic variables in the game name
         if not start_date or not self._validate_date(start_date):
             raise bexc.InvalidDateFormatError('Invalid `start_date` format.')
@@ -623,7 +627,16 @@ class Backend:
                 )
 
             raise Exception(f'Failed to add game.', resp)
-        
+        # Prefer lastrowid from insert Status when available
+        template_id = getattr(resp, 'result', None)
+        if isinstance(template_id, int):
+            return template_id
+        fetched = self.sql.get(table='game_templates', filters={'game_name': name})
+        if fetched.status == 'success' and isinstance(fetched.result, tuple) and fetched.result:
+            row = cast(dict[str, Any], fetched.result[0])
+            return int(row['template_id'])
+        raise Exception('Template created but id could not be resolved.', resp)
+
     def get_game_template(self, template_id:int):
         #TODO docstring
         resp = self.sql.get(table='game_templates',filters={'template_id': int(template_id)})
@@ -638,9 +651,29 @@ class Backend:
         templates = self._many_get(typeadapter=dtv.GameTemplates, resp=resp)
         return templates
     
-    def update_game_template(self, template_id:int, name:Optional[str]=None, status:Optional[dtv.GameTemplateStatus]=None, create_days_in_advance:Optional[int]=None, recurring_period:Optional[int]=None, game_length:Optional[int]=None):
-        """Update the mutable scheduling fields on a recurring-game template."""
-        if name is None and status is None and create_days_in_advance is None and recurring_period is None and game_length is None:
+    def update_game_template(
+        self,
+        template_id: int,
+        name: Optional[str] = None,
+        status: Optional[dtv.GameTemplateStatus] = None,
+        create_days_in_advance: Optional[int] = None,
+        recurring_period: Optional[int] = None,
+        game_length: Optional[int] = None,
+        push_leaderboard: Optional[bool] = None,
+        leaderboard_channel_id: Optional[str] = None,
+        clear_leaderboard_channel: bool = False,
+    ):
+        """Update the mutable scheduling / push fields on a recurring-game template."""
+        if (
+            name is None
+            and status is None
+            and create_days_in_advance is None
+            and recurring_period is None
+            and game_length is None
+            and push_leaderboard is None
+            and leaderboard_channel_id is None
+            and not clear_leaderboard_channel
+        ):
             raise ValueError('At least one template field must be changed.')
         if status is not None and status not in get_args(dtv.GameTemplateStatus):
             raise ValueError(f'Invalid template status {status}')
@@ -650,6 +683,7 @@ class Backend:
             raise ValueError('`create_days_in_advance` cannot be negative.')
         if game_length is not None and game_length < 0:
             raise ValueError('`game_length` cannot be negative.')
+        channel_value: Optional[str] = 'NULL' if clear_leaderboard_channel else leaderboard_channel_id
         self._update_single(
             table='game_templates',
             id_column='template_id',
@@ -660,6 +694,8 @@ class Backend:
             create_days_in_advance=create_days_in_advance,
             recurring_period=recurring_period,
             game_length=game_length,
+            push_leaderboard=int(push_leaderboard) if push_leaderboard is not None else None,
+            leaderboard_channel_id=channel_value,
             last_updated=_iso8601(),
         )
 
@@ -1098,7 +1134,7 @@ class Backend:
         resp = self.sql.get(table='game_participants', order=order, filters=filters, ) 
         return self._many_get(typeadapter=dtv.GameParticipants, resp=resp)
     
-    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None):
+    def update_participant(self, participant_id:int, team_name:Optional[str]=None, status:Optional[str]=None, current_value:Optional[float]=None, change_dollars:Optional[float]=None, change_percent:Optional[float]=None, days_in_first:Optional[int]=None):
         """Update a game participant
 
         Args:
@@ -1108,6 +1144,7 @@ class Backend:
             current_value (Optional[float], optional): Current portfolio value.
             change_dollars (float, optional): current_value - (starting_money / total_picks).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
+            days_in_first (Optional[int], optional): Days ended ranked #1 after NYSE close.
         """
         
         self._update_single(
@@ -1119,6 +1156,7 @@ class Backend:
             current_value = current_value,
             change_dollars = round(change_dollars, 2) if change_dollars is not None else None,
             change_percent = round(change_percent, 2) if change_percent is not None else None,
+            days_in_first = days_in_first,
             last_updated = _iso8601()
             )
         
@@ -1562,7 +1600,60 @@ class GameLogic: # Might move some of the control/running actions here
             game_dollar_change = aggr_val - (game.start_money * len(players))
             game_percent_change =  (game_dollar_change / (game.start_money * len(players))) * 100 
             self.be.update_game(game_id=game.id, aggregate_value=aggr_val, change_dollars=game_dollar_change, change_percent=game_percent_change)
-               
+
+    def record_days_in_first(self, game_id: Optional[int | str] = None) -> None:
+        """Award +1 ``days_in_first`` to each active game's #1 after NYSE close (idempotent per trade date)."""
+        if self._is_market_hours():
+            return
+        trade_date = self._today_et()
+        # Skip weekend calendar days (no regular session to close).
+        if trade_date.weekday() >= 5:
+            return
+        trade_date_str = trade_date.isoformat()
+        try:
+            if game_id:
+                games = [self.be.get_game(game_id=game_id)]
+            else:
+                games = list(self.be.get_many_games(include_open=False, include_active=True))
+        except LookupError:
+            return
+
+        for game in games:
+            if game.status != 'active':
+                continue
+            existing = self.be.sql.get(
+                table='leaderboard_day_snapshots',
+                filters={'game_id': str(game.id), 'trade_date': trade_date_str},
+            )
+            if existing.status == 'success':
+                continue
+            try:
+                players = self.be.get_many_participants(game_id=game.id, status='active', sort_by_value=True)
+            except LookupError:
+                continue
+            if not players:
+                continue
+            leader = players[0]
+            new_days = int(getattr(leader, 'days_in_first', 0) or 0) + 1
+            self.be.update_participant(participant_id=leader.id, days_in_first=new_days)
+            snap = self.be.sql.insert(
+                table='leaderboard_day_snapshots',
+                items={
+                    'game_id': str(game.id),
+                    'trade_date': trade_date_str,
+                    'first_user_id': int(leader.user_id),
+                    'datetime_created': _iso8601(),
+                },
+            )
+            if snap.status != 'success':
+                # Race / duplicate: leave days_in_first as-is if insert lost the race.
+                self.logger.debug(
+                    'days_in_first snapshot insert skipped for game %s date %s: %s',
+                    game.id,
+                    trade_date_str,
+                    snap.reason,
+                )
+
     def update_all(self, game_id:Optional[int | str]=None, force:bool=False):
         """Run all update commands/logic for games
 
@@ -1570,12 +1661,15 @@ class GameLogic: # Might move some of the control/running actions here
             game_id (Optional[int], optional): Game ID.  If blank, all active games will be updated.
             force (bool, optional): Force update games that may not be updated due to frequency. Defaults to False.
         """
+        maybe_daily_backup(self.be.sql.db)
+        maybe_hourly_backup(self.be.sql.db)
         if game_id is None:
             self.recurring_games()
         self.update_game_statuses(game_id=game_id) # Update games statuses (start and stop)
         self.update_stock_prices(game_id=game_id, force=force) # Update stock prices
         self.update_stock_picks(game_id=game_id, force=force) # Handle pending stock picks
         self.update_participants_and_games(game_id=game_id) # Update participants (set their total value, etc.)
+        self.record_days_in_first(game_id=game_id)
             
     def find_stock(self, ticker:str) -> str: 
         """Find and add a US equity to the database via Alpaca market data.
@@ -2022,6 +2116,8 @@ class Frontend: # This will be where a bot (like discord) interacts
                         'joined': player.datetime_joined,
                         'change_dollars': round(player.change_dollars, 2) if player.change_dollars else 0, # Round to two decimal places
                         'change_percent': round(player.change_percent, 2) if player.change_percent else 0, # Round to two decimal places
+                        'days_in_first': int(getattr(player, 'days_in_first', 0) or 0),
+                        'display_name': user.display_name or f'ID({player.user_id})',
                         'last_updated': player.last_updated
                     }) # Should keep order
             except LookupError: # No players in game

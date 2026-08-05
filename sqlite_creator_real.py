@@ -1,11 +1,13 @@
+import logging
 import sqlite3
 import os 
 from pathlib import Path
-import shutil
 from helpers.sqlhelper import SqlHelper, _iso8601
+from helpers.db_backup import create_db_backup
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger("SqliteCreator")
 #TODO change datetime_updated to last_updated, and use a unix timestamp
 #TODO change aggregate_value to total value for consistency
 #TODO check the add a guild field to verify that the server is the same 
@@ -13,216 +15,108 @@ load_dotenv()
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
-db_ver = "0.1.1" # This is the current DB version.  Using b to indicate a beta, might not use this in producton, idk  
-def upgrade_db(db_name:str, db_current_ver:str=db_ver, force_upgrade:bool=False):
-    """Rebuild an older schema into the current schema and keep a backup.
+db_ver = "0.2.0"  # Current schema version
 
-    The source database is never moved or deleted until the rebuilt temporary
-    database has copied all rows and passed SQLite's foreign-key check.
-    """
-    target_version = db_current_ver
-    source_path = Path(db_name)
-    source = sqlite3.connect(source_path)
-    source.row_factory = sqlite3.Row
+
+def _read_db_version(db_name: str) -> str | None:
+    """Return ``database_info.current_version``, or None if unreadable/missing."""
+    path = Path(db_name)
+    if not path.is_file() or path.stat().st_size <= 0:
+        return None
+    conn = sqlite3.connect(path)
     try:
-        has_info = source.execute(
+        has_info = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='database_info'"
         ).fetchone()
-        info_row = None
-        if has_info:
-            info_row = source.execute(
-                "SELECT original_version, current_version FROM database_info LIMIT 1"
-            ).fetchone()
-        current_version = info_row['current_version'] if info_row else '0.0.2'
-        original_version = info_row['original_version'] if info_row else current_version
-        if current_version == target_version and not force_upgrade:
+        if not has_info:
             return None
-
-        temp_path = source_path.with_name(source_path.name + '.upgrade.tmp')
-        if temp_path.exists():
-            temp_path.unlink()
-        create(str(temp_path), upgrade=False)
-        destination = sqlite3.connect(temp_path)
-        destination.execute('PRAGMA foreign_keys = OFF')
-        table_order = (
-            'users', 'game_templates', 'games', 'stocks', 'stock_prices',
-            'game_participants', 'stock_picks',
-        )
-        now = _iso8601()
-        seen_template_names: set[str] = set()
-        for table in table_order:
-            exists = source.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-            ).fetchone()
-            if not exists:
-                continue
-            destination_columns = {
-                row[1] for row in destination.execute(f'PRAGMA table_info("{table}")')
-            }
-            for source_row in source.execute(f'SELECT * FROM "{table}"'):
-                row = dict(source_row)
-                if 'datetime_updated' in row and 'last_updated' not in row:
-                    row['last_updated'] = row.pop('datetime_updated')
-                if table == 'users' and not row.get('source'):
-                    row['source'] = 'Unknown'
-                if table == 'game_templates':
-                    row.setdefault('template_name', row.get('game_name') or 'Recurring game')
-                    row.setdefault('game_name', row.get('template_name') or 'Recurring game')
-                    base_name = str(row['game_name'])
-                    unique_name = base_name
-                    suffix = 2
-                    while unique_name in seen_template_names:
-                        trimmed = base_name[: max(1, 35 - len(f' {suffix}'))]
-                        unique_name = f'{trimmed} {suffix}'
-                        suffix += 1
-                    seen_template_names.add(unique_name)
-                    row['game_name'] = unique_name
-                    row['template_name'] = unique_name
-                if table == 'stock_picks' and not row.get('datetime_created'):
-                    row['datetime_created'] = row.get('last_updated') or now
-                row.setdefault('datetime_created', now)
-                filtered = {key: value for key, value in row.items() if key in destination_columns}
-                columns = list(filtered)
-                placeholders = ','.join('?' for _ in columns)
-                quoted_columns = ','.join(f'"{column}"' for column in columns)
-                destination.execute(
-                    f'INSERT INTO "{table}" ({quoted_columns}) VALUES ({placeholders})',
-                    [filtered[column] for column in columns],
-                )
-
-        destination.execute('DELETE FROM database_info')
-        destination.execute(
-            """INSERT INTO database_info
-               (database_name, original_version, current_version, datetime_created, last_updated)
-               VALUES (?, ?, ?, ?, ?)""",
-            (str(source_path), original_version, target_version, now, now),
-        )
-        destination.commit()
-        destination.execute('PRAGMA foreign_keys = ON')
-        violations = destination.execute('PRAGMA foreign_key_check').fetchall()
-        if violations:
-            raise ValueError(f'Foreign-key violations after database upgrade: {violations}')
-        destination.close()
-    except Exception:
-        if 'destination' in locals():
-            destination.close()
-        if 'temp_path' in locals() and temp_path.exists():
-            temp_path.unlink()
-        raise
+        row = conn.execute(
+            "SELECT current_version FROM database_info LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
+    except sqlite3.Error:
+        return None
     finally:
-        source.close()
+        conn.close()
 
-    backup_path = source_path.with_name(source_path.name + '.pre-010.bak')
-    counter = 1
-    while backup_path.exists():
-        backup_path = source_path.with_name(source_path.name + f'.pre-010.{counter}.bak')
-        counter += 1
-    shutil.copy2(source_path, backup_path)
-    os.replace(temp_path, source_path)
-    return str(backup_path)
+
+def remake_db_on_mismatch(
+    db_name: str,
+    db_current_ver: str = db_ver,
+    *,
+    force: bool = False,
+) -> str | None:
+    """Keep the DB only when versions match; otherwise backup then remake empty schema.
+
+    Returns the remake backup path when a remake ran, else None.
+
+    TODO: Real row-preserving migrations can return here later (formerly ``upgrade_db``).
+    """
+    path = Path(db_name)
+    if not path.is_file() or path.stat().st_size <= 0:
+        create(db_name, upgrade=False)
+        return None
+
+    current = _read_db_version(db_name)
+    if current == db_current_ver and not force:
+        return None
+
+    old_label = (current or "unknown").replace("/", "_")
+    new_label = db_current_ver.replace("/", "_")
+    label = f"{old_label}-to-{new_label}"
+    backup = create_db_backup(db_name, kind="remake", label=label)
+    logger.warning(
+        "DB version mismatch (found=%s, expected=%s); remaking empty schema. Backup: %s",
+        current,
+        db_current_ver,
+        backup,
+    )
+    path.unlink(missing_ok=True)
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+    create(db_name, upgrade=False)
+    return str(backup) if backup else None
+
+
+def upgrade_db(db_name: str, db_current_ver: str = db_ver, force_upgrade: bool = False):
+    """Deprecated alias for remake-on-mismatch (no row copy). Prefer ``remake_db_on_mismatch``."""
+    return remake_db_on_mismatch(db_name, db_current_ver, force=force_upgrade)
 
 
 def create(db_name:str, upgrade:bool=True):
-    """Create database and upgrade older databases to the current version
-    
-    Version: 0.1.0
+    """Create database schema; on version mismatch, backup then remake empty DB.
+
+    Version: 0.2.0
 
     Args:
         db_name (str): Database name
-        upgrade (bool, optional): Whether to try to upgrade older databases to the newest version.  Defaults to True.
-    
+        upgrade (bool, optional): When True, remake if ``database_info`` version
+            does not match ``db_ver``. Defaults to True.
 
     # Changelog
-    This tries to comply with Semantic versioning with varying success...
-    
-    ## [0.1.0] - 2025-06-27
-    This version requires the database to be recreated. A copy of the original DB will be made.
-    
+
+    ## [0.2.0] - 2026-08-05
     ### Added
-    - `template_name`, `template_description`, `game_description` to game_templates table
-
-    ### Fixed
-    - Upgrade tool
-
+    - ``push_leaderboard``, ``leaderboard_channel_id`` on game_templates
+    - ``leaderboard_message_id`` on games
+    - ``days_in_first`` on game_participants
+    - ``leaderboard_day_snapshots`` table
     ### Changed
-    - `game_id` type from INT to TEXT in games table
-    - `datetime_updated` to `last_updated` in games, game participants, and stock_picks table
+    - Version mismatch remakes empty schema (backup first); no row migration
 
-    ### Removed
-    
-    ## [0.0.5] - 2025-06-23
-    
-    ### Added
-    - Game templates table
-
-    ### Fixed
-
-    ### Changed
-    - Added `template_id` column to games table for tracking recurring games
-
-    ### Removed
-    
-    ## [0.0.4b3] - 2025-06-10
-    
-    ### Added
-    - `datetime_created` to stock picks
-
-    ### Fixed
-
-    ### Changed
-
-    ### Removed
-    
-    ## [0.0.4b1] - 2025-06-01
-    
-    ### Added
-    - database information table to make version changes easier
-    - `last_updated`, `overall_wins`, `change_dollars`, and `change_percent` to users table
-    - Database upgrade/migration system
-    
-    ### Fixed
-
-    ### Changed
-
-    ### Removed
-    
-    ## [0.0.3] - 2025-05-22
-    
-    ### Added
-    - `change_dollars` and `change_percent` to tables stock_picks, game_participants, and games
-    
-    ### Fixed
-
-    ### Changed
-
-    ### Removed
-    
-    
-    ## [0.0.2] - 2025-05-19
-    
-    ### Added
-    - sources column to users table
-
-    ### Fixed
-
-    ### Changed
-
-    ### Removed
-    """    
-    
-    preexisting_tables: set[str] = set()
+    ## [0.1.1] / [0.1.0] - 2025-06-27
+    See git history for older changelog entries.
+    """
     db_path = Path(db_name)
     if db_path.parent != Path('.'):
         db_path.parent.mkdir(parents=True, exist_ok=True)
-    if os.path.exists(db_name) and os.path.getsize(db_name) > 0:
-        inspection = sqlite3.connect(db_name)
-        preexisting_tables = {
-            row[0]
-            for row in inspection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-        }
-        inspection.close()
+
+    # Remake-on-mismatch before CREATE IF NOT EXISTS (avoids mixed old/new schemas).
+    if upgrade and db_path.is_file() and db_path.stat().st_size > 0:
+        current = _read_db_version(db_name)
+        if current != db_ver:
+            remake_db_on_mismatch(db_name, db_ver)
+            return
 
     conn = sqlite3.connect(db_name)
     cursor = conn.cursor()
@@ -286,6 +180,8 @@ def create(db_name:str, upgrade:bool=True):
         create_days_in_advance INTEGER NOT NULL DEFAULT 0,    -- How many days before the start should it be created
         recurring_period INTEGER NOT NULL DEFAULT 1,          -- How often should the game be created (in months)
         game_length INTEGER DEFAULT 1,                        -- How many months should the game last. 0 = infinite game
+        push_leaderboard INTEGER NOT NULL DEFAULT 0,          -- Auto-push leaderboard image to a channel
+        leaderboard_channel_id TEXT DEFAULT NULL,             -- Discord channel snowflake as text
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         last_updated TEXT DEFAULT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
@@ -312,6 +208,7 @@ def create(db_name:str, upgrade:bool=True):
         aggregate_value REAL,                                 -- Combined value of all users
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
+        leaderboard_message_id TEXT DEFAULT NULL,             -- Discord message snowflake for push edits
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         last_updated TEXT DEFAULT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
@@ -360,6 +257,7 @@ def create(db_name:str, upgrade:bool=True):
         current_value REAL DEFAULT NULL,        -- Current portfolio value
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
+        days_in_first INTEGER NOT NULL DEFAULT 0, -- Days ended as #1 (NYSE close snapshots)
         last_updated TEXT DEFAULT NULL,         -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
@@ -388,21 +286,34 @@ def create(db_name:str, upgrade:bool=True):
         UNIQUE (participation_id, stock_id) -- User picks a specific stock only once per game participation
         );""")
 
+    # Idempotent "days in first" awards per NYSE trade date
+    cursor.execute("""CREATE TABLE IF NOT EXISTS leaderboard_day_snapshots (
+        game_id TEXT NOT NULL,
+        trade_date TEXT NOT NULL,               -- ISO8601 (YYYY-MM-DD) ET trade date
+        first_user_id INTEGER NOT NULL,
+        datetime_created TEXT NOT NULL,         -- ISO8601 (YYYY-MM-DD HH:MM:SS)
+        PRIMARY KEY (game_id, trade_date),
+        FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE,
+        FOREIGN KEY (first_user_id) REFERENCES users (user_id)
+        );""")
+
     conn.commit()
     conn.close()
-    
-    
+
     sql = SqlHelper(db_name)
     info = sql.get(table="database_info")
-    if info.status == 'error' and info.reason == "NO ROWS RETURNED": # likely brand new
-        initial_version = '0.0.2' if preexisting_tables else db_ver
-        sql.insert(table='database_info', items={'database_name': db_name, 'original_version': initial_version, 'current_version': initial_version, 'datetime_created': _iso8601()})
-        
-    if upgrade: # Run database upgrade
-        upgrade_db(db_current_ver=db_ver, db_name=db_name)
+    if info.status == 'error' and info.reason == "NO ROWS RETURNED":
+        sql.insert(
+            table='database_info',
+            items={
+                'database_name': db_name,
+                'original_version': db_ver,
+                'current_version': db_ver,
+                'datetime_created': _iso8601(),
+            },
+        )
 
-        
-    
+
 if __name__ == "__main__":
     
     DB_NAME = str(os.getenv('DB_NAME'))
