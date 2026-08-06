@@ -1,4 +1,9 @@
-"""Build and post/edit recurring leaderboard push messages in Discord."""
+"""Build and post/edit recurring leaderboard push messages in Discord.
+
+Top 20 players are split across up to four messages (5 players each). The game
+title appears only on the first image; the stats embed always sits on the last
+message. Extra messages are deleted when the player count shrinks.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,9 @@ PUSH_PERMS = (
     discord.Permissions.embed_links,
     discord.Permissions.attach_files,
 )
+
+PUSH_PAGE_SIZE = 5
+PUSH_MAX_PLAYERS = 20
 
 
 def bot_can_push_to_channel(channel: discord.abc.GuildChannel, me: discord.Member) -> bool:
@@ -55,7 +63,7 @@ def build_push_embed(game, *, best_pick: Optional[dict] = None, worst_pick: Opti
     d_chg = float(game.change_dollars or 0)
     p_chg = float(game.change_percent or 0)
     embed = discord.Embed(
-        title=f"{'📈' if d_chg >= 0 else '📉'} {game.name}",
+        title=f"{'📈' if d_chg >= 0 else '📉'} {game.name} (ID: {game.id})",
         description=(
             f"The fund is {('up' if d_chg >= 0 else 'down')} **${d_chg:+,.2f}** (**{p_chg:+.2f}%**) this month.\n"
             f"{_format_hours_line(game)}"
@@ -142,14 +150,73 @@ def collect_push_players(fe, game) -> tuple[list[dict], list[dict]]:
     return players, owned_pcts
 
 
-def render_push_payload(game, players: list[dict], owned_pcts: list[dict]) -> tuple[discord.Embed, BytesIO]:
-    """Build the stats embed and leaderboard image for a push message."""
+def parse_leaderboard_message_ids(raw: Optional[str]) -> list[str]:
+    """Split a stored comma-separated message-id list into individual snowflakes."""
+    if not raw:
+        return []
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def serialize_leaderboard_message_ids(message_ids: list[str]) -> Optional[str]:
+    """Join message ids for storage, or None when the list is empty."""
+    cleaned = [str(message_id).strip() for message_id in message_ids if str(message_id).strip()]
+    return ",".join(cleaned) if cleaned else None
+
+
+def chunk_push_players(
+    players: list[dict],
+    *,
+    page_size: int = PUSH_PAGE_SIZE,
+    max_players: int = PUSH_MAX_PLAYERS,
+) -> list[list[dict]]:
+    """Split the top N players into ordered pages of ``page_size``.
+
+    Always returns at least one page so an empty game still gets the stats embed.
+    """
+    trimmed = list(players[:max_players])
+    if not trimmed:
+        return [[]]
+    return [trimmed[i : i + page_size] for i in range(0, len(trimmed), page_size)]
+
+
+def render_push_pages(
+    game,
+    players: list[dict],
+    owned_pcts: list[dict],
+    *,
+    created_at: Optional[datetime] = None,
+) -> tuple[discord.Embed, list[BytesIO]]:
+    """Build the stats embed plus one PNG buffer per leaderboard page."""
     best = max(owned_pcts, key=lambda x: x["pct"]) if owned_pcts else None
     worst = min(owned_pcts, key=lambda x: x["pct"]) if owned_pcts else None
     embed = build_push_embed(game, best_pick=best, worst_pick=worst)
+    stamp = created_at or _et_now()
     game_data = {"name": game.name, "id": game.id}
-    buffer = RecurringLeaderboardImageGenerator().create_image(game_data, players, target_n=5)
-    return embed, buffer
+    generator = RecurringLeaderboardImageGenerator()
+    images: list[BytesIO] = []
+
+    for page_index, page in enumerate(chunk_push_players(players)):
+        ranked_page: list[dict] = []
+        for offset, player in enumerate(page):
+            row = dict(player)
+            row["rank"] = page_index * PUSH_PAGE_SIZE + offset + 1
+            ranked_page.append(row)
+        images.append(
+            generator.create_image(
+                game_data,
+                ranked_page,
+                target_n=max(len(ranked_page), 1),
+                show_title=False,
+                created_at=stamp,
+            )
+        )
+    return embed, images
+
+
+def render_push_payload(game, players: list[dict], owned_pcts: list[dict]) -> tuple[discord.Embed, BytesIO]:
+    """Compatibility wrapper: embed plus the first page image."""
+    embed, images = render_push_pages(game, players, owned_pcts)
+    return embed, images[0]
 
 
 def is_unknown_message_error(exc: BaseException) -> bool:
@@ -167,6 +234,62 @@ def is_unknown_message_error(exc: BaseException) -> bool:
     return False
 
 
+async def _delete_message_quiet(channel: discord.TextChannel, message_id: str) -> None:
+    try:
+        await channel.get_partial_message(int(message_id)).delete()
+    except Exception:
+        logger.debug("Could not delete leaderboard message %s", message_id, exc_info=True)
+
+
+async def _upsert_leaderboard_page(
+    *,
+    channel: discord.TextChannel,
+    message_id: Optional[str],
+    embed: Optional[discord.Embed],
+    image: BytesIO,
+    filename: str,
+    game_id: Any,
+) -> Optional[str]:
+    """Edit one page in place, or send a new message when missing/unknown."""
+    image.seek(0)
+    file = discord.File(image, filename=filename)
+    edit_kwargs: dict[str, Any] = {"attachments": [file]}
+    if embed is None:
+        edit_kwargs["embeds"] = []
+    else:
+        edit_kwargs["embed"] = embed
+
+    if message_id:
+        try:
+            msg = await channel.fetch_message(int(message_id))
+            image.seek(0)
+            edit_kwargs["attachments"] = [discord.File(image, filename=filename)]
+            await msg.edit(**edit_kwargs)
+            return str(msg.id)
+        except Exception as exc:
+            if not is_unknown_message_error(exc):
+                logger.warning(
+                    "Leaderboard page edit failed (will retry next cycle) game=%s msg=%s: %s",
+                    game_id,
+                    message_id,
+                    exc,
+                )
+                return message_id
+            await _delete_message_quiet(channel, message_id)
+
+    image.seek(0)
+    file = discord.File(image, filename=filename)
+    try:
+        if embed is None:
+            sent = await channel.send(file=file)
+        else:
+            sent = await channel.send(embed=embed, file=file)
+    except Exception as exc:
+        logger.warning("Leaderboard page send failed for game %s: %s", game_id, exc)
+        return None
+    return str(sent.id)
+
+
 async def push_or_edit_leaderboard_message(
     *,
     channel: discord.TextChannel,
@@ -175,50 +298,80 @@ async def push_or_edit_leaderboard_message(
     embed: discord.Embed,
     image: BytesIO,
 ) -> Optional[str]:
+    """Compatibility wrapper for a single-image push."""
+    return await push_or_edit_leaderboard_messages(
+        channel=channel,
+        game=game,
+        fe=fe,
+        embed=embed,
+        images=[image],
+    )
+
+
+async def push_or_edit_leaderboard_messages(
+    *,
+    channel: discord.TextChannel,
+    game,
+    fe,
+    embed: discord.Embed,
+    images: list[BytesIO],
+) -> Optional[str]:
     """
-    Edit the embed and standalone image attachment in-place; on unknown message,
-    delete (ignore fail) then send new.
+    Sync one Discord message per image page.
 
-    Returns new/kept message id string, or None on failure.
+    The embed is attached only to the last page. Existing messages are edited in
+    place; missing pages are sent; leftover messages from a smaller roster are
+    deleted. Stored ids are a comma-separated list in ``leaderboard_message_id``.
     """
-    filename = "recurring_leaderboard.png"
-    file = discord.File(image, filename=filename)
-    message_id = getattr(game, "leaderboard_message_id", None)
+    if not images:
+        images = [BytesIO()]
 
-    if message_id:
-        try:
-            msg = await channel.fetch_message(int(message_id))
-            # Re-seek in case prior attempt consumed the buffer
-            image.seek(0)
-            file = discord.File(image, filename=filename)
-            await msg.edit(embed=embed, attachments=[file])
-            return str(msg.id)
-        except Exception as exc:
-            if not is_unknown_message_error(exc):
-                logger.warning(
-                    "Leaderboard edit failed (will retry next cycle) game=%s: %s",
-                    game.id,
-                    exc,
-                )
-                return message_id
-            try:
-                msg = channel.get_partial_message(int(message_id))
-                await msg.delete()
-            except Exception:
-                logger.debug("Could not delete stale leaderboard message %s", message_id, exc_info=True)
+    existing = parse_leaderboard_message_ids(getattr(game, "leaderboard_message_id", None))
+    new_ids: list[str] = []
 
-    image.seek(0)
-    file = discord.File(image, filename=filename)
+    for index, image in enumerate(images):
+        is_last = index == len(images) - 1
+        filename = (
+            "recurring_leaderboard.png"
+            if len(images) == 1
+            else f"recurring_leaderboard_{index + 1}.png"
+        )
+        page_id = await _upsert_leaderboard_page(
+            channel=channel,
+            message_id=existing[index] if index < len(existing) else None,
+            embed=embed if is_last else None,
+            image=image,
+            filename=filename,
+            game_id=game.id,
+        )
+        if page_id is None:
+            # Keep whatever we already synced; leave extras for the next cycle.
+            if new_ids:
+                try:
+                    fe.be.update_game(
+                        game_id=game.id,
+                        leaderboard_message_id=serialize_leaderboard_message_ids(new_ids),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist partial leaderboard_message_id for game %s",
+                        game.id,
+                    )
+            return serialize_leaderboard_message_ids(new_ids)
+        new_ids.append(page_id)
+
+    for stale_id in existing[len(new_ids) :]:
+        await _delete_message_quiet(channel, stale_id)
+
+    serialized = serialize_leaderboard_message_ids(new_ids)
     try:
-        sent = await channel.send(embed=embed, file=file)
-    except Exception as exc:
-        logger.warning("Leaderboard send failed for game %s: %s", game.id, exc)
-        return None
-    try:
-        fe.be.update_game(game_id=game.id, leaderboard_message_id=str(sent.id))
+        if serialized is None:
+            fe.be.update_game(game_id=game.id, clear_leaderboard_message=True)
+        else:
+            fe.be.update_game(game_id=game.id, leaderboard_message_id=serialized)
     except Exception:
         logger.exception("Failed to persist leaderboard_message_id for game %s", game.id)
-    return str(sent.id)
+    return serialized
 
 
 async def push_all_recurring_leaderboards(
@@ -275,15 +428,15 @@ async def push_all_recurring_leaderboards(
                         player["display_name"] = await name_resolver(int(player["user_id"]), guild)
                     except Exception:
                         logger.debug("Name lookup failed for user %s", player["user_id"])
-            embed, image = render_push_payload(game, players, owned_pcts)
-            # Refresh game row for message id
+            embed, images = render_push_pages(game, players, owned_pcts)
+            # Refresh game row for message ids
             game = fe.be.get_game(game.id)
-            await push_or_edit_leaderboard_message(
+            await push_or_edit_leaderboard_messages(
                 channel=channel,
                 game=game,
                 fe=fe,
                 embed=embed,
-                image=image,
+                images=images,
             )
         except Exception:
             logger.exception("Recurring leaderboard push failed for game %s", game.id)

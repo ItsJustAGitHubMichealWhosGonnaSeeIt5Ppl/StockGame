@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,11 +8,16 @@ import pytest
 from helpers.leaderboard_push import (
     bot_can_push_to_channel,
     build_push_embed,
+    chunk_push_players,
     is_unknown_message_error,
+    parse_leaderboard_message_ids,
     push_or_edit_leaderboard_message,
+    push_or_edit_leaderboard_messages,
+    serialize_leaderboard_message_ids,
 )
 from helpers.recurring_leaderboard_image import (
     LEADERBOARD_N_CANDIDATES,
+    TITLE_BLOCK,
     estimate_recurring_leaderboard_height,
     select_leaderboard_n,
     sort_picks_by_performance,
@@ -76,13 +81,65 @@ def test_recurring_image_smoke():
     assert buf.getvalue()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_push_payload_renders_top_five(mocker):
+def test_image_without_title_is_shorter_and_footer_uses_created_at():
+    players = [
+        {
+            "user_id": 1,
+            "display_name": "Alice",
+            "current_value": 10500,
+            "change_dollars": 500,
+            "change_percent": 5.0,
+            "days_in_first": 2,
+            "picks": [],
+        }
+    ]
+    generator = RecurringLeaderboardImageGenerator()
+    with_title = generator.create_image({"name": "Test", "id": "abc"}, players, show_title=True)
+    without_title = generator.create_image(
+        {"name": "Test", "id": "abc"},
+        players,
+        show_title=False,
+        created_at=datetime(2026, 8, 5, 20, 15),
+    )
+    from PIL import Image
+
+    titled = Image.open(with_title)
+    untitled = Image.open(without_title)
+    assert untitled.height == titled.height - TITLE_BLOCK
+    assert untitled.height == estimate_recurring_leaderboard_height(
+        1, 0, title_block=0
+    )
+
+
+def test_chunk_push_players_caps_at_twenty_and_keeps_empty_page():
+    players = [{"user_id": i} for i in range(23)]
+    pages = chunk_push_players(players)
+    assert len(pages) == 4
+    assert [len(page) for page in pages] == [5, 5, 5, 5]
+    assert pages[-1][-1]["user_id"] == 19
+    assert chunk_push_players([]) == [[]]
+    assert [len(page) for page in chunk_push_players(players[:7])] == [5, 2]
+
+
+def test_parse_and_serialize_leaderboard_message_ids():
+    assert parse_leaderboard_message_ids(None) == []
+    assert parse_leaderboard_message_ids("111, 222,333") == ["111", "222", "333"]
+    assert serialize_leaderboard_message_ids(["111", "222"]) == "111,222"
+    assert serialize_leaderboard_message_ids([]) is None
+
+
+def test_render_push_pages_splits_top_twenty_without_image_titles(mocker):
     from io import BytesIO
 
     import helpers.leaderboard_push as lp
 
     generator = mocker.patch.object(lp, "RecurringLeaderboardImageGenerator")
-    generator.return_value.create_image.return_value = BytesIO(b"png")
+    generator.return_value.create_image.side_effect = [
+        BytesIO(b"png1"),
+        BytesIO(b"png2"),
+        BytesIO(b"png3"),
+        BytesIO(b"png4"),
+    ]
     game = SimpleNamespace(
         name="Recurring",
         id="REC01",
@@ -91,12 +148,17 @@ def test_push_payload_renders_top_five(mocker):
         start_date=date.today(),
         end_date=None,
     )
-    players = [{"user_id": user_id} for user_id in range(10)]
+    players = [{"user_id": user_id} for user_id in range(20)]
 
-    _embed, image = lp.render_push_payload(game, players, [])
+    embed, images = lp.render_push_pages(game, players, [])
 
-    assert image.getvalue() == b"png"
-    assert generator.return_value.create_image.call_args.kwargs["target_n"] == 5
+    assert len(images) == 4
+    assert "(ID: REC01)" in embed.title
+    calls = generator.return_value.create_image.call_args_list
+    assert [call.kwargs["show_title"] for call in calls] == [False, False, False, False]
+    assert [call.kwargs["target_n"] for call in calls] == [5, 5, 5, 5]
+    assert [row["rank"] for row in calls[1].args[1]] == [6, 7, 8, 9, 10]
+    assert all(call.kwargs["created_at"] is not None for call in calls)
 
 
 def test_days_in_first_idempotent(db_path, mocker):
@@ -143,9 +205,10 @@ def test_is_unknown_message_error():
     assert not is_unknown_message_error(RuntimeError("boom"))
 
 
-def test_push_embed_does_not_embed_leaderboard_attachment():
+def test_push_embed_carries_game_title_and_not_image_attachment():
     game = MagicMock()
     game.name = "Example"
+    game.id = "ABCDE"
     game.change_dollars = 100
     game.change_percent = 1
     game.start_date = date.today()
@@ -153,6 +216,7 @@ def test_push_embed_does_not_embed_leaderboard_attachment():
 
     embed = build_push_embed(game)
 
+    assert embed.title == "📈 Example (ID: ABCDE)"
     assert embed.image.url is None
 
 
@@ -165,12 +229,13 @@ def test_push_edits_standalone_attachment_in_place():
     channel = AsyncMock()
     channel.fetch_message = AsyncMock(return_value=message)
     game = MagicMock(id="g1", leaderboard_message_id="111")
+    fe = MagicMock()
 
     new_id = asyncio.run(
         push_or_edit_leaderboard_message(
             channel=channel,
             game=game,
-            fe=MagicMock(),
+            fe=fe,
             embed=discord.Embed(title="stats"),
             image=BytesIO(b"fakepng"),
         )
@@ -182,6 +247,7 @@ def test_push_edits_standalone_attachment_in_place():
     assert kwargs["embed"].image.url is None
     assert len(kwargs["attachments"]) == 1
     assert kwargs["attachments"][0].filename == "recurring_leaderboard.png"
+    fe.be.update_game.assert_called_with(game_id="g1", leaderboard_message_id="111")
 
 
 def test_push_edit_then_resend_on_unknown():
@@ -222,6 +288,74 @@ def test_push_edit_then_resend_on_unknown():
     fe.be.update_game.assert_called()
 
 
+def test_multi_page_push_puts_embed_on_last_and_deletes_extras():
+    import asyncio
+    from io import BytesIO
+
+    first = AsyncMock()
+    first.id = 111
+    second = AsyncMock()
+    second.id = 222
+    channel = AsyncMock()
+    channel.fetch_message = AsyncMock(side_effect=[first, second])
+    stale = AsyncMock()
+    channel.get_partial_message = MagicMock(return_value=stale)
+
+    game = MagicMock(id="g1", leaderboard_message_id="111,222,333")
+    fe = MagicMock()
+    embed = discord.Embed(title="stats")
+
+    result = asyncio.run(
+        push_or_edit_leaderboard_messages(
+            channel=channel,
+            game=game,
+            fe=fe,
+            embed=embed,
+            images=[BytesIO(b"one"), BytesIO(b"two")],
+        )
+    )
+
+    assert result == "111,222"
+    assert first.edit.await_args.kwargs["embeds"] == []
+    assert first.edit.await_args.kwargs["attachments"][0].filename == "recurring_leaderboard_1.png"
+    assert second.edit.await_args.kwargs["embed"].title == "stats"
+    assert second.edit.await_args.kwargs["attachments"][0].filename == "recurring_leaderboard_2.png"
+    channel.get_partial_message.assert_called_with(333)
+    stale.delete.assert_awaited_once()
+    fe.be.update_game.assert_called_with(game_id="g1", leaderboard_message_id="111,222")
+
+
+def test_multi_page_push_sends_new_pages_when_needed():
+    import asyncio
+    from io import BytesIO
+
+    existing = AsyncMock()
+    existing.id = 111
+    sent = MagicMock()
+    sent.id = 222
+    channel = AsyncMock()
+    channel.fetch_message = AsyncMock(return_value=existing)
+    channel.send = AsyncMock(return_value=sent)
+
+    game = MagicMock(id="g1", leaderboard_message_id="111")
+    fe = MagicMock()
+
+    result = asyncio.run(
+        push_or_edit_leaderboard_messages(
+            channel=channel,
+            game=game,
+            fe=fe,
+            embed=discord.Embed(title="stats"),
+            images=[BytesIO(b"one"), BytesIO(b"two")],
+        )
+    )
+
+    assert result == "111,222"
+    assert existing.edit.await_args.kwargs["embeds"] == []
+    assert channel.send.await_args.kwargs["embed"].title == "stats"
+    fe.be.update_game.assert_called_with(game_id="g1", leaderboard_message_id="111,222")
+
+
 def test_push_uses_live_name_resolver():
     import asyncio
     from io import BytesIO
@@ -249,15 +383,15 @@ def test_push_uses_live_name_resolver():
 
     def fake_render(_game, players, _owned):
         rendered["players"] = [dict(p) for p in players]
-        return discord.Embed(title="t"), BytesIO(b"png")
+        return discord.Embed(title="t"), [BytesIO(b"png")]
 
     async def resolver(_user_id, _guild):
         return "LiveName"
 
     with patch.object(lp, "collect_push_players", return_value=([{"user_id": 5, "display_name": "ID(5)"}], [])), \
-         patch.object(lp, "render_push_payload", side_effect=fake_render), \
+         patch.object(lp, "render_push_pages", side_effect=fake_render), \
          patch.object(lp, "bot_can_push_to_channel", return_value=True), \
-         patch.object(lp, "push_or_edit_leaderboard_message", new=AsyncMock(return_value="1")):
+         patch.object(lp, "push_or_edit_leaderboard_messages", new=AsyncMock(return_value="1")):
         asyncio.run(lp.push_all_recurring_leaderboards(bot, fe, name_resolver=resolver))
 
     assert rendered["players"][0]["display_name"] == "LiveName"

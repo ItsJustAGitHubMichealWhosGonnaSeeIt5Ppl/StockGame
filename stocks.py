@@ -492,7 +492,7 @@ class Backend:
             aggregate_value (float, optional): Total value of all game participants stocks.  Shouldn't be changed manually.
             change_dollars (float, optional): aggregate_value - (starting_money * total participants).  Rounded to two decimal points.
             change_percent (float, optional): change_dollars in percent format.  Rounded to two decimal points.
-            leaderboard_message_id (Optional[str], optional): Discord message id for recurring leaderboard push.
+            leaderboard_message_id (Optional[str], optional): Comma-separated Discord message ids for recurring leaderboard push pages.
             clear_leaderboard_message (bool, optional): Clear stored leaderboard message id.
             clear_end_date (bool, optional): Remove the optional end date.
             clear_pick_date (bool, optional): Remove the optional pick deadline.
