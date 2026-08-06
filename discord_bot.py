@@ -40,8 +40,6 @@ from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
 from helpers.sp500 import ensure_sp500_seeded
 from helpers.alpaca_client import AlpacaMarketData
-# TEMPORARY — delete with helpers/dev_leaderboard_seed.py
-import helpers.dev_leaderboard_seed as _dev_leaderboard_seed
 
 
 load_dotenv()
