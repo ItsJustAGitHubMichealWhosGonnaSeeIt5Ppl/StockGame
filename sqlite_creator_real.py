@@ -212,7 +212,7 @@ def create(db_name:str, upgrade:bool=True):
         aggregate_value REAL,                                 -- Combined value of all users
         change_dollars REAL DEFAULT NULL,
         change_percent REAL DEFAULT NULL,
-        leaderboard_message_id TEXT DEFAULT NULL,             -- Discord message snowflake for push edits
+        leaderboard_message_id TEXT DEFAULT NULL,             -- Comma-separated Discord message snowflakes for push page edits
         datetime_created TEXT NOT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         last_updated TEXT DEFAULT NULL,                       -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         

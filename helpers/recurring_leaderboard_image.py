@@ -8,6 +8,7 @@ left to right and then down.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -213,6 +214,8 @@ class RecurringLeaderboardImageGenerator:
         players: List[Dict[str, Any]],
         *,
         target_n: int = 10,
+        show_title: bool = True,
+        created_at: Optional[datetime] = None,
     ) -> BytesIO:
         picks_counts = [len(p.get("picks") or []) for p in players]
         n = select_leaderboard_n(
@@ -223,9 +226,11 @@ class RecurringLeaderboardImageGenerator:
             chips_per_row=self.chips_per_row,
         )
         players = players[:n]
+        title_block = TITLE_BLOCK if show_title else 0
         height = estimate_recurring_leaderboard_height(
             len(players),
             [len(p.get("picks") or []) for p in players],
+            title_block=title_block,
             chip_row_height=self.chip_row_height,
             chips_per_row=self.chips_per_row,
         )
@@ -233,15 +238,17 @@ class RecurringLeaderboardImageGenerator:
         img = Image.new("RGB", (self.width, height), self.colors["bg"])
         draw = ImageDraw.Draw(img)
 
-        title = f"{game_data.get('name', 'Game')} (ID: {game_data.get('id', 'N/A')})"
-        draw.text(
-            ((self.width - self._width(title, self.fonts["title"])) / 2, 18),
-            title,
-            fill=self.colors["text"],
-            font=self.fonts["title"],
-        )
+        y = 0
+        if show_title:
+            title = f"{game_data.get('name', 'Game')} (ID: {game_data.get('id', 'N/A')})"
+            draw.text(
+                ((self.width - self._width(title, self.fonts["title"])) / 2, 18),
+                title,
+                fill=self.colors["text"],
+                font=self.fonts["title"],
+            )
+            y = TITLE_BLOCK
 
-        y = TITLE_BLOCK
         draw.rectangle([0, y, self.width, y + HEADER_BLOCK], fill=self.colors["header"])
         draw.text((18, y + 7), "Investor", fill=self.colors["text"], font=self.fonts["header"])
         draw.text(
@@ -255,9 +262,18 @@ class RecurringLeaderboardImageGenerator:
         for idx, player in enumerate(players):
             y = self._draw_player_block(draw, player, idx, y)
 
+        if created_at is not None:
+            stamp = created_at.strftime("%Y-%m-%d %H:%M")
+            if created_at.tzinfo is not None:
+                stamp = f"{stamp} {created_at.tzname() or 'ET'}"
+            else:
+                stamp = f"{stamp} ET"
+            footer = f"Updated · {stamp}"
+        else:
+            footer = "StockBot · recurring leaderboard"
         draw.text(
             (20, height - 26),
-            "StockBot · recurring leaderboard",
+            footer,
             fill=self.colors["footer"],
             font=self.fonts["small"],
         )
