@@ -246,7 +246,10 @@ async def join_games_autocomplete(
     interaction: Interaction,
     current: str,
 ) -> list[Choice[str]]:
-    """Suggest public joinable games in the same order as ``/game-list``."""
+    """Suggest public joinable games in the same order as ``/game-list``.
+
+    Games the user has already joined (active or pending) are omitted.
+    """
     try:
         if _fe is None:
             return []
@@ -255,11 +258,23 @@ async def join_games_autocomplete(
             include_open=True,
             include_active=True,
         )
+        try:
+            joined_ids = {
+                str(participant.game_id)
+                for participant in _fe.be.get_many_participants(
+                    user_id=interaction.user.id
+                )
+            }
+        except LookupError:
+            joined_ids = set()
+
         needle = current.strip().lower()
         choices: list[Choice[str]] = []
 
         for game, _player_count in ranked_games:
             game_id = str(game.id)
+            if game_id in joined_ids:
+                continue
             searchable = f"{game.name} {game_id}".lower()
             if needle and needle not in searchable:
                 continue
