@@ -239,7 +239,7 @@ def test_discord_bot_critical_paths_use_allowlisted_logging(tmp_path, monkeypatc
     monkeypatch.setenv("DB_NAME", str(tmp_path / "bot_test.sqlite"))
     monkeypatch.setenv("OWNER", str(ALLOWED_CRITICAL_USER))
 
-    from sqlite_creator_real import create
+    from db_schema import create
 
     create(str(tmp_path / "bot_test.sqlite"))
 

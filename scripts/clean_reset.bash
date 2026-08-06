@@ -12,7 +12,5 @@ if [ -e "$DB_NAME" ]; then
   echo "Removed existing database"
 fi
 
-python3 sqlite_creator_real.py
-echo "Created clean database"
-
 python3 discord_bot.py
+echo "Started bot (database create/migrate handled on startup)"

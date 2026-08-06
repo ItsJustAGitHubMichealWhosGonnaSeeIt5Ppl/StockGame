@@ -40,6 +40,7 @@ from stocks import Frontend
 from helpers.exceptions import NotAllowedError, DoesntExistError, AlreadyExistsError, InvalidDateFormatError
 from helpers.sp500 import ensure_sp500_seeded
 from helpers.alpaca_client import AlpacaMarketData
+from db_schema import ensure_database, db_ver
 
 
 load_dotenv()
@@ -71,6 +72,10 @@ name_cutoff = 25 # Cut names off at 25 characters
 dev_role_id = 1412173045350666271
 
 logger = setup_app_logging(console_level=logging.INFO, root_level=logging.DEBUG)
+
+# Create / migrate / remake SQLite before Frontend opens it.
+_db_action = ensure_database(DB_NAME)
+logger.info("Database %s: %s (schema %s)", DB_NAME, _db_action, db_ver)
 
 def has_permission(user: discord.Member) -> bool:
     """In-bot safety check for privileged actions.

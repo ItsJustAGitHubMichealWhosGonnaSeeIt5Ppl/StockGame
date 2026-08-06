@@ -9,7 +9,7 @@ Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 | Name | Example | Notes |
 |------|---------|--------|
 | `DISCORD_TOKEN` | `MTIz...` | From the Discord Developer Portal bot page |
-| `DB_NAME` | `data/stockgame.db` | SQLite file path. With Docker, keep this under `data/` so the bind mount persists it. Created automatically on first container start, or with `python sqlite_creator_real.py` locally |
+| `DB_NAME` | `data/stockgame.db` | SQLite file path. With Docker, keep this under `data/` so the bind mount persists it. Created / migrated automatically when `discord_bot.py` starts (`db_schema.ensure_database`) |
 | `OWNER` | `329374393715392520` | Numeric Discord snowflake (your user ID). Must parse as an integer |
 
 If any of these are missing, `discord_bot.py` exits at startup.
