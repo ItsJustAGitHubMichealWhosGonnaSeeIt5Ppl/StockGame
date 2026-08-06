@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 import pytest
 
 
@@ -232,6 +233,77 @@ def test_build_embed_shows_stopped_status(db_mod, fe):
         assert embed.color == db_mod.discord.Color.dark_grey()
 
     _run_view_test(body)
+
+
+def _app_command_channel(*, channel_id: int = 4242, cached: bool = True):
+    """Mimic discord.ui.ChannelSelect values (AppCommandChannel, not a real channel)."""
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = channel_id
+    channel.mention = f"<#{channel_id}>"
+    selected = MagicMock()
+    selected.id = channel_id
+    selected.resolve = MagicMock(return_value=channel if cached else None)
+    selected.fetch = AsyncMock(return_value=channel)
+    return selected, channel
+
+
+def _select_with_values(mocker, view, selected):
+    mocker.patch.object(
+        type(view.select),
+        "values",
+        new_callable=mocker.PropertyMock,
+        return_value=[selected],
+    )
+
+
+def test_push_channel_select_saves_cached_text_channel(db_mod, fe, mocker):
+    template = _two_templates(fe)[0]
+    selected, _channel = _app_command_channel(channel_id=4242)
+
+    async def body():
+        view = db_mod.LeaderboardChannelSelect(template.id)
+        _select_with_values(mocker, view, selected)
+        await view._on_select(_mock_interaction())
+
+    _run_view_test(body)
+
+    updated = fe.be.get_game_template(template.id)
+    assert updated.push_leaderboard is True
+    assert updated.leaderboard_channel_id == "4242"
+
+
+def test_push_channel_select_fetches_uncached_channel(db_mod, fe, mocker):
+    template = _two_templates(fe)[0]
+    selected, _channel = _app_command_channel(channel_id=777, cached=False)
+
+    async def body():
+        view = db_mod.LeaderboardChannelSelect(template.id)
+        _select_with_values(mocker, view, selected)
+        await view._on_select(_mock_interaction())
+
+    _run_view_test(body)
+
+    selected.fetch.assert_awaited_once()
+    assert fe.be.get_game_template(template.id).leaderboard_channel_id == "777"
+
+
+def test_push_channel_select_leaves_push_off_when_channel_unavailable(db_mod, fe, mocker):
+    template = _two_templates(fe)[0]
+    selected = MagicMock()
+    selected.id = 5150
+    selected.resolve = MagicMock(return_value=None)
+    selected.fetch = AsyncMock(side_effect=discord.HTTPException(MagicMock(), "no access"))
+
+    async def body():
+        view = db_mod.LeaderboardChannelSelect(template.id)
+        _select_with_values(mocker, view, selected)
+        await view._on_select(_mock_interaction())
+
+    _run_view_test(body)
+
+    updated = fe.be.get_game_template(template.id)
+    assert updated.push_leaderboard is False
+    assert updated.leaderboard_channel_id is None
 
 
 def test_owner_filter_excludes_others_templates(fe):

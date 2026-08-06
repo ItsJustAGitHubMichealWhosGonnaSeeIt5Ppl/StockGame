@@ -15,7 +15,7 @@ logger = logging.getLogger("SqliteCreator")
 # # (YYYY-MM-DD HH:MM:SS) objects should include 'datetime' in the key name
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
-db_ver = "0.2.0"  # Current schema version
+db_ver = "0.2.1"  # Current schema version
 
 
 def _read_db_version(db_name: str) -> str | None:
@@ -86,7 +86,7 @@ def upgrade_db(db_name: str, db_current_ver: str = db_ver, force_upgrade: bool =
 def create(db_name:str, upgrade:bool=True):
     """Create database schema; on version mismatch, backup then remake empty DB.
 
-    Version: 0.2.0
+    Version: 0.2.1
 
     Args:
         db_name (str): Database name
@@ -94,6 +94,10 @@ def create(db_name:str, upgrade:bool=True):
             does not match ``db_ver``. Defaults to True.
 
     # Changelog
+
+    ## [0.2.1] - 2026-08-05
+    ### Removed
+    - ``name`` (custom team name) column on game_participants
 
     ## [0.2.0] - 2026-08-05
     ### Added
@@ -246,12 +250,10 @@ def create(db_name:str, upgrade:bool=True):
         );""")
 
     # Game participants table (track who is in which leagues/games)
-    #TODO name should be nickname
     cursor.execute("""CREATE TABLE IF NOT EXISTS game_participants (
         participation_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         game_id TEXT NOT NULL,
-        name TEXT,                              -- Optional 'team' name
         status TEXT DEFAULT 'active',           -- A participant (player) status.  Can be 'pending', 'active', 'inactive'.  Pending will be used if a player tries to join a private game
         datetime_joined TEXT NOT NULL,          -- ISO8601 (YYYY-MM-DD HH:MM:SS)
         current_value REAL DEFAULT NULL,        -- Current portfolio value

@@ -297,7 +297,8 @@ def test_live_critical_dm_to_allowlisted_user(tmp_path):
     from pathlib import Path
 
     # Fixture chdirs into tmp_path; load .env from the repo root explicitly.
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    # Override so the real token wins over the placeholder conftest seeds.
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 
     if os.getenv("STOCKGAME_LIVE_CRITICAL_DM", "").strip() != "1":
         pytest.skip(

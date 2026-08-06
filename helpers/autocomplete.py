@@ -282,6 +282,78 @@ async def join_games_autocomplete(
         return []
 
 
+async def leaderboard_games_autocomplete(
+    interaction: Interaction,
+    current: str,
+) -> list[Choice[str]]:
+    """Suggest games whose leaderboard the user may view.
+
+    Order:
+    1. Recurring games the user participates in
+    2. Other games the user participates in
+    3. Other recurring public games
+    4. Other public games
+
+    Private games are only sourced from the user's own participation list.
+    """
+    try:
+        if _fe is None:
+            return []
+
+        try:
+            mine = _fe.list_my_games_ranked(interaction.user.id, include_ended=True)
+        except LookupError:
+            mine = []
+        try:
+            public = _fe.list_games_ranked(
+                include_public=True,
+                include_private=False,
+                include_open=True,
+                include_active=True,
+                include_ended=True,
+            )
+        except LookupError:
+            public = []
+
+        mine_ids = {str(game.id) for game, _count in mine}
+        my_recurring = [item for item in mine if item[0].template_id is not None]
+        my_other = [item for item in mine if item[0].template_id is None]
+        public_not_mine = [item for item in public if str(item[0].id) not in mine_ids]
+        other_recurring = [item for item in public_not_mine if item[0].template_id is not None]
+        other_public = [item for item in public_not_mine if item[0].template_id is None]
+
+        needle = current.strip().lower()
+        choices: list[Choice[str]] = []
+        for group, yours, recurring in (
+            (my_recurring, True, True),
+            (my_other, True, False),
+            (other_recurring, False, True),
+            (other_public, False, False),
+        ):
+            for game, _player_count in group:
+                game_id = str(game.id)
+                if needle and needle not in f"{game.name} {game_id}".lower():
+                    continue
+                tags = []
+                if yours:
+                    tags.append("YOUR GAME")
+                if recurring:
+                    tags.append("RECURRING")
+                suffix = f" [{' · '.join(tags)}]" if tags else ""
+                choices.append(
+                    Choice(
+                        name=f"{game.name} (ID: {game_id}){suffix}"[:100],
+                        value=game_id,
+                    )
+                )
+                if len(choices) >= 25:
+                    return choices
+        return choices
+    except Exception:
+        logger.debug('Leaderboard-game autocomplete failed.', exc_info=True)
+        return []
+
+
 async def owner_games_autocomplete(
     interaction: Interaction,
     current: str,

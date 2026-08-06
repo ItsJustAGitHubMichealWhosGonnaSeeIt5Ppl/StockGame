@@ -291,8 +291,6 @@ class LeaderboardImageGenerator:
     
     def _draw_leaderboard_rows(self, draw: ImageDraw.ImageDraw, leaderboard_data: List[Dict], y_offset: int) -> int:
         """Draw leaderboard rows."""
-        pos_indicators = [f'{i}.' for i in range(1, len(leaderboard_data) + 1)]
-        
         for idx, player_data in enumerate(leaderboard_data):
             # Alternating row colors
             row_color = self.colors['row_bg_1'] if idx % 2 == 0 else self.colors['row_bg_2']
@@ -300,8 +298,9 @@ class LeaderboardImageGenerator:
             draw.rectangle(row_rect, fill=row_color)
             
             # Rank indicator with special colors for top 3
-            rank_text = pos_indicators[idx] if idx < len(pos_indicators) else f"{idx + 1}."
-            rank_color = self._get_rank_color(idx)
+            rank = int(player_data.get('rank', idx + 1))
+            rank_text = f"{rank}."
+            rank_color = self._get_rank_color(rank - 1)
             draw.text((20, y_offset + 15), rank_text, fill=rank_color, font=self.fonts['text'])
             
             # Player name

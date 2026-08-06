@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import discord
 import pytz
@@ -55,9 +55,9 @@ def build_push_embed(game, *, best_pick: Optional[dict] = None, worst_pick: Opti
     d_chg = float(game.change_dollars or 0)
     p_chg = float(game.change_percent or 0)
     embed = discord.Embed(
-        title=f"📈 {game.name}",
+        title=f"{'📈' if d_chg >= 0 else '📉'} {game.name}",
         description=(
-            f"Game pot moved **${d_chg:+,.2f}** (**{p_chg:+.2f}%**).\n"
+            f"The fund is {('up' if d_chg >= 0 else 'down')} **${d_chg:+,.2f}** (**{p_chg:+.2f}%**) this month.\n"
             f"{_format_hours_line(game)}"
         ),
         color=discord.Color.green() if d_chg >= 0 else discord.Color.red(),
@@ -75,50 +75,61 @@ def build_push_embed(game, *, best_pick: Optional[dict] = None, worst_pick: Opti
             inline=True,
         )
     embed.set_footer(text=f"Last updated · {_et_now().strftime('%Y-%m-%d %H:%M')} ET")
-    embed.set_image(url="attachment://recurring_leaderboard.png")
     return embed
 
 
-def collect_push_payload(fe, game) -> tuple[discord.Embed, BytesIO, list[dict]]:
-    """Load leaderboard + pick chips and return embed, image buffer, player dicts."""
+def collect_player_picks(fe, game_id, user_id: int) -> Optional[list[dict]]:
+    """Chip data for one player's holdings, or None when they are not a participant."""
+    try:
+        participant = fe.be.get_many_participants(game_id=game_id, user_id=user_id)[0]
+    except LookupError:
+        return None
+    try:
+        picks = fe.be.get_many_stock_picks(
+            participant_id=participant.id,
+            status=["owned", "pending_buy", "pending_sell"],
+            include_tickers=True,
+        )
+    except LookupError:
+        return []
+    picks_data: list[dict] = []
+    for pick in picks:
+        ticker = pick.stock_ticker or "?"
+        company = getattr(pick, "company_name", None) or ticker
+        picks_data.append(
+            {
+                "ticker": ticker,
+                "company": company,
+                "company_name": company,
+                "change_percent": float(pick.change_percent or 0),
+                "status": pick.status,
+            }
+        )
+    return picks_data
+
+
+def collect_push_players(fe, game) -> tuple[list[dict], list[dict]]:
+    """Load the leaderboard plus each player's pick chips.
+
+    Returns the player rows and every owned pick's percent change, so the caller
+    can resolve live Discord names before the image is rendered.
+    """
     info = fe.game_info(game.id, show_leaderboard=True)
     leaderboard = info.leaderboard or []
     players: list[dict] = []
     owned_pcts: list[dict] = []
 
     for entry in leaderboard:
-        try:
-            participants = fe.be.get_many_participants(game_id=game.id, user_id=entry.user_id)
-            participant = participants[0]
-        except LookupError:
+        picks_data = collect_player_picks(fe, game.id, entry.user_id)
+        if picks_data is None:
             continue
-        picks_data: list[dict] = []
-        try:
-            picks = fe.be.get_many_stock_picks(
-                participant_id=participant.id,
-                status=["owned", "pending_buy", "pending_sell"],
-                include_tickers=True,
-            )
-        except LookupError:
-            picks = []
-        for pick in picks:
-            ticker = pick.stock_ticker or "?"
-            company = getattr(pick, "company_name", None) or ticker
-            pct = float(pick.change_percent or 0)
-            picks_data.append(
-                {
-                    "ticker": ticker,
-                    "company": company,
-                    "company_name": company,
-                    "change_percent": pct,
-                }
-            )
-            if pick.status == "owned":
-                owned_pcts.append({"ticker": ticker, "pct": pct})
+        for pick in picks_data:
+            if pick["status"] == "owned":
+                owned_pcts.append({"ticker": pick["ticker"], "pct": pick["change_percent"]})
         players.append(
             {
                 "user_id": entry.user_id,
-                "display_name": entry.display_name or f"ID({entry.user_id})",
+                "display_name": f"ID({entry.user_id})",
                 "current_value": entry.current_value,
                 "change_dollars": entry.change_dollars,
                 "change_percent": entry.change_percent,
@@ -128,12 +139,17 @@ def collect_push_payload(fe, game) -> tuple[discord.Embed, BytesIO, list[dict]]:
             }
         )
 
+    return players, owned_pcts
+
+
+def render_push_payload(game, players: list[dict], owned_pcts: list[dict]) -> tuple[discord.Embed, BytesIO]:
+    """Build the stats embed and leaderboard image for a push message."""
     best = max(owned_pcts, key=lambda x: x["pct"]) if owned_pcts else None
     worst = min(owned_pcts, key=lambda x: x["pct"]) if owned_pcts else None
     embed = build_push_embed(game, best_pick=best, worst_pick=worst)
     game_data = {"name": game.name, "id": game.id}
-    buffer = RecurringLeaderboardImageGenerator().create_image(game_data, players, target_n=10)
-    return embed, buffer, players
+    buffer = RecurringLeaderboardImageGenerator().create_image(game_data, players, target_n=5)
+    return embed, buffer
 
 
 def is_unknown_message_error(exc: BaseException) -> bool:
@@ -160,7 +176,8 @@ async def push_or_edit_leaderboard_message(
     image: BytesIO,
 ) -> Optional[str]:
     """
-    Edit stored message in-place; on unknown message, delete (ignore fail) then send new.
+    Edit the embed and standalone image attachment in-place; on unknown message,
+    delete (ignore fail) then send new.
 
     Returns new/kept message id string, or None on failure.
     """
@@ -204,8 +221,16 @@ async def push_or_edit_leaderboard_message(
     return str(sent.id)
 
 
-async def push_all_recurring_leaderboards(bot: discord.Client, fe) -> None:
-    """Push/edit leaderboards for active games whose templates have push enabled."""
+async def push_all_recurring_leaderboards(
+    bot: discord.Client,
+    fe,
+    name_resolver: Optional[Callable[[int, Optional[discord.Guild]], Awaitable[str]]] = None,
+) -> None:
+    """Push/edit leaderboards for active games whose templates have push enabled.
+
+    ``name_resolver`` maps a user id + guild to the name shown on the image; when
+    omitted, rows fall back to ``ID(...)``.
+    """
     try:
         games = fe.be.get_many_games(include_open=False, include_active=True, include_private=True)
     except LookupError:
@@ -243,7 +268,14 @@ async def push_all_recurring_leaderboards(bot: discord.Client, fe) -> None:
             )
             continue
         try:
-            embed, image, _ = collect_push_payload(fe, game)
+            players, owned_pcts = collect_push_players(fe, game)
+            if name_resolver is not None:
+                for player in players:
+                    try:
+                        player["display_name"] = await name_resolver(int(player["user_id"]), guild)
+                    except Exception:
+                        logger.debug("Name lookup failed for user %s", player["user_id"])
+            embed, image = render_push_payload(game, players, owned_pcts)
             # Refresh game row for message id
             game = fe.be.get_game(game.id)
             await push_or_edit_leaderboard_message(

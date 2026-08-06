@@ -309,20 +309,18 @@ class TestFrontend:
         owner_id = 10
         user_to_join_id = 25
         game_name = "JoinGameTest"
-        team_name = "TheWinners"
 
         fe.register(user_id=user_to_join_id, username="Joiner")
         fe.new_game(user_id=owner_id, name=game_name, start_date="2025-12-01", private_game=False)
         game_db = fe.be.get_many_games(name=game_name, owner_id=owner_id, include_private=True)[0]
 
-        fe.join_game(user_id=user_to_join_id, game_id=game_db.id, name=team_name)
+        fe.join_game(user_id=user_to_join_id, game_id=game_db.id)
 
         participants = fe.be.get_many_participants(user_id=user_to_join_id, game_id=game_db.id)
         assert len(participants) == 1
         participant = participants[0]
         assert participant.user_id == user_to_join_id
         assert participant.game_id == game_db.id
-        assert participant.name == team_name # Team name for the game
         assert participant.status == 'active' # Default status for new participant
 
     def test_join_game_user_not_registered(self, fe: Frontend):
@@ -337,7 +335,7 @@ class TestFrontend:
         games = fe.my_games(user_id=non_existent_user_id)
         assert games.games[0].name == game_name # User should end up in the game
         participant = fe.be.get_many_participants(user_id=non_existent_user_id, game_id=game_db.id)[0]
-        assert participant.name is None
+        assert participant.status == 'active'
         
         
 

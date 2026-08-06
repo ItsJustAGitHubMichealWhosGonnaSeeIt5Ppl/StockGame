@@ -182,7 +182,7 @@ class TestFrontend:
 
     def test_leave_game_removes_participant_but_not_game(self, fe: Frontend):
         game_id = fe.new_game(user_id=10, name='LeaveGame', start_date='2099-10-10')
-        fe.join_game(user_id=20, game_id=game_id, name='Player Twenty')
+        fe.join_game(user_id=20, game_id=game_id)
 
         assert fe.pick_capacity(20, game_id) == (10, 10)
         fe.leave_game(user_id=20, game_id=game_id)
