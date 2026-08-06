@@ -27,7 +27,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Compile Python sources
-        run: python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers scripts tests
+        run: python -m compileall -q discord_bot.py stocks.py db_schema.py helpers scripts tests
 
       - name: Run type checks
         run: python -m pyright

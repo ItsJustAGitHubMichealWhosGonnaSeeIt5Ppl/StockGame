@@ -1,13 +1,24 @@
+"""SQLite schema creation and versioned migrate-or-remake for StockGame.
+
+``discord_bot`` calls :func:`ensure_database` on startup. That creates a missing
+DB, applies a registered migration when one exists for the version jump, or
+backs up and remakes an empty schema when no migration path is registered.
+"""
+
+from __future__ import annotations
+
 import logging
 import sqlite3
-import os 
+import os
 from pathlib import Path
+from typing import Callable
+
 from helpers.sqlhelper import SqlHelper, _iso8601
 from helpers.db_backup import create_db_backup
 from dotenv import load_dotenv
 
 load_dotenv()
-logger = logging.getLogger("SqliteCreator")
+logger = logging.getLogger("DbSchema")
 #TODO change datetime_updated to last_updated, and use a unix timestamp
 #TODO change aggregate_value to total value for consistency
 #TODO check the add a guild field to verify that the server is the same 
@@ -16,6 +27,14 @@ logger = logging.getLogger("SqliteCreator")
 # # (YYYY-MM-DD) objects should include 'date' in the key name
 
 db_ver = "0.2.1"  # Current schema version
+
+# (from_version, to_version) -> migration function that mutates ``db_name`` in place.
+# When no entry matches a version jump, :func:`ensure_database` remakes empty.
+MigrationFn = Callable[[str], None]
+MIGRATIONS: dict[tuple[str, str], MigrationFn] = {
+    # Example:
+    # ("0.2.0", "0.2.1"): _migrate_0_2_0_to_0_2_1,
+}
 
 
 def _read_db_version(db_name: str) -> str | None:
@@ -40,6 +59,35 @@ def _read_db_version(db_name: str) -> str | None:
         conn.close()
 
 
+def _set_db_version(db_name: str, version: str) -> None:
+    """Update ``database_info.current_version`` after a successful migration."""
+    sql = SqlHelper(db_name)
+    info = sql.get(table="database_info")
+    if info.status == "error" and info.reason == "NO ROWS RETURNED":
+        sql.insert(
+            table="database_info",
+            items={
+                "database_name": db_name,
+                "original_version": version,
+                "current_version": version,
+                "datetime_created": _iso8601(),
+            },
+        )
+        return
+    sql.update(
+        table="database_info",
+        items={"current_version": version, "last_updated": _iso8601()},
+        filters={"database_name": db_name},
+    )
+
+
+def _unlink_db_files(db_name: str) -> None:
+    path = Path(db_name)
+    path.unlink(missing_ok=True)
+    for suffix in ("-wal", "-shm", "-journal"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+
+
 def remake_db_on_mismatch(
     db_name: str,
     db_current_ver: str = db_ver,
@@ -49,8 +97,7 @@ def remake_db_on_mismatch(
     """Keep the DB only when versions match; otherwise backup then remake empty schema.
 
     Returns the remake backup path when a remake ran, else None.
-
-    TODO: Real row-preserving migrations can return here later (formerly ``upgrade_db``).
+    Prefer :func:`ensure_database` at bot startup (migrate when possible).
     """
     path = Path(db_name)
     if not path.is_file() or path.stat().st_size <= 0:
@@ -71,27 +118,72 @@ def remake_db_on_mismatch(
         db_current_ver,
         backup,
     )
-    path.unlink(missing_ok=True)
-    for suffix in ("-wal", "-shm", "-journal"):
-        Path(str(path) + suffix).unlink(missing_ok=True)
+    _unlink_db_files(db_name)
     create(db_name, upgrade=False)
     return str(backup) if backup else None
 
 
 def upgrade_db(db_name: str, db_current_ver: str = db_ver, force_upgrade: bool = False):
-    """Deprecated alias for remake-on-mismatch (no row copy). Prefer ``remake_db_on_mismatch``."""
+    """Deprecated alias. Prefer :func:`ensure_database`."""
     return remake_db_on_mismatch(db_name, db_current_ver, force=force_upgrade)
 
 
+def ensure_database(db_name: str, *, target_version: str = db_ver) -> str:
+    """Ensure ``db_name`` exists at ``target_version``.
+
+    Returns one of: ``created``, ``unchanged``, ``migrated``, ``remade``.
+
+    * Missing / empty file → create current schema.
+    * Matching version → ensure tables exist (``CREATE IF NOT EXISTS``).
+    * Mismatch with a registered ``MIGRATIONS[(from, to)]`` entry → backup, migrate, stamp version.
+    * Mismatch with no migration → backup and remake empty schema.
+    """
+    db_path = Path(db_name)
+    if db_path.parent != Path("."):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not db_path.is_file() or db_path.stat().st_size <= 0:
+        create(db_name, upgrade=False)
+        logger.info("Created database %s at schema %s", db_name, target_version)
+        return "created"
+
+    current = _read_db_version(db_name)
+    if current == target_version:
+        create(db_name, upgrade=False)
+        return "unchanged"
+
+    migrator = MIGRATIONS.get((current or "", target_version))
+    if migrator is not None:
+        old_label = (current or "unknown").replace("/", "_")
+        new_label = target_version.replace("/", "_")
+        backup = create_db_backup(
+            db_name, kind="remake", label=f"{old_label}-to-{new_label}"
+        )
+        logger.info(
+            "Migrating database %s from %s → %s (backup: %s)",
+            db_name,
+            current,
+            target_version,
+            backup,
+        )
+        migrator(db_name)
+        create(db_name, upgrade=False)  # pick up any new CREATE IF NOT EXISTS tables
+        _set_db_version(db_name, target_version)
+        return "migrated"
+
+    remake_db_on_mismatch(db_name, target_version, force=True)
+    return "remade"
+
+
 def create(db_name:str, upgrade:bool=True):
-    """Create database schema; on version mismatch, backup then remake empty DB.
+    """Create database schema tables.
 
     Version: 0.2.1
 
     Args:
         db_name (str): Database name
-        upgrade (bool, optional): When True, remake if ``database_info`` version
-            does not match ``db_ver``. Defaults to True.
+        upgrade (bool, optional): When True and the on-disk version differs from
+            ``db_ver``, run :func:`ensure_database` (migrate or remake). Defaults to True.
 
     # Changelog
 
@@ -106,7 +198,7 @@ def create(db_name:str, upgrade:bool=True):
     - ``days_in_first`` on game_participants
     - ``leaderboard_day_snapshots`` table
     ### Changed
-    - Version mismatch remakes empty schema (backup first); no row migration
+    - Version mismatch remakes empty schema (backup first) unless a migration is registered
 
     ## [0.1.1] / [0.1.0] - 2025-06-27
     See git history for older changelog entries.
@@ -115,11 +207,11 @@ def create(db_name:str, upgrade:bool=True):
     if db_path.parent != Path('.'):
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Remake-on-mismatch before CREATE IF NOT EXISTS (avoids mixed old/new schemas).
+    # Migrate-or-remake before CREATE IF NOT EXISTS (avoids mixed old/new schemas).
     if upgrade and db_path.is_file() and db_path.stat().st_size > 0:
         current = _read_db_version(db_name)
         if current != db_ver:
-            remake_db_on_mismatch(db_name, db_ver)
+            ensure_database(db_name)
             return
 
     conn = sqlite3.connect(db_name)
@@ -317,8 +409,6 @@ def create(db_name:str, upgrade:bool=True):
 
 
 if __name__ == "__main__":
-    
     DB_NAME = str(os.getenv('DB_NAME'))
     print(f'DB Name is: {DB_NAME}')
-    # upgrade_db(DB_NAME, force_upgrade=True) # Force upgrade to latest version
-    create(DB_NAME)
+    print(ensure_database(DB_NAME))

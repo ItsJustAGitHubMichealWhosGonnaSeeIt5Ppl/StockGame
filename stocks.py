@@ -20,7 +20,7 @@ import helpers.exceptions as bexc
 from helpers.alpaca_client import AlpacaMarketData, to_alpaca_symbol, to_db_ticker
 from helpers.sqlhelper import SqlHelper, _iso8601, Status
 from helpers.db_backup import maybe_daily_backup, maybe_hourly_backup
-from sqlite_creator_real import create as create_db
+from db_schema import create as create_db
 
 load_dotenv() 
 

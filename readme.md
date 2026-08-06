@@ -69,7 +69,7 @@ docker compose logs -f
 
 The container:
 
-- Creates `data/stockgame.db` on first start if it does not exist
+- Creates or migrates `data/stockgame.db` on bot startup if needed
 - Writes logs under `./logs` on the host
 - Restarts automatically unless you stop it
 
@@ -120,17 +120,24 @@ docker run -d --name stockgame --env-file .env `
 - Do **not** bake secrets into the image; `.env` is excluded from the build and passed at runtime.
 - After changing code, rebuild: `docker compose up -d --build`.
 - If the bot cannot write the database on Linux, ensure `./data` is writable (the entrypoint tries to fix ownership on start).
-- Local Python is not required for Docker; the image runs schema creation on first boot.
+- Local Python is not required for Docker; the bot creates or migrates the SQLite schema on startup.
 
-### Database version, remake, and backups
+### Database version, migrate/remake, and backups
 
-SQLite schema version is tracked in `database_info`. On startup / `create()`, if the file’s `current_version` does **not** match the code’s `db_ver`, the bot **backs up** the file under `data/backups/` then **remakes an empty schema** (no row migration yet). Expect to lose live game data on a version bump unless you restore from backup.
+SQLite schema version is tracked in `database_info`. When `discord_bot.py` starts it calls `db_schema.ensure_database()`:
+
+1. **Missing DB** → create current schema  
+2. **Matching version** → leave data in place (ensure tables exist)  
+3. **Version mismatch with a registered migration** → backup, run migration, stamp new version  
+4. **Version mismatch with no migration** → backup under `data/backups/`, then remake an **empty** schema  
+
+Expect to lose live game data on an unmigrated version bump unless you restore from backup.
 
 Automatic backups (also under `data/backups/`):
 
 | Kind | When | Retention |
 |------|------|-----------|
-| `remake` | Before a version-mismatch remake | last 10 |
+| `remake` | Before a migrate or remake on version mismatch | last 10 |
 | `daily` | Once per calendar day (on `update_all`) | last 7 |
 | `hourly` | Once per clock hour (on `update_all`) | last 24 |
 
@@ -152,7 +159,6 @@ cd StockGame
 pip install -r requirements.txt
 cp .env.example .env   # Windows: Copy-Item .env.example .env
 # edit .env — for local runs DB_NAME=stockgame.db is fine
-python sqlite_creator_real.py
 python discord_bot.py
 ```
 
@@ -200,7 +206,7 @@ Other setup guides: [Wiki home](https://github.com/ItsJustAGitHubMichealWhosGonn
 
 ```bash
 pip install -r requirements-dev.txt
-python -m compileall -q discord_bot.py stocks.py sqlite_creator_real.py helpers scripts tests
+python -m compileall -q discord_bot.py stocks.py db_schema.py helpers scripts tests
 python -m pyright
 python -m pytest -q
 ```

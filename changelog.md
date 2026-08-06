@@ -51,7 +51,7 @@ and this project would like to adhere to [Semantic Versioning](https://semver.or
 - Unneeded imports from `stocks.py`
 - Removed `dotenv` import as it does not appear to do anything
 
-### Database Creation (sqlite_creator_real)
+### Database Creation (db_schema; formerly sqlite_creator_real)
 
 #### Added
 - Private game toggle (defaults to False)

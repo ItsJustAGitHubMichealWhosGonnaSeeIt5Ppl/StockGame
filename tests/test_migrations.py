@@ -3,7 +3,7 @@ import sqlite3
 
 from helpers.db_backup import create_db_backup, prune_backups, maybe_daily_backup
 from helpers.sqlhelper import SqlHelper
-from sqlite_creator_real import create, db_ver, remake_db_on_mismatch
+from db_schema import create, db_ver, remake_db_on_mismatch, ensure_database, MIGRATIONS
 
 
 def test_create_fresh_database_has_current_version(db_path):
@@ -85,3 +85,62 @@ def test_maybe_daily_backup_once_per_day(db_path):
     second = maybe_daily_backup(db_path)
     assert first is not None
     assert second is None
+
+
+def test_ensure_database_creates_missing_file(tmp_path):
+    target = tmp_path / "fresh.sqlite"
+    assert ensure_database(str(target)) == "created"
+    assert ensure_database(str(target)) == "unchanged"
+
+
+def test_ensure_database_remakes_when_no_migration(db_path):
+    create(db_path, upgrade=False)
+    sql = SqlHelper(db_path)
+    sql.insert(
+        "users",
+        {
+            "user_id": 42,
+            "source": "testing",
+            "datetime_created": "2025-01-01 00:00:00",
+        },
+    )
+    sql.update(
+        "database_info",
+        {"current_version": "0.0.9"},
+        filters={"database_name": db_path},
+    )
+
+    assert ensure_database(db_path) == "remade"
+    assert SqlHelper(db_path).get("users", filters={"user_id": 42}).status == "error"
+
+
+def test_ensure_database_runs_registered_migration(db_path):
+    create(db_path, upgrade=False)
+    sql = SqlHelper(db_path)
+    sql.insert(
+        "users",
+        {
+            "user_id": 99,
+            "source": "testing",
+            "datetime_created": "2025-01-01 00:00:00",
+        },
+    )
+    sql.update(
+        "database_info",
+        {"current_version": "0.0.9"},
+        filters={"database_name": db_path},
+    )
+
+    def fake_migrate(_db_name: str) -> None:
+        # Preserve rows; only the version stamp changes via ensure_database.
+        return None
+
+    MIGRATIONS[("0.0.9", db_ver)] = fake_migrate
+    try:
+        assert ensure_database(db_path) == "migrated"
+        rebuilt = SqlHelper(db_path)
+        assert rebuilt.get("users", filters={"user_id": 99}).status == "success"
+        info = rebuilt.get("database_info", filters={"database_name": db_path})
+        assert info.result[0]["current_version"] == db_ver
+    finally:
+        MIGRATIONS.pop(("0.0.9", db_ver), None)

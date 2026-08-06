@@ -45,7 +45,7 @@ def db_path():
 @pytest.fixture(scope="function")
 def be(db_path):
     """Provides a Backend instance connected to a real, temporary SQLite DB."""
-    from sqlite_creator_real import create
+    from db_schema import create
     from stocks import Backend    
 
     create(db_path) # Initialize the schema in the temporary database
@@ -55,7 +55,7 @@ def be(db_path):
 @pytest.fixture(scope="function")
 def fe(db_path):
     """Provides a Frontend instance connected to a real, temporary SQLite DB."""
-    from sqlite_creator_real import create
+    from db_schema import create
     from stocks import Frontend    
 
     create(db_path) # Initialize the schema in the temporary database
