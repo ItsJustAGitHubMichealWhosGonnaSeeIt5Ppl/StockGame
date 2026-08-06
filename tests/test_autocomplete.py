@@ -110,11 +110,18 @@ def test_join_game_autocomplete_uses_game_list_order_and_marks_recurring():
     calls = []
     recurring = SimpleNamespace(id="REC01", name="Monthly", template_id=7)
     regular = SimpleNamespace(id="ONE01", name="One Off", template_id=None)
+    already_joined = SimpleNamespace(id="JOIN1", name="Already In", template_id=None)
     fake_frontend = SimpleNamespace(
         list_games_ranked=lambda **kwargs: calls.append(kwargs) or [
             (recurring, 2),
+            (already_joined, 4),
             (regular, 10),
         ],
+        be=SimpleNamespace(
+            get_many_participants=lambda **kwargs: (
+                SimpleNamespace(game_id="JOIN1"),
+            )
+        ),
     )
     autocomplete.init_autocomplete(fake_frontend)
 
@@ -125,6 +132,29 @@ def test_join_game_autocomplete_uses_game_list_order_and_marks_recurring():
     assert [(choice.name, choice.value) for choice in choices] == [
         ("🔁 Monthly (ID: REC01)", "REC01"),
         ("One Off (ID: ONE01)", "ONE01"),
+    ]
+
+
+def test_join_game_autocomplete_shows_all_when_user_has_no_games():
+    game = SimpleNamespace(id="OPEN1", name="Open Game", template_id=None)
+    fake_frontend = SimpleNamespace(
+        list_games_ranked=lambda **kwargs: [(game, 1)],
+        be=SimpleNamespace(
+            get_many_participants=lambda **kwargs: (_ for _ in ()).throw(
+                LookupError()
+            )
+        ),
+    )
+    autocomplete.init_autocomplete(fake_frontend)
+
+    choices = asyncio.run(
+        autocomplete.join_games_autocomplete(
+            SimpleNamespace(user=SimpleNamespace(id=99)), ""
+        )
+    )
+
+    assert [(choice.name, choice.value) for choice in choices] == [
+        ("Open Game (ID: OPEN1)", "OPEN1"),
     ]
 
 
