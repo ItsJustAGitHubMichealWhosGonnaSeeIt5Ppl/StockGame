@@ -1054,7 +1054,7 @@ class Backend:
         
 
     # # GAME PARTICIPATION ACTIONS # #
-    def add_participant(self, user_id:int, game_id:int | str):
+    def add_participant(self, user_id:int, game_id:int | str, force_active: bool = False):
         """Add a game participant
         
         Cannot add participant to a game that has already started.
@@ -1062,6 +1062,7 @@ class Backend:
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
+            force_active (bool): Join as active even for private games (e.g. owner invite).
         
         Raises:
             ValueError('`pick_date` has passed.'): The pick date for the game has already passed, so the player cannot be added.
@@ -1070,10 +1071,10 @@ class Backend:
         game = self.get_game(game_id=game_id)
         if game.start_date < datetime.today().date() and (game.pick_date and game.pick_date < datetime.today().date()):
             raise ValueError('`pick_date` has passed.')
-        if game.private_game and game.owner_id != user_id: # Otherwise the owner is pending lol
-            status = 'pending'
-        else:
+        if force_active or not (game.private_game and game.owner_id != user_id):
             status = 'active'
+        else:
+            status = 'pending'
         items = {
             'user_id':user_id, 
             'game_id':game_id,
@@ -2138,22 +2139,94 @@ class Frontend: # This will be where a bot (like discord) interacts
         except bexc.UserExistsError: # user already exists
             return "User already registered"
 
-    def join_game(self, user_id:int, game_id:int | str):
+    def join_game(self, user_id:int, game_id:int | str, force_active: bool = False):
         """Join a game.
 
         Args:
             user_id (int): User ID.
             game_id (int): Game ID.
+            force_active (bool): Join as active even for private games (owner invite).
+                If the user is already pending, upgrades them to active.
         
         Raises:
             add_participant > bexc.DoesntExistError: Attempted to join a game that doesn't exist
         """
         self.register(user_id) # Must try to register user
         try:
-            self.be.add_participant(user_id=int(user_id), game_id=game_id)
+            self.be.add_participant(
+                user_id=int(user_id),
+                game_id=game_id,
+                force_active=force_active,
+            )
+        except ValueError as exc:
+            if force_active and 'already in game' in str(exc).lower():
+                players = self.be.get_many_participants(user_id=user_id, game_id=game_id)
+                if players[0].status == 'pending':
+                    self.be.update_participant(players[0].id, status='active')
+                    return
+            raise
         except LookupError:
             raise LookupError('Game not found.')
-            
+
+    def kick_player(
+        self,
+        user_id: int,
+        game_id: int | str,
+        target_user_id: int,
+        *,
+        enforce_permissions: bool = True,
+    ):
+        """Remove a participant from a private game (owner / bot owner).
+
+        Args:
+            user_id: Actor performing the kick.
+            game_id: Game ID.
+            target_user_id: User to remove.
+            enforce_permissions: When True, only the game owner or bot owner may kick.
+        """
+        self.register(user_id)
+        game = self.be.get_game(game_id)
+        if not game.private_game:
+            raise bexc.NotAllowedError(
+                action='kick_player',
+                reason='Not private',
+                message='Players can only be kicked from private games.',
+            )
+        if game.status == 'ended':
+            raise bexc.NotAllowedError(
+                action='kick_player',
+                reason='Game ended',
+                message='Cannot kick players from a completed game.',
+            )
+        if target_user_id == game.owner_id:
+            raise PermissionError('Cannot kick the game owner.')
+        if (
+            enforce_permissions
+            and user_id != self.owner_id
+            and not self._user_owns_game(user_id=user_id, game_id=game_id)
+        ):
+            raise PermissionError(
+                f'User {user_id} is not allowed to kick players from game {game_id}'
+            )
+        participant_id = self._participant_id(user_id=target_user_id, game_id=game_id)
+        self.be.remove_participant(participant_id)
+
+    def user_owns_any_game(self, user_id: int) -> tuple[bool, bool]:
+        """Return (owns_any_game, owns_any_private_game) for help section gating."""
+        try:
+            games = self.be.get_many_games(
+                owner_id=user_id,
+                include_public=True,
+                include_private=True,
+                include_open=True,
+                include_active=True,
+                include_ended=True,
+            )
+        except LookupError:
+            return False, False
+        owns_private = any(game.private_game for game in games)
+        return True, owns_private
+
     def my_games(self, user_id:int, include_ended:bool=False)->dtv.MyGames:
         """Get a list of your current games
 

@@ -374,3 +374,108 @@ async def owner_games_autocomplete(
     current: str,
 ) -> list[Choice[str]]:
     return await game_id_autocomplete(interaction, current, owner_only=True)
+
+
+async def private_owner_games_autocomplete(
+    interaction: Interaction,
+    current: str,
+) -> list[Choice[str]]:
+    """Games the user owns that are private (for kick / pending flows)."""
+    try:
+        if _fe is None:
+            return []
+        user_games = _fe.my_games(interaction.user.id, include_ended=False)
+        needle = current.lower()
+        choices: list[Choice[str]] = []
+        for game in user_games.games:
+            if game.owner_id != interaction.user.id or not game.private_game:
+                continue
+            if game.status == 'ended':
+                continue
+            if needle and needle not in game.name.lower() and needle not in str(game.id):
+                continue
+            choices.append(
+                Choice(
+                    name=f"🔒 {game.name} (ID: {game.id})"[:100],
+                    value=str(game.id),
+                )
+            )
+            if len(choices) >= 25:
+                break
+        return choices
+    except LookupError:
+        return []
+    except Exception:
+        logger.debug('Private-owner game autocomplete failed.', exc_info=True)
+        return []
+
+
+async def game_info_autocomplete(
+    interaction: Interaction,
+    current: str,
+) -> list[Choice[str]]:
+    """Public games plus private games the user owns or actively plays."""
+    try:
+        if _fe is None:
+            return []
+
+        try:
+            mine = _fe.list_my_games_ranked(interaction.user.id, include_ended=True)
+        except LookupError:
+            mine = []
+        try:
+            public = _fe.list_games_ranked(
+                include_public=True,
+                include_private=False,
+                include_open=True,
+                include_active=True,
+                include_ended=True,
+            )
+        except LookupError:
+            public = []
+
+        accessible: list = []
+        seen: set[str] = set()
+        for game, count in mine:
+            if game.private_game:
+                try:
+                    participants = _fe.be.get_many_participants(
+                        game_id=game.id, user_id=interaction.user.id
+                    )
+                except LookupError:
+                    continue
+                if game.owner_id != interaction.user.id and not any(
+                    p.status == 'active' for p in participants
+                ):
+                    continue
+            gid = str(game.id)
+            if gid not in seen:
+                seen.add(gid)
+                accessible.append((game, count))
+        for game, count in public:
+            gid = str(game.id)
+            if gid not in seen:
+                seen.add(gid)
+                accessible.append((game, count))
+
+        needle = current.strip().lower()
+        choices: list[Choice[str]] = []
+        for game, _count in accessible:
+            game_id = str(game.id)
+            searchable = f"{game.name} {game_id}".lower()
+            if needle and needle not in searchable:
+                continue
+            recurring = "🔁 " if game.template_id is not None else ""
+            private = "🔒 " if game.private_game else ""
+            choices.append(
+                Choice(
+                    name=f"{private}{recurring}{game.name} (ID: {game_id})"[:100],
+                    value=game_id,
+                )
+            )
+            if len(choices) >= 25:
+                break
+        return choices
+    except Exception:
+        logger.debug('Game-info autocomplete failed.', exc_info=True)
+        return []
