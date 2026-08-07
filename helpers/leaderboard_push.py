@@ -7,6 +7,7 @@ message. Extra messages are deleted when the player count shrinks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -385,7 +386,12 @@ async def push_all_recurring_leaderboards(
     omitted, rows fall back to ``ID(...)``.
     """
     try:
-        games = fe.be.get_many_games(include_open=False, include_active=True, include_private=True)
+        games = await asyncio.to_thread(
+            fe.be.get_many_games,
+            include_open=False,
+            include_active=True,
+            include_private=True,
+        )
     except LookupError:
         return
 
@@ -393,7 +399,7 @@ async def push_all_recurring_leaderboards(
         if not game.template_id:
             continue
         try:
-            template = fe.be.get_game_template(game.template_id)
+            template = await asyncio.to_thread(fe.be.get_game_template, game.template_id)
         except LookupError:
             continue
         if not template.push_leaderboard or not template.leaderboard_channel_id:
@@ -421,16 +427,18 @@ async def push_all_recurring_leaderboards(
             )
             continue
         try:
-            players, owned_pcts = collect_push_players(fe, game)
+            players, owned_pcts = await asyncio.to_thread(collect_push_players, fe, game)
             if name_resolver is not None:
                 for player in players:
                     try:
                         player["display_name"] = await name_resolver(int(player["user_id"]), guild)
                     except Exception:
                         logger.debug("Name lookup failed for user %s", player["user_id"])
-            embed, images = render_push_pages(game, players, owned_pcts)
+            embed, images = await asyncio.to_thread(
+                render_push_pages, game, players, owned_pcts
+            )
             # Refresh game row for message ids
-            game = fe.be.get_game(game.id)
+            game = await asyncio.to_thread(fe.be.get_game, game.id)
             await push_or_edit_leaderboard_messages(
                 channel=channel,
                 game=game,

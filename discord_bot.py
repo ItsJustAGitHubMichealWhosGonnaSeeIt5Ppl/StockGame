@@ -2645,7 +2645,7 @@ async def leaderboard_cmd(
     user_id = interaction.user.id
     if game_id:
         try:
-            selected_game = fe.be.get_game(game_id)
+            selected_game = await asyncio.to_thread(fe.be.get_game, game_id)
         except LookupError:
             await interaction.followup.send(
                 embed=simple_embed(
@@ -2656,7 +2656,7 @@ async def leaderboard_cmd(
                 ephemeral=ephemeral_test,
             )
             return
-        if not _user_can_view_leaderboard(selected_game, user_id):
+        if not await asyncio.to_thread(_user_can_view_leaderboard, selected_game, user_id):
             await interaction.followup.send(
                 embed=simple_embed(
                     status="failed",
@@ -2669,7 +2669,7 @@ async def leaderboard_cmd(
         ranked = [(selected_game, 0)]
     else:
         try:
-            ranked = _leaderboard_browse_games(user_id)
+            ranked = await asyncio.to_thread(_leaderboard_browse_games, user_id)
         except Exception as exc:
             logger.exception("leaderboard failed | user=%s", user_id, exc_info=exc)
             await interaction.followup.send(
@@ -2694,7 +2694,7 @@ async def leaderboard_cmd(
     games: list[dict] = []
     for game, _player_count in ranked:
         try:
-            info = fe.game_info(game.id, show_leaderboard=True)
+            info = await asyncio.to_thread(fe.game_info, game.id, True)
         except Exception:
             continue
         leaderboard = info.leaderboard or []
@@ -2735,6 +2735,45 @@ async def leaderboard_cmd(
     await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=ephemeral_test)
 
 
+def _participant_for_game(user_id: int, game_id: str):
+    """Return the participant row or None when the user is not in the game."""
+    try:
+        return fe.be.get_many_participants(user_id=user_id, game_id=game_id)[0]
+    except LookupError:
+        return None
+
+
+def _build_my_stocks_portfolio(user_id: int, game_id: str, display_name: str):
+    """Load portfolio data and render the PNG (runs in a worker thread)."""
+    picks = fe.my_stocks(user_id, game_id)
+    info = fe.game_info(game_id)
+    user_data = {
+        'display_name': display_name,
+        'user_id': user_id,
+    }
+    game_data = {
+        'name': fe._get_game_name(game_id=game_id),
+        'id': game_id,
+    }
+    stock_picks = [
+        {
+            'stock_ticker': pick.stock_ticker,
+            'status': pick.status,
+            'shares': pick.shares,
+            'current_value': pick.current_value,
+            'change_dollars': pick.change_dollars,
+            'change_percent': pick.change_percent,
+            'last_updated': pick.last_updated,
+        }
+        for pick in picks
+    ]
+    image_buffer = StockPortfolioImageGenerator(theme='discord_dark').create_portfolio_image(
+        user_data, game_data, stock_picks, info
+    )
+    remaining, total = fe.pick_capacity(user_id, game_id)
+    return info, image_buffer, remaining, total
+
+
 @bot.tree.command(name="my-stocks", description="View your stocks in a game as a visual portfolio")
 @app_commands.autocomplete(game_id=ac.all_games_autocomplete)
 @app_commands.describe(
@@ -2748,9 +2787,8 @@ async def my_stocks(
     await interaction.response.defer(ephemeral=ephemeral_test)
 
     try:
-        try:
-            participant = fe.be.get_many_participants(user_id=user_id, game_id=game_id)[0]
-        except LookupError:
+        participant = await asyncio.to_thread(_participant_for_game, user_id, game_id)
+        if participant is None:
             await interaction.followup.send(
                 embed=simple_embed(
                     status='failed',
@@ -2789,37 +2827,12 @@ async def my_stocks(
             )
             return
 
-        picks = fe.my_stocks(user_id, game_id)
-        info = fe.game_info(game_id)
-        
-        # Prepare data for image generator
-        user_data = {
-            'display_name': interaction.user.display_name,
-            'user_id': user_id
-        }
-        
-        game_data = {
-            'name': fe._get_game_name(game_id=game_id),
-            'id': game_id
-        }
-        
-        # Convert pick objects to dictionaries
-        stock_picks = []
-        for pick in picks:
-            stock_dict = {
-                'stock_ticker': pick.stock_ticker,
-                'status': pick.status,
-                'shares': pick.shares,
-                'current_value': pick.current_value,
-                'change_dollars': pick.change_dollars,
-                'change_percent': pick.change_percent,
-                'last_updated': pick.last_updated
-            }
-            stock_picks.append(stock_dict)
-        
-        # Generate image
-        generator = StockPortfolioImageGenerator(theme='discord_dark')
-        image_buffer = generator.create_portfolio_image(user_data, game_data, stock_picks, info)
+        info, image_buffer, remaining, total = await asyncio.to_thread(
+            _build_my_stocks_portfolio,
+            user_id,
+            game_id,
+            interaction.user.display_name,
+        )
 
         # Create Discord file
         file = discord.File(image_buffer, filename=f"portfolio_{user_id}_{game_id}.png")
@@ -2834,7 +2847,6 @@ async def my_stocks(
                     rank_line = f"**#{i}** · ${d_chg:+,.2f} ({p_chg:+.2f}%)"
                     break
 
-        remaining, total = fe.pick_capacity(user_id, game_id)
         status_label = game.status
         pick_line = (
             f"Pick deadline: `{game.pick_date}`"
@@ -2871,8 +2883,8 @@ async def my_stocks(
         
     except LookupError:
         try:
-            remaining, total = fe.pick_capacity(user_id, game_id)
-            game = fe.game_info(game_id, show_leaderboard=False).game
+            remaining, total = await asyncio.to_thread(fe.pick_capacity, user_id, game_id)
+            game = (await asyncio.to_thread(fe.game_info, game_id, False)).game
             embed = discord.Embed(
                 title='No Stocks Yet',
                 description=(
@@ -2911,9 +2923,9 @@ async def game_info(
     await interaction.response.defer(ephemeral=ephemeral_test)
 
     try:
-        game_info_obj = fe.game_info(game_id, show_leaderboard=True)
+        game_info_obj = await asyncio.to_thread(fe.game_info, game_id, True)
         game = game_info_obj.game
-        if not _user_can_view_game_info(game, interaction.user.id):
+        if not await asyncio.to_thread(_user_can_view_game_info, game, interaction.user.id):
             await interaction.followup.send(
                 embed=simple_embed(
                     status='failed',
@@ -2996,7 +3008,8 @@ async def game_list(
     embed = discord.Embed()
     error = False
     try:
-        ranked = fe.list_games_ranked(
+        ranked = await asyncio.to_thread(
+            fe.list_games_ranked,
             include_open=True,
             include_active=True,
             owner_id=owner.id if owner else None,
@@ -3038,8 +3051,13 @@ async def my_games(
     embed = discord.Embed()
     error = False
     try:
-        today = fe.gl._today_et()
-        ranked = fe.list_my_games_ranked(interaction.user.id, include_ended=True, today=today)
+        today = await asyncio.to_thread(fe.gl._today_et)
+        ranked = await asyncio.to_thread(
+            fe.list_my_games_ranked,
+            interaction.user.id,
+            include_ended=True,
+            today=today,
+        )
         embed = discord.Embed(title="Your games", description="")
         formatted_games = [
             _format_listed_game(
@@ -3085,7 +3103,7 @@ async def user_stats(
         discord_user: discord.User | discord.Member = user if user else interaction.user
         user_title = f"{discord_user.display_name}{f' ({discord_user.name})' if discord_user.display_name != discord_user.name else ''}"
         
-        user_stats = fe.get_user(discord_user.id)
+        user_stats = await asyncio.to_thread(fe.get_user, discord_user.id)
 
         embed = discord.Embed(title=user_title, description="Global Statistics")
         embed.set_thumbnail(url=discord_user.display_avatar)
