@@ -692,10 +692,10 @@ async def create_game(interaction: discord.Interaction):
                     private_embed = discord.Embed(
                         title="Do you want your game to be private?",
                         description=(
-                            "If you select 'Yes', the game ID will be hidden in the game-list command. "
-                            "If you select 'No', it will be visible. All private games require owner approval "
-                            "for new users to join. **Owners will have to run the /manage-pending command to "
-                            "approve or deny new users.**\n\n"
+                            "If you select 'Yes', the game stays hidden from public lists. "
+                            "Players who use `/join-game` need owner approval via `/manage-pending`. "
+                            "Owner `/invite`s join private games immediately (no approval).\n\n"
+                            "If you select 'No', it will be visible publicly.\n\n"
                             "⚠️ **DM tip:** `/invite` delivers join buttons by DM. If the invited user has "
                             "DMs from server members turned off, private invites may not work — ask them to "
                             "enable DMs, or share the game ID privately."
@@ -956,7 +956,8 @@ class LeaderboardChannelSelect(discord.ui.View):
         self.stop()
 
 
-@bot.tree.command(name="create-recurring-game", description="Create a recurring game template (restrict via Integrations; admins only)")
+@bot.tree.command(name="create-recurring-game", description="Create a recurring game template")
+@app_commands.default_permissions()
 @app_commands.describe(
     name="Name of the game template",
     start_date="First game start date (YYYY-MM-DD). Later games repeat monthly from this day",
@@ -987,15 +988,6 @@ async def create_recurring_game(
         """Create a recurring game template"""
 
         await interaction.response.defer(ephemeral=ephemeral_test)
-
-        if not is_moderator(interaction):
-            await interaction.followup.send(
-                "You do not have permission to create recurring games. "
-                "Ask a server admin to grant access via Integrations, or use an Administrator account.",
-                ephemeral=True,
-            )
-            return
-
 
         try:
             if exclusive_picks and pick_date is None:
@@ -1081,10 +1073,13 @@ async def create_recurring_game(
             )
             if private_game:
                 embed.set_footer(
-                    text="Private invites need DMs from this server enabled — otherwise share the game ID manually."
+                    text=(
+                        f"Created by {interaction.user.display_name} · Template ID {template_id} · "
+                        "Private: /join-game needs approval; owner /invite joins immediately"
+                    )
                 )
-
-            embed.set_footer(text=f"Created by {interaction.user.display_name} · Template ID {template_id}")
+            else:
+                embed.set_footer(text=f"Created by {interaction.user.display_name} · Template ID {template_id}")
 
             await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
             if push_leaderboard:
@@ -1355,6 +1350,17 @@ async def invite_user(
         )
         return
 
+    if invited_game.private_game and interaction.user.id != invited_game.owner_id:
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='failed',
+                title='Not Allowed',
+                desc='Only the game owner can invite players to a private game.',
+            ),
+            ephemeral=ephemeral_test,
+        )
+        return
+
     invite_embed = discord.Embed(
         title="Game Invite",
         description=f"You have been invited to **{invited_game.name}** (#{game_id}) by {interaction.user.display_name}.",
@@ -1392,6 +1398,7 @@ async def invite_user(
             fe.join_game(
                 user_id=user.id,
                 game_id=game_id,
+                force_active=bool(invited_game.private_game),
             )
             participant = fe.be.get_many_participants(user_id=user.id, game_id=game_id)[0]
             if participant.status == 'pending':
@@ -1537,6 +1544,97 @@ async def manage_pending(
         )
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
   
+@bot.tree.command(name="kick-player", description="Kick a player from your private game")
+@app_commands.autocomplete(game_id=ac.private_owner_games_autocomplete)
+@app_commands.describe(
+    game_id="Private game ID",
+    user="Player to kick",
+)
+async def kick_player(
+    interaction: discord.Interaction,
+    game_id: str,
+    user: discord.User,
+):
+    await interaction.response.defer(ephemeral=ephemeral_test)
+    target_user_id = user.id
+
+    try:
+        game = fe.be.get_game(game_id)
+    except LookupError:
+        await interaction.followup.send(
+            embed=simple_embed(status='failed', title='Game Not Found', desc=f'No game exists with ID #{game_id}.'),
+            ephemeral=ephemeral_test,
+        )
+        return
+
+    if interaction.user.id != game.owner_id and not is_moderator(interaction):
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='failed',
+                title='Not Allowed',
+                desc='Only the game owner or a moderator can kick players from this game.',
+            ),
+            ephemeral=ephemeral_test,
+        )
+        return
+
+    try:
+        await asyncio.to_thread(
+            fe.kick_player,
+            user_id=interaction.user.id,
+            game_id=game_id,
+            target_user_id=target_user_id,
+            enforce_permissions=not is_moderator(interaction),
+        )
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='success',
+                title='Player Kicked',
+                desc=f'{user.mention} was removed from **{game.name}** (#{game_id}).',
+            ),
+            ephemeral=ephemeral_test,
+        )
+    except NotAllowedError as exc:
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='failed',
+                title='Cannot Kick Player',
+                desc=exc.message or str(exc),
+            ),
+            ephemeral=ephemeral_test,
+        )
+    except PermissionError as exc:
+        await interaction.followup.send(
+            embed=simple_embed(status='failed', title='Not Allowed', desc=str(exc)),
+            ephemeral=ephemeral_test,
+        )
+    except (DoesntExistError, LookupError):
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='failed',
+                title='Player Not Found',
+                desc=f'{user.mention} is not participating in game #{game_id}.',
+            ),
+            ephemeral=ephemeral_test,
+        )
+    except Exception as exc:
+        logger.exception(
+            'Kick failed | actor=%s game=%s target=%s',
+            interaction.user.id,
+            game_id,
+            target_user_id,
+            exc_info=exc,
+        )
+        await interaction.followup.send(
+            embed=simple_embed(
+                status='failed',
+                title='Kick Failed',
+                desc='An unexpected error occurred while kicking that player.',
+            ),
+            ephemeral=ephemeral_test,
+        )
+
+
 class RecurringTemplateManager(discord.ui.View):
     """Paginate through recurring templates one at a time with stop/delete."""
 
@@ -1898,17 +1996,10 @@ async def leave_game(
             ephemeral=ephemeral_test,
         )
 
-@bot.tree.command(name="manage-recurring-games", description="Browse, stop, or delete recurring templates (restrict via Integrations; admins only)")
+@bot.tree.command(name="manage-recurring-games", description="Browse, stop, or delete recurring templates")
+@app_commands.default_permissions()
 async def manage_recurring_games(interaction: discord.Interaction):
     """Paginate through your recurring templates with stop/delete controls."""
-    if not is_moderator(interaction):
-        await interaction.response.send_message(
-            "You do not have permission to manage recurring games. "
-            "Ask a server admin to grant access via Integrations, or use an Administrator account.",
-            ephemeral=True,
-        )
-        return
-
     try:
         try:
             templates = fe.be.get_many_game_templates(status=None)
@@ -1944,7 +2035,8 @@ async def manage_recurring_games(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="update", description="Force-update all stock prices and portfolios (restrict via Integrations; admins only)")
+@bot.tree.command(name="update", description="Force-update all stock prices and portfolios")
+@app_commands.default_permissions()
 @app_commands.describe(
     # A future command option may expose targeted updates; the backend supports it.
 )
@@ -1954,15 +2046,6 @@ async def update(
 ):
     await interaction.response.defer(ephemeral=ephemeral_test) # Defer the response to allow time for the update
     embed = discord.Embed()
-    if not is_moderator(interaction):
-        embed.title = "Failed"
-        embed.description = (
-            "You do not have permission to update games. "
-            "Ask a server admin to grant access via Integrations, or use an Administrator account."
-        )
-        embed.color = discord.Color.red()
-        await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
-        return
     try:
         async with _game_update_lock:
             await asyncio.to_thread(
@@ -2512,6 +2595,19 @@ def _user_can_view_leaderboard(game, user_id: int) -> bool:
     return any(player.status in ("active", "pending") for player in participants)
 
 
+def _user_can_view_game_info(game, user_id: int) -> bool:
+    """Public games are visible; private games require ownership or active participation."""
+    if not game.private_game:
+        return True
+    if game.owner_id == user_id:
+        return True
+    try:
+        participants = fe.be.get_many_participants(game_id=game.id, user_id=user_id)
+    except LookupError:
+        return False
+    return any(player.status == "active" for player in participants)
+
+
 def _leaderboard_browse_games(user_id: int) -> list[tuple[Any, int]]:
     """User's games followed by public recurring games they are not in."""
     try:
@@ -2650,8 +2746,49 @@ async def my_stocks(
 ):
     user_id = interaction.user.id
     await interaction.response.defer(ephemeral=ephemeral_test)
-    
+
     try:
+        try:
+            participant = fe.be.get_many_participants(user_id=user_id, game_id=game_id)[0]
+        except LookupError:
+            await interaction.followup.send(
+                embed=simple_embed(
+                    status='failed',
+                    title='Not in Game',
+                    desc=(
+                        'You are not currently participating in this game. '
+                        'You can try to join it using the join-game command.'
+                    ),
+                ),
+                ephemeral=ephemeral_test,
+            )
+            return
+
+        if participant.status == 'pending':
+            await interaction.followup.send(
+                embed=simple_embed(
+                    status='failed',
+                    title='Not in Game',
+                    desc=(
+                        'You are not in this game yet. Your request to join this private '
+                        'game is still awaiting owner approval.'
+                    ),
+                ),
+                ephemeral=ephemeral_test,
+            )
+            return
+
+        if participant.status != 'active':
+            await interaction.followup.send(
+                embed=simple_embed(
+                    status='failed',
+                    title='Not in Game',
+                    desc='You are not currently participating in this game.',
+                ),
+                ephemeral=ephemeral_test,
+            )
+            return
+
         picks = fe.my_stocks(user_id, game_id)
         info = fe.game_info(game_id)
         
@@ -2763,7 +2900,7 @@ async def my_stocks(
 # GAME INFO RELATED-
 
 @bot.tree.command(name="game-info", description="View information about a game")
-@app_commands.autocomplete(game_id=ac.all_games_autocomplete)
+@app_commands.autocomplete(game_id=ac.game_info_autocomplete)
 @app_commands.describe(
     game_id="ID of the game to view",
 )
@@ -2776,6 +2913,16 @@ async def game_info(
     try:
         game_info_obj = fe.game_info(game_id, show_leaderboard=True)
         game = game_info_obj.game
+        if not _user_can_view_game_info(game, interaction.user.id):
+            await interaction.followup.send(
+                embed=simple_embed(
+                    status='failed',
+                    title='Private Game',
+                    desc='You do not have access to view this private game.',
+                ),
+                ephemeral=ephemeral_test,
+            )
+            return
         leaderboard = game_info_obj.leaderboard or []
         view = UserLeaderboardView(
             interaction,
@@ -2821,8 +2968,9 @@ def _format_listed_game(
     )
     end_line = f'\n> **End date:** `{game.end_date}`' if game.end_date else ''
     recurring_tag = ' 🔁' if game.template_id is not None else ''
+    private_tag = ' 🔒' if game.private_game else ''
     emoji_prefix = f'{status_emoji} ' if status_emoji else ''
-    title = f"{emoji_prefix}{game.name[:name_cutoff]}{recurring_tag}: [{game.id}]"
+    title = f"{emoji_prefix}{game.name[:name_cutoff]}{recurring_tag}{private_tag}: [{game.id}]"
     body = (
         f'> **Owner:** <@{game.owner_id}>\n'
         f'> **Players:** {player_count}\n'
@@ -2944,6 +3092,7 @@ async def user_stats(
         embed.add_field(name="Total wins:", value=user_stats.overall_wins)
         embed.add_field(name="Change Dollars/Change %", value=f"{user_stats.change_dollars}/{user_stats.change_percent}")
         embed.color = discord.Color.blue()
+        embed.set_footer(text="Only completed (ended) games are included in these stats.")
 
         await interaction.followup.send(embed=embed, ephemeral=ephemeral_test)
     except LookupError:
@@ -2966,46 +3115,36 @@ async def about(
     embed.add_field(name="Special Thanks", value="<@394012218729168907>: Gave the idea\n<@204414583203430400>: Chaotic Project Tester")
     await interaction.response.send_message(embed=embed, ephemeral=ephemeral_test)
 
-@bot.tree.command(name="logs", description="Download bot logs (restrict via Integrations; admins only)")
+@bot.tree.command(name="logs", description="Download bot logs")
+@app_commands.default_permissions()
 async def logs(
   interaction: discord.Interaction,
   kind: Literal['debug', 'error'] = 'debug',
 ):
-    
-    if is_moderator(interaction): # Check if user is an admin
-        title = "Logs"
-        status = 'success'
-        path = latest_log_path(kind)
-        if path is None or not os.path.isfile(path):
-            await interaction.response.send_message(
-                embed=simple_embed(status='failed', title='No Logs', desc=f'No {kind} log file found yet.'),
-                ephemeral=True,
-            )
-            return
-        # Discord attachment limit ~25MB; truncate from end if needed for safety
-        max_bytes = 8 * 1024 * 1024
-        size = os.path.getsize(path)
-        if size > max_bytes:
-            with open(path, 'rb') as f:
-                f.seek(size - max_bytes)
-                data = f.read()
-            logfile = discord.File(fp=io.BytesIO(data), filename=f'log-{kind}-latest.log')
-        else:
-            logfile = discord.File(fp=path, filename=f'log-{kind}-latest.log')
+    title = "Logs"
+    status = 'success'
+    path = latest_log_path(kind)
+    if path is None or not os.path.isfile(path):
         await interaction.response.send_message(
-            embed=simple_embed(status=status, title=title, desc=f'Sending latest {kind} log.'),
-            file=logfile,
-            ephemeral=ephemeral_test,
+            embed=simple_embed(status='failed', title='No Logs', desc=f'No {kind} log file found yet.'),
+            ephemeral=True,
         )
-
+        return
+    # Discord attachment limit ~25MB; truncate from end if needed for safety
+    max_bytes = 8 * 1024 * 1024
+    size = os.path.getsize(path)
+    if size > max_bytes:
+        with open(path, 'rb') as f:
+            f.seek(size - max_bytes)
+            data = f.read()
+        logfile = discord.File(fp=io.BytesIO(data), filename=f'log-{kind}-latest.log')
     else:
-        title = "Not Allowed"
-        status = 'failed'
-        logs = (
-            'Must be a Discord Administrator (or bot OWNER) to get logs. '
-            'Also restrict /logs via Server Settings → Integrations.'
-        )
-        await interaction.response.send_message(embed=simple_embed(status=status, title=title, desc=logs), ephemeral=True)
+        logfile = discord.File(fp=path, filename=f'log-{kind}-latest.log')
+    await interaction.response.send_message(
+        embed=simple_embed(status=status, title=title, desc=f'Sending latest {kind} log.'),
+        file=logfile,
+        ephemeral=ephemeral_test,
+    )
 
 def _quick_start_help_embed() -> discord.Embed:
     embed = discord.Embed(
@@ -3046,7 +3185,12 @@ def _quick_start_help_embed() -> discord.Embed:
     return embed
 
 
-def _regular_help_embed(*, moderator: bool = False) -> discord.Embed:
+def _regular_help_embed(
+    *,
+    owns_game: bool = False,
+    owns_private_game: bool = False,
+    moderator: bool = False,
+) -> discord.Embed:
     embed = discord.Embed(
         title="Stock Game Bot — Command Guide",
         description="Commands are grouped by what you want to do.",
@@ -3075,17 +3219,32 @@ def _regular_help_embed(*, moderator: bool = False) -> discord.Embed:
         inline=False,
     )
     embed.add_field(
-        name="Create and manage games",
+        name="Create games",
         value=(
             "`/create-game` — Build a game with a guided setup.\n"
-            "`/create-game-advanced` — Create a game by entering every setting directly.\n"
-            "`/manage-game` — Change settings and manage an existing game.\n"
-            "`/invite` — Invite someone to your game through Discord.\n"
-            "`/manage-pending` — Approve or deny requests to join a private game.\n"
-            "`/delete-game` — Permanently delete a game you own."
+            "`/create-game-advanced` — Create a game by entering every setting directly."
         ),
         inline=False,
     )
+    if owns_game:
+        embed.add_field(
+            name="Game owner commands",
+            value=(
+                "`/invite` — Invite someone to your game through Discord.\n"
+                "`/manage-game` — Change settings on an existing game you own.\n"
+                "`/delete-game` — Permanently delete a game you own."
+            ),
+            inline=False,
+        )
+    if owns_private_game:
+        embed.add_field(
+            name="Private game commands",
+            value=(
+                "`/manage-pending` — Approve or deny requests to join a private game.\n"
+                "`/kick-player` — Remove a player from your private game."
+            ),
+            inline=False,
+        )
     if moderator:
         embed.add_field(
             name="Moderator tools",
@@ -3107,7 +3266,7 @@ def _regular_help_embed(*, moderator: bool = False) -> discord.Embed:
     )
     if moderator:
         embed.set_footer(
-            text="Restrict moderator commands under Server Settings → Integrations."
+            text="Moderator commands default to admins; grant roles under Server Settings → Integrations."
         )
     else:
         embed.set_footer(text="Need more help? Ask a server administrator.")
@@ -3140,8 +3299,17 @@ def _should_show_quick_start(user_id: int) -> bool:
 
 
 class QuickStartHelpView(InitiatorOnlyView):
-    def __init__(self, initiator_id: int, *, moderator: bool):
+    def __init__(
+        self,
+        initiator_id: int,
+        *,
+        owns_game: bool,
+        owns_private_game: bool,
+        moderator: bool,
+    ):
         super().__init__(initiator_id, timeout=300)
+        self.owns_game = owns_game
+        self.owns_private_game = owns_private_game
         self.moderator = moderator
 
     @discord.ui.button(label="Advanced", style=discord.ButtonStyle.secondary)
@@ -3151,7 +3319,11 @@ class QuickStartHelpView(InitiatorOnlyView):
         _button: discord.ui.Button,
     ):
         await interaction.response.edit_message(
-            embed=_regular_help_embed(moderator=self.moderator),
+            embed=_regular_help_embed(
+                owns_game=self.owns_game,
+                owns_private_game=self.owns_private_game,
+                moderator=self.moderator,
+            ),
             view=None,
         )
 
@@ -3167,11 +3339,19 @@ class QuickStartHelpView(InitiatorOnlyView):
 @bot.tree.command(name="help", description="Get help with StockBot")
 async def help(interaction: discord.Interaction):
     moderator = is_moderator(interaction)
+    owns_game, owns_private_game = await asyncio.to_thread(
+        fe.user_owns_any_game, interaction.user.id
+    )
     show_quick_start = await asyncio.to_thread(
         _should_show_quick_start, interaction.user.id
     )
     if show_quick_start:
-        view = QuickStartHelpView(interaction.user.id, moderator=moderator)
+        view = QuickStartHelpView(
+            interaction.user.id,
+            owns_game=owns_game,
+            owns_private_game=owns_private_game,
+            moderator=moderator,
+        )
         await interaction.response.send_message(
             embed=_quick_start_help_embed(),
             view=view,
@@ -3184,7 +3364,11 @@ async def help(interaction: discord.Interaction):
         return
 
     await interaction.response.send_message(
-        embed=_regular_help_embed(moderator=moderator),
+        embed=_regular_help_embed(
+            owns_game=owns_game,
+            owns_private_game=owns_private_game,
+            moderator=moderator,
+        ),
         ephemeral=ephemeral_test,
     )
 

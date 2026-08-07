@@ -60,18 +60,42 @@ def test_regular_help_is_shown_with_current_and_ended_games(mocker):
     assert not db._should_show_quick_start(10)
 
 
-def test_regular_help_explains_commands_and_moderator_tools():
+def test_regular_help_base_omits_owner_and_moderator_commands():
     import discord_bot as db
 
-    embed = db._regular_help_embed(moderator=True)
+    embed = db._regular_help_embed()
+    content = "\n".join(str(field.value) for field in embed.fields)
+
+    for command in ("/join-game", "/buy-stock", "/leaderboard", "/create-game"):
+        assert command in content
+    for command in (
+        "/manage-game",
+        "/invite",
+        "/delete-game",
+        "/manage-pending",
+        "/kick-player",
+        "/create-recurring-game",
+        "/logs",
+    ):
+        assert command not in content
+
+
+def test_regular_help_appends_owner_private_and_moderator_sections():
+    import discord_bot as db
+
+    embed = db._regular_help_embed(
+        owns_game=True,
+        owns_private_game=True,
+        moderator=True,
+    )
     content = "\n".join(str(field.value) for field in embed.fields)
 
     for command in (
-        "/join-game",
-        "/buy-stock",
-        "/leaderboard",
-        "/create-game",
+        "/invite",
         "/manage-game",
+        "/delete-game",
+        "/manage-pending",
+        "/kick-player",
         "/create-recurring-game",
         "/logs",
     ):
@@ -83,7 +107,12 @@ def test_advanced_button_replaces_quick_start_with_regular_help():
     import discord_bot as db
 
     async def run():
-        view = db.QuickStartHelpView(10, moderator=False)
+        view = db.QuickStartHelpView(
+            10,
+            owns_game=True,
+            owns_private_game=False,
+            moderator=False,
+        )
         button = next(
             item
             for item in view.children
@@ -98,6 +127,9 @@ def test_advanced_button_replaces_quick_start_with_regular_help():
 
         kwargs = interaction.response.edit_message.await_args.kwargs
         assert kwargs["embed"].title == "Stock Game Bot — Command Guide"
+        assert "/manage-game" in "\n".join(
+            str(field.value) for field in kwargs["embed"].fields
+        )
         assert kwargs["view"] is None
 
     asyncio.run(run())
