@@ -320,9 +320,10 @@ class RecurringLeaderboardImageGenerator:
         d_chg = float(player.get("change_dollars") or 0)
         p_chg = float(player.get("change_percent") or 0)
         days = int(player.get("days_in_first") or 0)
+        dollar_sign = "+" if d_chg >= 0 else "-"
         stats = (
             ("Total Value", f"${value:,.2f}", self.colors["text"]),
-            ("Gain ($)", f"${d_chg:+,.2f}", self._change_color(d_chg)),
+            ("Gain ($)", f"{dollar_sign}${abs(d_chg):,.2f}", self._change_color(d_chg)),
             ("Gain (%)", f"{p_chg:+.2f}%", self._change_color(p_chg)),
             ("Days in First", str(days), self.colors["gold"] if days else self.colors["text"]),
         )
@@ -398,11 +399,12 @@ class RecurringLeaderboardImageGenerator:
         h: int,
         pick: Dict[str, Any],
     ) -> None:
-        """Ticker, arrow and percent share the top line; company wraps beneath."""
+        """Ticker on the left; percent then arrow pinned to the far-right corner."""
         draw.rounded_rectangle([x, y, x + w, y + h], radius=6, fill=self.colors["chip_bg"])
         pad = 8
         inner = w - pad * 2
         left = x + pad
+        right = x + w - pad
 
         pct = float(pick.get("change_percent") or 0)
         pct_text = f"{pct:+.1f}%"
@@ -410,22 +412,24 @@ class RecurringLeaderboardImageGenerator:
         arrow_size = 8
         gap = 5
 
-        ticker_budget = max(inner - pct_w - arrow_size - gap * 2, 10)
+        # Arrow always at the far-right corner; percent immediately to its left.
+        arrow_x = right - arrow_size
+        pct_x = arrow_x - gap - pct_w
+
+        ticker_budget = max(pct_x - left - gap, 10)
         ticker = self._truncate(
             str(pick.get("ticker") or pick.get("stock_ticker") or "?"),
             self.fonts["ticker"],
             ticker_budget,
         )
         draw.text((left, y + 4), ticker, fill=self.colors["text"], font=self.fonts["ticker"])
-
-        arrow_x = left + self._width(ticker, self.fonts["ticker"]) + gap
-        self._draw_arrow(draw, arrow_x, y + 8, up=pct >= 0, size=arrow_size)
         draw.text(
-            (arrow_x + arrow_size + 3, y + 6),
+            (pct_x, y + 6),
             pct_text,
             fill=self._change_color(pct),
             font=self.fonts["pct"],
         )
+        self._draw_arrow(draw, arrow_x, y + 8, up=pct >= 0, size=arrow_size)
 
         company = str(pick.get("company") or pick.get("company_name") or "")
         if company:
