@@ -1881,9 +1881,7 @@ class Frontend: # This will be where a bot (like discord) interacts
     def new_game(self, user_id:int, name:str, start_date:str, end_date:Optional[str]=None, starting_money:float=10000.00, pick_date:Optional[str]=None, private_game:bool=False, total_picks:int=10, exclusive_picks:bool=False, sell_during_game:bool=False, update_frequency:dtv.UpdateFrequency='alpaca') -> str:
         """Create a new stock game!
         
-        WARNING: If using realtime, expect issues
-        
-        ower will be automatically added
+        owner will be automatically added
 
         Args:
             user_id (int): Game creators user ID.
@@ -1972,7 +1970,7 @@ class Frontend: # This will be where a bot (like discord) interacts
             return '🛑'
         if game.pick_date is None or game.pick_date >= today:
             return '💸'
-        return '📈'
+        return '🏃🏻‍➡️'
 
     def _rank_scored_games(
         self,
