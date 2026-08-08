@@ -121,7 +121,7 @@ def test_game_status_emoji():
 
     assert Frontend.game_status_emoji(_game(pick_date=None), today) == "💸"
     assert Frontend.game_status_emoji(_game(pick_date=date(2026, 8, 1)), today) == "💸"
-    assert Frontend.game_status_emoji(_game(pick_date=date(2026, 7, 1)), today) == "📈"
+    assert Frontend.game_status_emoji(_game(pick_date=date(2026, 7, 1)), today) == "🏃🏻‍➡️"
     assert Frontend.game_status_emoji(
         _game(status="ended", end_date=date(2026, 7, 1)), today
     ) == "🛑"
